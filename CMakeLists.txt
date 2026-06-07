@@ -10,7 +10,7 @@ aux_source_directory(./src DIR_SRC)
 set(BXI_PCI_CTL_LIB "${CMAKE_SOURCE_DIR}/lib/libbxi_pci_drv.a")
 
 add_executable(drv_test ./src/drv_test.c)
-add_executable(motor_test ./src/motor_test.c ./src/bxi_motor_comm.c)
+add_executable(motor_test ./src/motor_test.c ./src/bxi_motor_comm.c ./src/shell/shell.c)
 
 target_link_libraries(drv_test
   PRIVATE
