@@ -17,6 +17,7 @@ typedef struct
     bool print_all;
     bool keep_power;
     bool power_enabled_by_tool;
+    bool quiet_can_frames;
     volatile unsigned int rx_count;
     volatile uint64_t last_tx_time_us;
     volatile unsigned int last_tx_can_id;
@@ -34,6 +35,7 @@ int shell_parse_uint_arg(const char *text, unsigned int *value);
 int shell_parse_float_arg(const char *text, float *value);
 void shell_print_usage(const char *prog);
 int shell_can_rx_callback(void *arg, canfd_packet *msg);
+int shell_can_warmup(app_state *state, unsigned int count, unsigned int period_ms);
 int shell_run_command(app_state *state, int argc, char **argv);
 
 #endif

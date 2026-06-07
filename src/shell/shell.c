@@ -31,6 +31,8 @@ enum {
 enum {
     SHELL_HISTORY_DEPTH = 32,
     SHELL_HISTORY_LINE_LEN = 256,
+    SHELL_CAN_WARMUP_DEFAULT_COUNT = 130,
+    SHELL_CAN_WARMUP_DEFAULT_PERIOD_MS = 10,
 };
 
 typedef struct
@@ -464,6 +466,9 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
     }
 
     state->rx_count++;
+    if (state->quiet_can_frames) {
+        return 0;
+    }
 
     printf("rx can[%u] id:0x%03x len:%u flags:0x%02x data:",
            msg->bus,
@@ -536,6 +541,7 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s [options] terminal\n", prog);
     printf("  sudo %s [options] listen [seconds]\n", prog);
     printf("  sudo %s [options] ping [wait_ms]\n", prog);
+    printf("  sudo %s [options] can-warmup [count] [period_ms]\n", prog);
     printf("  sudo %s [options] enable|disable|zero|terminal-on|terminal-off [wait_ms]\n", prog);
     printf("  sudo %s [options] uart-toggle\n", prog);
     printf("  sudo %s [options] cmd <pos> <vel> <kp> <kd> <torque> [duration_ms] [period_ms]\n", prog);
@@ -546,7 +552,7 @@ void shell_print_usage(const char *prog)
     printf("  -i, --id N           target motor can_id, default 1\n");
     printf("  -m, --master-id N    expected feedback frame ID, default id|0x10\n");
     printf("      --classic        send classic 8-byte CAN frames instead of CANFD+BRS\n");
-    printf("      --power          turn motor power on before the command\n");
+    printf("      --power          turn motor power on and run CAN warmup before the command\n");
     printf("      --keep-power     do not turn motor power off on exit\n");
     printf("      --all            print all received frames on every bus\n");
     printf("      --p-min F        MIT position min, default -12.5\n");
@@ -584,14 +590,16 @@ static int send_packet(app_state *state, unsigned int can_id, const uint8_t *dat
     packet.frame.flags = state->use_canfd ? (CANFD_BRS | CANFD_FDF) : 0u;
     memcpy(packet.frame.data, data, len);
 
-    printf("tx can[%u] id:0x%03x len:%u flags:0x%02x data:",
-           packet.bus,
-           clean_can_id(packet.frame.can_id),
-           packet.frame.len,
-           packet.frame.flags);
-    print_data(packet.frame.data, packet.frame.len);
-    printf("\n");
-    fflush(stdout);
+    if (!state->quiet_can_frames) {
+        printf("tx can[%u] id:0x%03x len:%u flags:0x%02x data:",
+               packet.bus,
+               clean_can_id(packet.frame.can_id),
+               packet.frame.len,
+               packet.frame.flags);
+        print_data(packet.frame.data, packet.frame.len);
+        printf("\n");
+        fflush(stdout);
+    }
 
     state->last_tx_can_id = clean_can_id(packet.frame.can_id);
     state->last_tx_time_us = timebase64_get();
@@ -671,6 +679,56 @@ static int run_ping(app_state *state, int argc, char **argv)
     }
 
     return command_wait_reply(state, wait_ms, before);
+}
+
+int shell_can_warmup(app_state *state, unsigned int count, unsigned int period_ms)
+{
+    unsigned int before;
+    unsigned int sent = 0u;
+    bool old_quiet;
+
+    if (state == NULL) {
+        return -1;
+    }
+    if (period_ms == 0u) {
+        period_ms = 1u;
+    }
+
+    printf("CAN warmup: sending %u zero MIT frame(s), period=%u ms\n", count, period_ms);
+
+    before = state->rx_count;
+    old_quiet = state->quiet_can_frames;
+    state->quiet_can_frames = true;
+    while (!shell_stop_requested && sent < count) {
+        if (send_mit(state, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) != 0) {
+            state->quiet_can_frames = old_quiet;
+            return -1;
+        }
+        sent++;
+        shell_sleep_ms(period_ms);
+    }
+    state->quiet_can_frames = old_quiet;
+
+    printf("CAN warmup finished, sent:%u received:%u\n", sent, state->rx_count - before);
+    return 0;
+}
+
+static int run_can_warmup(app_state *state, int argc, char **argv)
+{
+    unsigned int count = SHELL_CAN_WARMUP_DEFAULT_COUNT;
+    unsigned int period_ms = SHELL_CAN_WARMUP_DEFAULT_PERIOD_MS;
+
+    if (argc > 0 && shell_parse_uint_arg(argv[0], &count) != 0) {
+        fprintf(stderr, "invalid count: %s\n", argv[0]);
+        return -1;
+    }
+    if (argc > 1 && shell_parse_uint_arg(argv[1], &period_ms) != 0) {
+        fprintf(stderr, "invalid period_ms: %s\n", argv[1]);
+        return -1;
+    }
+
+    printf("Use this after motor boot is complete if the first command raised tx error cnt.\n");
+    return shell_can_warmup(state, count, period_ms);
 }
 
 static int run_special(app_state *state, uint8_t command, int argc, char **argv)
@@ -1210,9 +1268,10 @@ static void print_terminal_help(void)
     printf("  master-id <id>                  set feedback frame id\n");
     printf("  canfd | classic                 switch frame format\n");
     printf("  all on|off                      print all received frames\n");
-    printf("  power on|off                    motor power control\n");
+    printf("  power on|off                    motor power control, power on runs CAN warmup\n");
     printf("  listen [seconds]                print feedback\n");
     printf("  ping [wait_ms]                  send zero MIT frame and wait feedback\n");
+    printf("  can-warmup [count] [period_ms]  recover CAN tx error counter with zero MIT frames\n");
     printf("  enable [wait_ms]                enter MIT motor mode\n");
     printf("  disable [wait_ms]               exit MIT motor mode\n");
     printf("  zero [wait_ms]                  save zero position, only in menu mode\n");
@@ -1278,6 +1337,8 @@ static const char *const command_words[] = {
     "power",
     "listen",
     "ping",
+    "can-warmup",
+    "warmup",
     "enable",
     "disable",
     "zero",
@@ -1997,6 +2058,12 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
         if (enabled) {
             printf("waiting for soft start\n");
             shell_sleep_ms(2000u);
+            printf("running CAN warmup after power on\n");
+            if (shell_can_warmup(state,
+                                 SHELL_CAN_WARMUP_DEFAULT_COUNT,
+                                 SHELL_CAN_WARMUP_DEFAULT_PERIOD_MS) != 0) {
+                printf("CAN warmup failed\n");
+            }
         }
         return 0;
     }
@@ -2006,6 +2073,10 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "ping") == 0) {
         run_ping(state, argc - 1, argv + 1);
+        return 0;
+    }
+    if (strcmp(cmd, "can-warmup") == 0 || strcmp(cmd, "warmup") == 0) {
+        run_can_warmup(state, argc - 1, argv + 1);
         return 0;
     }
     if (strcmp(cmd, "enable") == 0) {
@@ -2097,6 +2168,9 @@ int shell_run_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "ping") == 0) {
         return run_ping(state, argc, argv);
+    }
+    if (strcmp(cmd, "can-warmup") == 0 || strcmp(cmd, "warmup") == 0) {
+        return run_can_warmup(state, argc, argv);
     }
     if (strcmp(cmd, "enable") == 0) {
         return run_special(state, BXI_MOTOR_CMD_ENABLE, argc, argv);

@@ -190,6 +190,11 @@ int main(int argc, char **argv)
         state.power_enabled_by_tool = true;
         printf("motor power on, waiting for soft start\n");
         shell_sleep_ms(2000u);
+        printf("running CAN warmup after power on\n");
+        if (shell_can_warmup(&state, 130u, 10u) != 0) {
+            ret = 1;
+            goto out;
+        }
     }
 
     ret = shell_run_command(&state, argc - optind, &argv[optind]);
