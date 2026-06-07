@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -401,6 +402,7 @@ static void print_config(const app_state *state)
 static void print_terminal_help(void)
 {
     printf("Interactive commands:\n");
+    printf("  Tab                             complete command or show candidates\n");
     printf("  q | quit | exit                 exit terminal\n");
     printf("  help                            show this help\n");
     printf("  config                          show current settings\n");
@@ -455,6 +457,233 @@ static int parse_on_off(const char *text, bool *value)
         *value = false;
         return 0;
     }
+    return -1;
+}
+
+static const char *const command_words[] = {
+    "q",
+    "quit",
+    "exit",
+    "help",
+    "?",
+    "config",
+    "bus",
+    "id",
+    "master-id",
+    "master",
+    "canfd",
+    "classic",
+    "all",
+    "power",
+    "listen",
+    "ping",
+    "enable",
+    "disable",
+    "zero",
+    "terminal-on",
+    "terminal-off",
+    "cmd",
+    "scan",
+    "terminal",
+    "term",
+};
+
+static const char *const on_off_words[] = {
+    "on",
+    "off",
+};
+
+static int starts_with(const char *text, const char *prefix)
+{
+    return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+static void redraw_prompt(const char *prompt, const char *line)
+{
+    printf("\r\033[2K%s%s", prompt, line);
+    fflush(stdout);
+}
+
+static int current_token_start(const char *line, size_t len)
+{
+    int pos = (int)len;
+
+    while (pos > 0 && !isspace((unsigned char)line[pos - 1])) {
+        pos--;
+    }
+
+    return pos;
+}
+
+static const char *const *completion_words_for_line(const char *line, size_t len, size_t *count)
+{
+    int start = current_token_start(line, len);
+    char first[64];
+    size_t first_len = 0u;
+
+    if (start == 0) {
+        *count = sizeof(command_words) / sizeof(command_words[0]);
+        return command_words;
+    }
+
+    while (line[first_len] != '\0' &&
+           !isspace((unsigned char)line[first_len]) &&
+           first_len + 1u < sizeof(first)) {
+        first[first_len] = line[first_len];
+        first_len++;
+    }
+    first[first_len] = '\0';
+
+    if (strcmp(first, "power") == 0 || strcmp(first, "all") == 0) {
+        *count = sizeof(on_off_words) / sizeof(on_off_words[0]);
+        return on_off_words;
+    }
+
+    *count = 0u;
+    return NULL;
+}
+
+static void complete_line(char *line, size_t *len, size_t max_len, const char *prompt)
+{
+    const char *const *words;
+    const char *matches[32];
+    size_t word_count;
+    size_t match_count = 0u;
+    int token_start = current_token_start(line, *len);
+    const char *prefix = &line[token_start];
+    size_t prefix_len = *len - (size_t)token_start;
+    size_t i;
+
+    words = completion_words_for_line(line, *len, &word_count);
+    if (words == NULL || word_count == 0u) {
+        putchar('\a');
+        fflush(stdout);
+        return;
+    }
+
+    for (i = 0u; i < word_count && match_count < sizeof(matches) / sizeof(matches[0]); i++) {
+        if (starts_with(words[i], prefix)) {
+            matches[match_count++] = words[i];
+        }
+    }
+
+    if (match_count == 0u) {
+        putchar('\a');
+        fflush(stdout);
+        return;
+    }
+
+    if (match_count == 1u) {
+        const char *match = matches[0];
+        size_t match_len = strlen(match);
+        size_t add_len;
+
+        if (match_len < prefix_len) {
+            return;
+        }
+
+        add_len = match_len - prefix_len;
+        if (*len + add_len + 1u >= max_len) {
+            putchar('\a');
+            fflush(stdout);
+            return;
+        }
+
+        memcpy(&line[*len], &match[prefix_len], add_len);
+        *len += add_len;
+        if (*len == match_len || line[*len - 1u] != ' ') {
+            line[(*len)++] = ' ';
+        }
+        line[*len] = '\0';
+        redraw_prompt(prompt, line);
+        return;
+    }
+
+    printf("\n");
+    for (i = 0u; i < match_count; i++) {
+        printf("%s%s", matches[i], (i + 1u == match_count) ? "\n" : "  ");
+    }
+    redraw_prompt(prompt, line);
+}
+
+static int read_line_with_completion(const char *prompt, char *line, size_t max_len)
+{
+    struct termios old_term;
+    struct termios new_term;
+    size_t len = 0u;
+
+    if (max_len == 0u) {
+        return -1;
+    }
+
+    if (!isatty(STDIN_FILENO)) {
+        if (fgets(line, (int)max_len, stdin) == NULL) {
+            return -1;
+        }
+        return 0;
+    }
+
+    if (tcgetattr(STDIN_FILENO, &old_term) != 0) {
+        return -1;
+    }
+
+    new_term = old_term;
+    new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    new_term.c_cc[VMIN] = 1;
+    new_term.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_term) != 0) {
+        return -1;
+    }
+
+    line[0] = '\0';
+    while (!shell_stop_requested) {
+        unsigned char ch;
+        ssize_t n = read(STDIN_FILENO, &ch, 1u);
+
+        if (n <= 0) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            return -1;
+        }
+
+        if (ch == '\r' || ch == '\n') {
+            putchar('\n');
+            line[len] = '\0';
+            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            return 0;
+        }
+        if (ch == '\t') {
+            complete_line(line, &len, max_len, prompt);
+            continue;
+        }
+        if (ch == 4u) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            return -1;
+        }
+        if (ch == 127u || ch == 8u) {
+            if (len > 0u) {
+                len--;
+                line[len] = '\0';
+                printf("\b \b");
+                fflush(stdout);
+            }
+            continue;
+        }
+        if (isprint(ch)) {
+            if (len + 1u >= max_len) {
+                putchar('\a');
+                fflush(stdout);
+                continue;
+            }
+            line[len++] = (char)ch;
+            line[len] = '\0';
+            putchar(ch);
+            fflush(stdout);
+            continue;
+        }
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
     return -1;
 }
 
@@ -591,17 +820,19 @@ static int run_terminal(app_state *state)
 {
     char line[256];
     char *argv[16];
+    char prompt[64];
 
-    printf("Entering interactive motor terminal. Type help for commands, q to exit.\n");
+    printf("Entering interactive motor terminal. Type help for commands, Tab to complete, q to exit.\n");
     print_config(state);
 
     while (!shell_stop_requested) {
         int argc;
 
-        printf("motor[%u:0x%x]> ", state->bus, state->motor_id);
+        snprintf(prompt, sizeof(prompt), "motor[%u:0x%x]> ", state->bus, state->motor_id);
+        printf("%s", prompt);
         fflush(stdout);
 
-        if (fgets(line, sizeof(line), stdin) == NULL) {
+        if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
             printf("\n");
             break;
         }
