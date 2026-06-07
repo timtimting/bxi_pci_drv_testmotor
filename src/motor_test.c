@@ -190,6 +190,10 @@ int main(int argc, char **argv)
         state.power_enabled_by_tool = true;
         printf("motor power on, waiting for soft start\n");
         shell_sleep_ms(2000u);
+        if (shell_reset_can_controller(&state) != 0) {
+            ret = 1;
+            goto out;
+        }
     }
 
     ret = shell_run_command(&state, argc - optind, &argv[optind]);

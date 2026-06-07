@@ -499,6 +499,30 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
     return 0;
 }
 
+int shell_reset_can_controller(app_state *state)
+{
+    if (state == NULL) {
+        return -1;
+    }
+
+    printf("resetting CAN controller to clear error counters\n");
+    bxi_pci_exit();
+    shell_sleep_ms(100u);
+
+    state->rx_count = 0u;
+    state->last_tx_time_us = 0u;
+    state->last_tx_can_id = 0u;
+    forget_reg_request(state);
+
+    if (bxi_pci_init(shell_can_rx_callback, state, -1) == -1) {
+        fprintf(stderr, "bxi_pci_init failed while resetting CAN controller\n");
+        return -1;
+    }
+
+    printf("CAN controller reset done\n");
+    return 0;
+}
+
 int shell_parse_uint_arg(const char *text, unsigned int *value)
 {
     char *end = NULL;
@@ -537,6 +561,7 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s [options] listen [seconds]\n", prog);
     printf("  sudo %s [options] ping [wait_ms]\n", prog);
     printf("  sudo %s [options] enable|disable|zero|terminal-on|terminal-off [wait_ms]\n", prog);
+    printf("  sudo %s [options] can-reset\n", prog);
     printf("  sudo %s [options] uart-toggle\n", prog);
     printf("  sudo %s [options] cmd <pos> <vel> <kp> <kd> <torque> [duration_ms] [period_ms]\n", prog);
     printf("  sudo %s [options] scan [max_id]\n", prog);
@@ -1201,6 +1226,7 @@ static void print_terminal_help(void)
     printf("Interactive commands:\n");
     printf("  Tab                             complete command or show candidates\n");
     printf("  Up/Down                         browse command history\n");
+    printf("  Left/Right/Delete/Backspace     edit current command line\n");
     printf("  q | quit | exit                 exit terminal\n");
     printf("  help                            show this help\n");
     printf("  config                          show current settings\n");
@@ -1209,6 +1235,7 @@ static void print_terminal_help(void)
     printf("  master-id <id>                  set feedback frame id\n");
     printf("  canfd | classic                 switch frame format\n");
     printf("  all on|off                      print all received frames\n");
+    printf("  can-reset                       reset PCI CAN controller/error counters\n");
     printf("  power on|off                    motor power control\n");
     printf("  listen [seconds]                print feedback\n");
     printf("  ping [wait_ms]                  send zero MIT frame and wait feedback\n");
@@ -1273,6 +1300,7 @@ static const char *const command_words[] = {
     "master",
     "canfd",
     "classic",
+    "can-reset",
     "all",
     "power",
     "listen",
@@ -1375,10 +1403,21 @@ static int starts_with(const char *text, const char *prefix)
     return strncmp(text, prefix, strlen(prefix)) == 0;
 }
 
+static void redraw_prompt_cursor(const char *prompt, const char *line, size_t len, size_t cursor)
+{
+    size_t tail_len;
+
+    printf("\r\033[2K%s%s", prompt, line);
+    if (cursor < len) {
+        tail_len = len - cursor;
+        printf("\033[%zuD", tail_len);
+    }
+    fflush(stdout);
+}
+
 static void redraw_prompt(const char *prompt, const char *line)
 {
-    printf("\r\033[2K%s%s", prompt, line);
-    fflush(stdout);
+    redraw_prompt_cursor(prompt, line, strlen(line), strlen(line));
 }
 
 static char command_history[SHELL_HISTORY_DEPTH][SHELL_HISTORY_LINE_LEN];
@@ -1438,6 +1477,53 @@ static void copy_line(char *dst, size_t *dst_len, size_t max_len, const char *sr
     memcpy(dst, src, len);
     dst[len] = '\0';
     *dst_len = len;
+}
+
+static int insert_text_at_cursor(char *line,
+                                 size_t *len,
+                                 size_t *cursor,
+                                 size_t max_len,
+                                 const char *text,
+                                 size_t text_len)
+{
+    if (*len + text_len >= max_len) {
+        return -1;
+    }
+
+    memmove(&line[*cursor + text_len],
+            &line[*cursor],
+            *len - *cursor + 1u);
+    memcpy(&line[*cursor], text, text_len);
+    *cursor += text_len;
+    *len += text_len;
+    return 0;
+}
+
+static int delete_before_cursor(char *line, size_t *len, size_t *cursor)
+{
+    if (*cursor == 0u) {
+        return -1;
+    }
+
+    memmove(&line[*cursor - 1u],
+            &line[*cursor],
+            *len - *cursor + 1u);
+    (*cursor)--;
+    (*len)--;
+    return 0;
+}
+
+static int delete_at_cursor(char *line, size_t *len, size_t cursor)
+{
+    if (cursor >= *len) {
+        return -1;
+    }
+
+    memmove(&line[cursor],
+            &line[cursor + 1u],
+            *len - cursor);
+    (*len)--;
+    return 0;
 }
 
 static int current_token_start(const char *line, size_t len)
@@ -1579,16 +1665,26 @@ static size_t longest_common_prefix_len(const char *const *words, size_t count)
     return len;
 }
 
-static void complete_line(char *line, size_t *len, size_t max_len, const char *prompt)
+static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_len, const char *prompt)
 {
     const char *const *words;
     const char *matches[96];
     size_t word_count;
     size_t match_count = 0u;
-    int token_start = current_token_start(line, *len);
-    const char *prefix = &line[token_start];
-    size_t prefix_len = *len - (size_t)token_start;
+    int token_start;
+    const char *prefix;
+    size_t prefix_len;
     size_t i;
+
+    if (*cursor != *len) {
+        putchar('\a');
+        fflush(stdout);
+        return;
+    }
+
+    token_start = current_token_start(line, *cursor);
+    prefix = &line[token_start];
+    prefix_len = *cursor - (size_t)token_start;
 
     words = completion_words_for_line(line, *len, &word_count);
     if (words == NULL || word_count == 0u) {
@@ -1619,19 +1715,20 @@ static void complete_line(char *line, size_t *len, size_t max_len, const char *p
         }
 
         add_len = match_len - prefix_len;
-        if (*len + add_len + 1u >= max_len) {
+        if (insert_text_at_cursor(line, len, cursor, max_len, &match[prefix_len], add_len) != 0) {
             putchar('\a');
             fflush(stdout);
             return;
         }
 
-        memcpy(&line[*len], &match[prefix_len], add_len);
-        *len += add_len;
-        if (*len == match_len || line[*len - 1u] != ' ') {
-            line[(*len)++] = ' ';
+        if (*len == 0u || line[*len - 1u] != ' ') {
+            if (insert_text_at_cursor(line, len, cursor, max_len, " ", 1u) != 0) {
+                putchar('\a');
+                fflush(stdout);
+                return;
+            }
         }
-        line[*len] = '\0';
-        redraw_prompt(prompt, line);
+        redraw_prompt_cursor(prompt, line, *len, *cursor);
         return;
     }
 
@@ -1641,16 +1738,13 @@ static void complete_line(char *line, size_t *len, size_t max_len, const char *p
         if (common_len > prefix_len) {
             size_t add_len = common_len - prefix_len;
 
-            if (*len + add_len >= max_len) {
+            if (insert_text_at_cursor(line, len, cursor, max_len, &matches[0][prefix_len], add_len) != 0) {
                 putchar('\a');
                 fflush(stdout);
                 return;
             }
 
-            memcpy(&line[*len], &matches[0][prefix_len], add_len);
-            *len += add_len;
-            line[*len] = '\0';
-            redraw_prompt(prompt, line);
+            redraw_prompt_cursor(prompt, line, *len, *cursor);
             return;
         }
     }
@@ -1659,7 +1753,7 @@ static void complete_line(char *line, size_t *len, size_t max_len, const char *p
     for (i = 0u; i < match_count; i++) {
         printf("%s%s", matches[i], (i + 1u == match_count) ? "\n" : "  ");
     }
-    redraw_prompt(prompt, line);
+    redraw_prompt_cursor(prompt, line, *len, *cursor);
 }
 
 static int read_line_with_completion(const char *prompt, char *line, size_t max_len)
@@ -1667,6 +1761,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
     struct termios old_term;
     struct termios new_term;
     size_t len = 0u;
+    size_t cursor = 0u;
     size_t history_pos = command_history_count;
     bool history_browsing = false;
     char saved_line[SHELL_HISTORY_LINE_LEN];
@@ -1744,7 +1839,8 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
                 }
                 history_pos--;
                 copy_line(line, &len, max_len, command_history[history_pos]);
-                redraw_prompt(prompt, line);
+                cursor = len;
+                redraw_prompt_cursor(prompt, line, len, cursor);
                 continue;
             }
 
@@ -1763,14 +1859,54 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
                     history_pos = command_history_count;
                     copy_line(line, &len, max_len, saved_line);
                 }
-                redraw_prompt(prompt, line);
+                cursor = len;
+                redraw_prompt_cursor(prompt, line, len, cursor);
+                continue;
+            }
+
+            if (seq[1] == 'C') {
+                if (cursor < len) {
+                    cursor++;
+                    printf("\033[C");
+                    fflush(stdout);
+                } else {
+                    putchar('\a');
+                    fflush(stdout);
+                }
+                continue;
+            }
+
+            if (seq[1] == 'D') {
+                if (cursor > 0u) {
+                    cursor--;
+                    printf("\033[D");
+                    fflush(stdout);
+                } else {
+                    putchar('\a');
+                    fflush(stdout);
+                }
+                continue;
+            }
+
+            if (seq[1] == '3') {
+                unsigned char tail;
+
+                if (read(STDIN_FILENO, &tail, 1u) <= 0 || tail != '~') {
+                    continue;
+                }
+                if (delete_at_cursor(line, &len, cursor) != 0) {
+                    putchar('\a');
+                    fflush(stdout);
+                    continue;
+                }
+                redraw_prompt_cursor(prompt, line, len, cursor);
                 continue;
             }
 
             continue;
         }
         if (ch == '\t') {
-            complete_line(line, &len, max_len, prompt);
+            complete_line(line, &len, &cursor, max_len, prompt);
             history_browsing = false;
             continue;
         }
@@ -1779,25 +1915,22 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
             return -1;
         }
         if (ch == 127u || ch == 8u) {
-            if (len > 0u) {
-                len--;
-                line[len] = '\0';
-                printf("\b \b");
-                fflush(stdout);
-                history_browsing = false;
-            }
-            continue;
-        }
-        if (isprint(ch)) {
-            if (len + 1u >= max_len) {
+            if (delete_before_cursor(line, &len, &cursor) != 0) {
                 putchar('\a');
                 fflush(stdout);
                 continue;
             }
-            line[len++] = (char)ch;
-            line[len] = '\0';
-            putchar(ch);
-            fflush(stdout);
+            redraw_prompt_cursor(prompt, line, len, cursor);
+            history_browsing = false;
+            continue;
+        }
+        if (isprint(ch)) {
+            if (insert_text_at_cursor(line, &len, &cursor, max_len, (const char *)&ch, 1u) != 0) {
+                putchar('\a');
+                fflush(stdout);
+                continue;
+            }
+            redraw_prompt_cursor(prompt, line, len, cursor);
             history_browsing = false;
             continue;
         }
@@ -1891,7 +2024,14 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
         if (enabled) {
             printf("waiting for soft start\n");
             shell_sleep_ms(2000u);
+            if (shell_reset_can_controller(state) != 0) {
+                printf("CAN controller reset failed\n");
+            }
         }
+        return 0;
+    }
+    if (strcmp(cmd, "can-reset") == 0) {
+        shell_reset_can_controller(state);
         return 0;
     }
     if (strcmp(cmd, "listen") == 0) {
@@ -1950,7 +2090,7 @@ static int run_terminal(app_state *state)
     char *argv[16];
     char prompt[64];
 
-    printf("Entering interactive motor terminal. Type help for commands, Tab to complete, Up/Down for history, q to exit.\n");
+    printf("Entering interactive motor terminal. Type help for commands, Tab to complete, arrows to edit/history, q to exit.\n");
     print_config(state);
 
     while (!shell_stop_requested) {
@@ -2006,6 +2146,9 @@ int shell_run_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "terminal-off") == 0) {
         return run_special(state, BXI_MOTOR_CMD_TERMINAL_OFF, argc, argv);
+    }
+    if (strcmp(cmd, "can-reset") == 0) {
+        return shell_reset_can_controller(state);
     }
     if (strcmp(cmd, "uart-toggle") == 0) {
         return run_uart_toggle(state, argc, argv);

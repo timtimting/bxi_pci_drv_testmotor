@@ -34,6 +34,7 @@ int shell_parse_uint_arg(const char *text, unsigned int *value);
 int shell_parse_float_arg(const char *text, float *value);
 void shell_print_usage(const char *prog);
 int shell_can_rx_callback(void *arg, canfd_packet *msg);
+int shell_reset_can_controller(app_state *state);
 int shell_run_command(app_state *state, int argc, char **argv);
 
 #endif
