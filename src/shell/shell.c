@@ -322,6 +322,46 @@ static int is_reg_cmd_id(unsigned int can_id)
            cmd == CAN_CMD_REG_INFO;
 }
 
+static unsigned int motor_low_id(const app_state *state)
+{
+    return state->motor_id & 0x0fu;
+}
+
+static int is_motor_terminal_output_id(const app_state *state, unsigned int can_id)
+{
+    if (state->motor_id == 0u || state->motor_id > 0x0fu) {
+        return 0;
+    }
+
+    return can_id == (0x7f0u | motor_low_id(state));
+}
+
+static void print_motor_terminal_output(unsigned int bus,
+                                        unsigned int can_id,
+                                        const uint8_t *data,
+                                        unsigned int len)
+{
+    unsigned int i;
+
+    printf("motor-log[%u:0x%03x]: ", bus, can_id);
+    for (i = 0u; i < len; i++) {
+        unsigned char ch = data[i];
+
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n' || ch == '\t' || isprint(ch)) {
+            putchar(ch);
+        } else {
+            printf("\\x%02x", ch);
+        }
+    }
+    if (len == 0u || data[len - 1u] != '\n') {
+        putchar('\n');
+    }
+    fflush(stdout);
+}
+
 static void print_reg_value(unsigned int type, uint32_t raw)
 {
     switch (type) {
@@ -389,6 +429,11 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
     }
 
     can_id = clean_can_id(msg->frame.can_id);
+    if (is_motor_terminal_output_id(state, can_id)) {
+        print_motor_terminal_output(msg->bus, can_id, msg->frame.data, msg->frame.len);
+        return 0;
+    }
+
     candidate_reply = state->print_all || can_id == state->master_id ||
                       (state->last_tx_can_id != 0u && can_id == state->last_tx_can_id) ||
                       (msg->frame.len >= BXI_MOTOR_MIT_LEN && msg->frame.data[0] == state->motor_id);
@@ -471,9 +516,10 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s [options] listen [seconds]\n", prog);
     printf("  sudo %s [options] ping [wait_ms]\n", prog);
     printf("  sudo %s [options] enable|disable|zero|terminal-on|terminal-off [wait_ms]\n", prog);
+    printf("  sudo %s [options] uart-toggle\n", prog);
     printf("  sudo %s [options] cmd <pos> <vel> <kp> <kd> <torque> [duration_ms] [period_ms]\n", prog);
     printf("  sudo %s [options] scan [max_id]\n", prog);
-    printf("  sudo %s [options] reg help|info|list|read|write|write-raw|write-float|save ...\n", prog);
+    printf("  sudo %s [options] reg help|info|list|dump|read|write|write-raw|write-float|save ...\n", prog);
     printf("\nOptions:\n");
     printf("  -b, --bus N          CANFD bus, default 0\n");
     printf("  -i, --id N           target motor can_id, default 1\n");
@@ -555,12 +601,22 @@ static int send_mit(app_state *state, float position, float velocity, float kp, 
 
 static int command_wait_reply(app_state *state, unsigned int wait_ms, unsigned int before)
 {
-    shell_sleep_ms(wait_ms);
-    if (state->rx_count == before) {
-        printf("no matching feedback received in %u ms\n", wait_ms);
-        return 1;
+    unsigned int waited = 0u;
+
+    while (!shell_stop_requested && waited < wait_ms) {
+        if (state->rx_count != before) {
+            return 0;
+        }
+        shell_sleep_ms(1u);
+        waited++;
     }
-    return 0;
+
+    if (state->rx_count != before) {
+        return 0;
+    }
+
+    printf("no matching feedback received in %u ms\n", wait_ms);
+    return 1;
 }
 
 static int run_listen(app_state *state, int argc, char **argv)
@@ -703,6 +759,28 @@ static int run_scan(app_state *state, int argc, char **argv)
     return 0;
 }
 
+static int run_uart_toggle(app_state *state, int argc, char **argv)
+{
+    uint8_t data = '@';
+    unsigned int frame_id;
+
+    (void)argc;
+    (void)argv;
+
+    if (state->motor_id == 0u || state->motor_id > 0x0fu) {
+        fprintf(stderr, "uart-toggle requires motor id in [1, 15], current id is 0x%x\n", state->motor_id);
+        return -1;
+    }
+
+    frame_id = 0x7e0u | motor_low_id(state);
+    if (send_packet(state, frame_id, &data, 1u) != 0) {
+        return -1;
+    }
+
+    printf("sent uart_over_can toggle to id:0x%03x\n", frame_id);
+    return 0;
+}
+
 static int reg_frame_id(const app_state *state, unsigned int cmd, unsigned int *frame_id)
 {
     if (state->motor_id == 0u || state->motor_id > 0x0fu) {
@@ -712,6 +790,29 @@ static int reg_frame_id(const app_state *state, unsigned int cmd, unsigned int *
 
     *frame_id = (cmd << 4) | (state->motor_id & 0x0fu);
     return 0;
+}
+
+static int send_reg_read_ref(app_state *state,
+                             unsigned int reg,
+                             unsigned int type,
+                             const char *name,
+                             unsigned int wait_ms)
+{
+    uint8_t data[4];
+    unsigned int frame_id;
+    unsigned int before;
+
+    if (reg_frame_id(state, CAN_CMD_REG_READ, &frame_id) != 0) {
+        return -1;
+    }
+
+    u32_to_data(reg, data);
+    remember_reg_request(state, reg, type, name);
+    before = state->rx_count;
+    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
+        return -1;
+    }
+    return command_wait_reply(state, wait_ms, before);
 }
 
 static int run_reg_info(app_state *state, int argc, char **argv)
@@ -739,12 +840,9 @@ static int run_reg_info(app_state *state, int argc, char **argv)
 
 static int run_reg_read(app_state *state, int argc, char **argv)
 {
-    uint8_t data[4];
-    unsigned int frame_id;
     unsigned int reg;
     unsigned int type;
     unsigned int wait_ms = 1000u;
-    unsigned int before;
     char name[64];
 
     if (argc < 1 || parse_reg_ref(argv[0], &reg, &type, name, sizeof(name)) != 0) {
@@ -755,17 +853,8 @@ static int run_reg_read(app_state *state, int argc, char **argv)
         fprintf(stderr, "invalid wait_ms: %s\n", argv[1]);
         return -1;
     }
-    if (reg_frame_id(state, CAN_CMD_REG_READ, &frame_id) != 0) {
-        return -1;
-    }
 
-    u32_to_data(reg, data);
-    remember_reg_request(state, reg, type, name);
-    before = state->rx_count;
-    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
-        return -1;
-    }
-    return command_wait_reply(state, wait_ms, before);
+    return send_reg_read_ref(state, reg, type, name, wait_ms);
 }
 
 static int send_reg_write_raw(app_state *state,
@@ -957,17 +1046,75 @@ static int run_reg_list(app_state *state, int argc, char **argv)
     return 0;
 }
 
+static int run_reg_dump(app_state *state, int argc, char **argv)
+{
+    const char *filter = NULL;
+    unsigned int wait_ms = 200u;
+    unsigned int sent = 0u;
+    unsigned int timeouts = 0u;
+    size_t i;
+
+    if (argc > 0) {
+        if (shell_parse_uint_arg(argv[0], &wait_ms) != 0) {
+            filter = argv[0];
+        }
+    }
+    if (argc > 1 && shell_parse_uint_arg(argv[1], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[1]);
+        return -1;
+    }
+
+    printf("dumping register values%s%s, wait_ms=%u\n",
+           filter != NULL ? " matching " : "",
+           filter != NULL ? filter : "",
+           wait_ms);
+
+    for (i = 0u; i < sizeof(config_regs) / sizeof(config_regs[0]) && !shell_stop_requested; i++) {
+        const config_reg *reg = &config_regs[i];
+        unsigned int element;
+
+        if (!reg_matches_filter(reg, filter)) {
+            continue;
+        }
+
+        for (element = 0u; element < reg->count && !shell_stop_requested; element++) {
+            unsigned int index = reg->index + element;
+            char name[64];
+            int ret;
+
+            if (reg->count > 1u) {
+                snprintf(name, sizeof(name), "%s[%u]", reg->name, element);
+            } else {
+                snprintf(name, sizeof(name), "%s", reg->name);
+            }
+
+            ret = send_reg_read_ref(state, index, reg->type, name, wait_ms);
+            if (ret < 0) {
+                return -1;
+            }
+            if (ret > 0) {
+                timeouts++;
+            }
+            sent++;
+        }
+    }
+
+    printf("dump finished, sent %u read(s), timeout(s): %u\n", sent, timeouts);
+    return timeouts == 0u ? 0 : 1;
+}
+
 static void print_reg_help(void)
 {
     printf("Register commands:\n");
     printf("  reg list [filter]                                      list usr_config.h registers\n");
+    printf("  reg dump [filter] [wait_ms]                            read all matching register values\n");
     printf("  reg info [wait_ms]                                     read register count\n");
     printf("  reg read <index|name|array[index]> [wait_ms]           read one 32-bit register\n");
     printf("  reg write <index|name|array[index]> <value> [wait_ms]  write with known type\n");
     printf("  reg write-raw <index|name|array[index]> <u32> [wait_ms] write raw 32-bit value\n");
     printf("  reg write-float <index|name|array[index]> <f> [wait_ms] write IEEE-754 float bits\n");
     printf("  reg save [wait_ms]                                     save writable registers\n");
-    printf("Examples: reg read can_id | reg write can_id 2 | reg write pos_gain 20 | reg read offset_lut[3]\n");
+    printf("Examples: reg read can_id | reg write can_id 2 | reg dump current | reg read offset_lut[3]\n");
     printf("Reply status: 0=OK, -1=invalid addr, -2=read only, -3=save fail, -4=invalid len\n");
 }
 
@@ -982,6 +1129,9 @@ static int run_reg(app_state *state, int argc, char **argv)
     }
     if (strcmp(argv[0], "list") == 0) {
         return run_reg_list(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "dump") == 0) {
+        return run_reg_dump(state, argc - 1, argv + 1);
     }
     if (strcmp(argv[0], "read") == 0) {
         return run_reg_read(state, argc - 1, argv + 1);
@@ -1045,6 +1195,7 @@ static void print_terminal_help(void)
     printf("  disable [wait_ms]               exit MIT motor mode\n");
     printf("  zero [wait_ms]                  save zero position, only in menu mode\n");
     printf("  terminal-on|terminal-off        toggle motor terminal output\n");
+    printf("  uart-toggle                     toggle motor uart_over_can bridge\n");
     printf("  cmd <p> <v> <kp> <kd> <t> [duration_ms] [period_ms]\n");
     printf("  scan [max_id]                   scan motor ids 1..max_id\n");
     printf("  reg help                        show CAN register commands from usr_config.h\n");
@@ -1110,6 +1261,7 @@ static const char *const command_words[] = {
     "zero",
     "terminal-on",
     "terminal-off",
+    "uart-toggle",
     "cmd",
     "scan",
     "terminal",
@@ -1126,6 +1278,7 @@ static const char *const reg_words[] = {
     "help",
     "info",
     "list",
+    "dump",
     "read",
     "write",
     "write-raw",
@@ -1372,7 +1525,8 @@ static const char *const *completion_words_for_line(const char *line, size_t len
              strcmp(second, "write") == 0 ||
              strcmp(second, "write-raw") == 0 ||
              strcmp(second, "write-float") == 0 ||
-             strcmp(second, "list") == 0)) {
+             strcmp(second, "list") == 0 ||
+             strcmp(second, "dump") == 0)) {
             *count = sizeof(reg_name_words) / sizeof(reg_name_words[0]);
             return reg_name_words;
         }
@@ -1747,6 +1901,10 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
         run_special(state, BXI_MOTOR_CMD_TERMINAL_OFF, argc - 1, argv + 1);
         return 0;
     }
+    if (strcmp(cmd, "uart-toggle") == 0) {
+        run_uart_toggle(state, argc - 1, argv + 1);
+        return 0;
+    }
     if (strcmp(cmd, "cmd") == 0) {
         run_cmd(state, argc - 1, argv + 1);
         return 0;
@@ -1827,6 +1985,9 @@ int shell_run_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "terminal-off") == 0) {
         return run_special(state, BXI_MOTOR_CMD_TERMINAL_OFF, argc, argv);
+    }
+    if (strcmp(cmd, "uart-toggle") == 0) {
+        return run_uart_toggle(state, argc, argv);
     }
     if (strcmp(cmd, "cmd") == 0) {
         return run_cmd(state, argc, argv);
