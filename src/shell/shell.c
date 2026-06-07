@@ -499,30 +499,6 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
     return 0;
 }
 
-int shell_reset_can_controller(app_state *state)
-{
-    if (state == NULL) {
-        return -1;
-    }
-
-    printf("resetting CAN controller to clear error counters\n");
-    bxi_pci_exit();
-    shell_sleep_ms(100u);
-
-    state->rx_count = 0u;
-    state->last_tx_time_us = 0u;
-    state->last_tx_can_id = 0u;
-    forget_reg_request(state);
-
-    if (bxi_pci_init(shell_can_rx_callback, state, -1) == -1) {
-        fprintf(stderr, "bxi_pci_init failed while resetting CAN controller\n");
-        return -1;
-    }
-
-    printf("CAN controller reset done\n");
-    return 0;
-}
-
 int shell_parse_uint_arg(const char *text, unsigned int *value)
 {
     char *end = NULL;
@@ -561,7 +537,6 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s [options] listen [seconds]\n", prog);
     printf("  sudo %s [options] ping [wait_ms]\n", prog);
     printf("  sudo %s [options] enable|disable|zero|terminal-on|terminal-off [wait_ms]\n", prog);
-    printf("  sudo %s [options] can-reset\n", prog);
     printf("  sudo %s [options] uart-toggle\n", prog);
     printf("  sudo %s [options] cmd <pos> <vel> <kp> <kd> <torque> [duration_ms] [period_ms]\n", prog);
     printf("  sudo %s [options] scan [max_id]\n", prog);
@@ -1235,7 +1210,6 @@ static void print_terminal_help(void)
     printf("  master-id <id>                  set feedback frame id\n");
     printf("  canfd | classic                 switch frame format\n");
     printf("  all on|off                      print all received frames\n");
-    printf("  can-reset                       reset PCI CAN controller/error counters\n");
     printf("  power on|off                    motor power control\n");
     printf("  listen [seconds]                print feedback\n");
     printf("  ping [wait_ms]                  send zero MIT frame and wait feedback\n");
@@ -1300,7 +1274,6 @@ static const char *const command_words[] = {
     "master",
     "canfd",
     "classic",
-    "can-reset",
     "all",
     "power",
     "listen",
@@ -2024,14 +1997,7 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
         if (enabled) {
             printf("waiting for soft start\n");
             shell_sleep_ms(2000u);
-            if (shell_reset_can_controller(state) != 0) {
-                printf("CAN controller reset failed\n");
-            }
         }
-        return 0;
-    }
-    if (strcmp(cmd, "can-reset") == 0) {
-        shell_reset_can_controller(state);
         return 0;
     }
     if (strcmp(cmd, "listen") == 0) {
@@ -2146,9 +2112,6 @@ int shell_run_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "terminal-off") == 0) {
         return run_special(state, BXI_MOTOR_CMD_TERMINAL_OFF, argc, argv);
-    }
-    if (strcmp(cmd, "can-reset") == 0) {
-        return shell_reset_can_controller(state);
     }
     if (strcmp(cmd, "uart-toggle") == 0) {
         return run_uart_toggle(state, argc, argv);
