@@ -322,6 +322,28 @@ static int is_reg_cmd_id(unsigned int can_id)
            cmd == CAN_CMD_REG_INFO;
 }
 
+static void print_reg_value(unsigned int type, uint32_t raw)
+{
+    switch (type) {
+    case REG_TYPE_FLOAT:
+        printf(" value:%g raw:0x%08x", u32_to_float(raw), raw);
+        break;
+    case REG_TYPE_INT:
+        printf(" value:%d raw:0x%08x", (int32_t)raw, raw);
+        break;
+    case REG_TYPE_UINT:
+        printf(" value:%u raw:0x%08x", raw, raw);
+        break;
+    default:
+        printf(" raw:0x%08x uint:%u int:%d float:%g",
+               raw,
+               raw,
+               (int32_t)raw,
+               u32_to_float(raw));
+        break;
+    }
+}
+
 static int print_reg_reply(app_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
 {
     unsigned int cmd = can_id >> 4;
@@ -345,12 +367,8 @@ static int print_reg_reply(app_state *state, unsigned int can_id, const uint8_t 
                state->last_reg_index,
                reg_type_name(state->last_reg_type));
     }
-    printf(" | status:%d value:0x%08x uint:%u int:%d float:%g",
-           status,
-           value,
-           value,
-           (int32_t)value,
-           u32_to_float(value));
+    printf(" | status:%d", status);
+    print_reg_value(state->last_reg_type, value);
     return 1;
 }
 
