@@ -28,6 +28,11 @@ enum {
     REG_TYPE_FLOAT,
 };
 
+enum {
+    SHELL_HISTORY_DEPTH = 32,
+    SHELL_HISTORY_LINE_LEN = 256,
+};
+
 typedef struct
 {
     const char *name;
@@ -1006,6 +1011,7 @@ static void print_terminal_help(void)
 {
     printf("Interactive commands:\n");
     printf("  Tab                             complete command or show candidates\n");
+    printf("  Up/Down                         browse command history\n");
     printf("  q | quit | exit                 exit terminal\n");
     printf("  help                            show this help\n");
     printf("  config                          show current settings\n");
@@ -1183,6 +1189,65 @@ static void redraw_prompt(const char *prompt, const char *line)
     fflush(stdout);
 }
 
+static char command_history[SHELL_HISTORY_DEPTH][SHELL_HISTORY_LINE_LEN];
+static size_t command_history_count = 0u;
+
+static int line_has_text(const char *line)
+{
+    size_t i;
+
+    for (i = 0u; line[i] != '\0'; i++) {
+        if (!isspace((unsigned char)line[i])) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void history_push(const char *line)
+{
+    if (!line_has_text(line)) {
+        return;
+    }
+
+    if (command_history_count > 0u &&
+        strcmp(command_history[command_history_count - 1u], line) == 0) {
+        return;
+    }
+
+    if (command_history_count == SHELL_HISTORY_DEPTH) {
+        memmove(command_history,
+                command_history + 1,
+                sizeof(command_history[0]) * (SHELL_HISTORY_DEPTH - 1u));
+        command_history_count--;
+    }
+
+    snprintf(command_history[command_history_count],
+             sizeof(command_history[command_history_count]),
+             "%s",
+             line);
+    command_history_count++;
+}
+
+static void copy_line(char *dst, size_t *dst_len, size_t max_len, const char *src)
+{
+    size_t len;
+
+    if (max_len == 0u) {
+        return;
+    }
+
+    len = strlen(src);
+    if (len >= max_len) {
+        len = max_len - 1u;
+    }
+
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+    *dst_len = len;
+}
+
 static int current_token_start(const char *line, size_t len)
 {
     int pos = (int)len;
@@ -1299,6 +1364,28 @@ static const char *const *completion_words_for_line(const char *line, size_t len
     return NULL;
 }
 
+static size_t longest_common_prefix_len(const char *const *words, size_t count)
+{
+    size_t len;
+    size_t i;
+
+    if (count == 0u) {
+        return 0u;
+    }
+
+    len = strlen(words[0]);
+    for (i = 1u; i < count; i++) {
+        size_t j = 0u;
+
+        while (j < len && words[i][j] != '\0' && words[0][j] == words[i][j]) {
+            j++;
+        }
+        len = j;
+    }
+
+    return len;
+}
+
 static void complete_line(char *line, size_t *len, size_t max_len, const char *prompt)
 {
     const char *const *words;
@@ -1355,6 +1442,26 @@ static void complete_line(char *line, size_t *len, size_t max_len, const char *p
         return;
     }
 
+    {
+        size_t common_len = longest_common_prefix_len(matches, match_count);
+
+        if (common_len > prefix_len) {
+            size_t add_len = common_len - prefix_len;
+
+            if (*len + add_len >= max_len) {
+                putchar('\a');
+                fflush(stdout);
+                return;
+            }
+
+            memcpy(&line[*len], &matches[0][prefix_len], add_len);
+            *len += add_len;
+            line[*len] = '\0';
+            redraw_prompt(prompt, line);
+            return;
+        }
+    }
+
     printf("\n");
     for (i = 0u; i < match_count; i++) {
         printf("%s%s", matches[i], (i + 1u == match_count) ? "\n" : "  ");
@@ -1367,6 +1474,10 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
     struct termios old_term;
     struct termios new_term;
     size_t len = 0u;
+    size_t history_pos = command_history_count;
+    bool history_browsing = false;
+    char saved_line[SHELL_HISTORY_LINE_LEN];
+    size_t saved_len = 0u;
 
     if (max_len == 0u) {
         return -1;
@@ -1393,6 +1504,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
     }
 
     line[0] = '\0';
+    saved_line[0] = '\0';
     while (!shell_stop_requested) {
         unsigned char ch;
         ssize_t n = read(STDIN_FILENO, &ch, 1u);
@@ -1405,11 +1517,68 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
         if (ch == '\r' || ch == '\n') {
             putchar('\n');
             line[len] = '\0';
+            history_push(line);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
             return 0;
         }
+        if (ch == 27u) {
+            unsigned char seq[2];
+
+            if (read(STDIN_FILENO, &seq[0], 1u) <= 0 ||
+                read(STDIN_FILENO, &seq[1], 1u) <= 0) {
+                continue;
+            }
+
+            if (seq[0] != '[') {
+                continue;
+            }
+
+            if (seq[1] == 'A') {
+                if (command_history_count == 0u) {
+                    putchar('\a');
+                    fflush(stdout);
+                    continue;
+                }
+                if (!history_browsing) {
+                    copy_line(saved_line, &saved_len, sizeof(saved_line), line);
+                    history_pos = command_history_count;
+                    history_browsing = true;
+                }
+                if (history_pos == 0u) {
+                    putchar('\a');
+                    fflush(stdout);
+                    continue;
+                }
+                history_pos--;
+                copy_line(line, &len, max_len, command_history[history_pos]);
+                redraw_prompt(prompt, line);
+                continue;
+            }
+
+            if (seq[1] == 'B') {
+                if (!history_browsing) {
+                    putchar('\a');
+                    fflush(stdout);
+                    continue;
+                }
+
+                if (history_pos + 1u < command_history_count) {
+                    history_pos++;
+                    copy_line(line, &len, max_len, command_history[history_pos]);
+                } else {
+                    history_browsing = false;
+                    history_pos = command_history_count;
+                    copy_line(line, &len, max_len, saved_line);
+                }
+                redraw_prompt(prompt, line);
+                continue;
+            }
+
+            continue;
+        }
         if (ch == '\t') {
             complete_line(line, &len, max_len, prompt);
+            history_browsing = false;
             continue;
         }
         if (ch == 4u) {
@@ -1422,6 +1591,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
                 line[len] = '\0';
                 printf("\b \b");
                 fflush(stdout);
+                history_browsing = false;
             }
             continue;
         }
@@ -1435,6 +1605,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
             line[len] = '\0';
             putchar(ch);
             fflush(stdout);
+            history_browsing = false;
             continue;
         }
     }
@@ -1582,7 +1753,7 @@ static int run_terminal(app_state *state)
     char *argv[16];
     char prompt[64];
 
-    printf("Entering interactive motor terminal. Type help for commands, Tab to complete, q to exit.\n");
+    printf("Entering interactive motor terminal. Type help for commands, Tab to complete, Up/Down for history, q to exit.\n");
     print_config(state);
 
     while (!shell_stop_requested) {
