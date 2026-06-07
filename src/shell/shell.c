@@ -336,6 +336,14 @@ static int is_motor_terminal_output_id(const app_state *state, unsigned int can_
     return can_id == (0x7f0u | motor_low_id(state));
 }
 
+static bool motor_log_at_line_start = true;
+static unsigned char motor_log_last_newline = 0u;
+
+static void print_motor_log_prefix(unsigned int bus, unsigned int can_id)
+{
+    printf("motor-log[%u:0x%03x]: ", bus, can_id);
+}
+
 static void print_motor_terminal_output(unsigned int bus,
                                         unsigned int can_id,
                                         const uint8_t *data,
@@ -343,21 +351,34 @@ static void print_motor_terminal_output(unsigned int bus,
 {
     unsigned int i;
 
-    printf("motor-log[%u:0x%03x]: ", bus, can_id);
     for (i = 0u; i < len; i++) {
         unsigned char ch = data[i];
 
-        if (ch == '\r') {
+        if (ch == '\n' || ch == '\r') {
+            if (motor_log_last_newline != 0u && ch != motor_log_last_newline) {
+                motor_log_last_newline = 0u;
+                continue;
+            }
+            if (motor_log_at_line_start) {
+                print_motor_log_prefix(bus, can_id);
+            }
+            putchar('\n');
+            motor_log_at_line_start = true;
+            motor_log_last_newline = ch;
             continue;
         }
-        if (ch == '\n' || ch == '\t' || isprint(ch)) {
-            putchar(ch);
+
+        if (motor_log_at_line_start) {
+            print_motor_log_prefix(bus, can_id);
+            motor_log_at_line_start = false;
+        }
+        motor_log_last_newline = 0u;
+
+        if (ch == '\t' || ch >= 0x20u) {
+            fwrite(&ch, 1u, 1u, stdout);
         } else {
             printf("\\x%02x", ch);
         }
-    }
-    if (len == 0u || data[len - 1u] != '\n') {
-        putchar('\n');
     }
     fflush(stdout);
 }
