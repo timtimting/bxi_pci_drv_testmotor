@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,91 @@
 #include <unistd.h>
 
 volatile sig_atomic_t shell_stop_requested = 0;
+
+enum {
+    CAN_CMD_REG_READ = 23,
+    CAN_CMD_REG_WRITE = 24,
+    CAN_CMD_REG_SAVE = 25,
+    CAN_CMD_REG_INFO = 26,
+};
+
+enum {
+    REG_TYPE_RAW = 0,
+    REG_TYPE_INT,
+    REG_TYPE_UINT,
+    REG_TYPE_FLOAT,
+};
+
+typedef struct
+{
+    const char *name;
+    unsigned int index;
+    unsigned int count;
+    unsigned int type;
+} config_reg;
+
+static const config_reg config_regs[] = {
+    {"motor_pole_pairs", 0u, 1u, REG_TYPE_INT},
+    {"motor_phase_resistance", 1u, 1u, REG_TYPE_FLOAT},
+    {"motor_phase_inductance", 2u, 1u, REG_TYPE_FLOAT},
+    {"inertia", 3u, 1u, REG_TYPE_FLOAT},
+    {"reduction_ratio", 4u, 1u, REG_TYPE_FLOAT},
+    {"encoder_dir_rev", 5u, 1u, REG_TYPE_INT},
+    {"encoder_offset", 6u, 1u, REG_TYPE_INT},
+    {"ldc1614_dir", 7u, 1u, REG_TYPE_INT},
+    {"ldc1614_offset", 8u, 1u, REG_TYPE_FLOAT},
+    {"ldc_channel1_max", 9u, 1u, REG_TYPE_UINT},
+    {"ldc_channel1_min", 10u, 1u, REG_TYPE_UINT},
+    {"ldc_channel1_middle", 11u, 1u, REG_TYPE_UINT},
+    {"ldc_channel2_max", 12u, 1u, REG_TYPE_UINT},
+    {"ldc_channel2_min", 13u, 1u, REG_TYPE_UINT},
+    {"ldc_channel2_middle", 14u, 1u, REG_TYPE_UINT},
+    {"offset_lut", 15u, 128u, REG_TYPE_INT},
+    {"ldc1614_offset_lut", 143u, 360u, REG_TYPE_FLOAT},
+    {"calib_valid", 503u, 1u, REG_TYPE_INT},
+    {"ldc1614_calib_valid", 504u, 1u, REG_TYPE_INT},
+    {"calib_current", 505u, 1u, REG_TYPE_FLOAT},
+    {"calib_max_voltage", 506u, 1u, REG_TYPE_FLOAT},
+    {"control_mode", 507u, 1u, REG_TYPE_INT},
+    {"current_ramp_rate", 508u, 1u, REG_TYPE_FLOAT},
+    {"vel_ramp_rate", 509u, 1u, REG_TYPE_FLOAT},
+    {"traj_vel", 510u, 1u, REG_TYPE_FLOAT},
+    {"traj_accel", 511u, 1u, REG_TYPE_FLOAT},
+    {"traj_decel", 512u, 1u, REG_TYPE_FLOAT},
+    {"pos_gain", 513u, 1u, REG_TYPE_FLOAT},
+    {"vel_gain", 514u, 1u, REG_TYPE_FLOAT},
+    {"vel_integrator_gain", 515u, 1u, REG_TYPE_FLOAT},
+    {"vel_limit", 516u, 1u, REG_TYPE_FLOAT},
+    {"current_limit", 517u, 1u, REG_TYPE_FLOAT},
+    {"torquet_limit", 518u, 1u, REG_TYPE_FLOAT},
+    {"torque_limit", 518u, 1u, REG_TYPE_FLOAT},
+    {"current_ctrl_p_gain", 519u, 1u, REG_TYPE_FLOAT},
+    {"current_ctrl_i_gain", 520u, 1u, REG_TYPE_FLOAT},
+    {"current_ctrl_bandwidth", 521u, 1u, REG_TYPE_INT},
+    {"protect_under_voltage", 522u, 1u, REG_TYPE_FLOAT},
+    {"protect_over_voltage", 523u, 1u, REG_TYPE_FLOAT},
+    {"protect_over_speed", 524u, 1u, REG_TYPE_FLOAT},
+    {"protect_temperature_low", 525u, 1u, REG_TYPE_FLOAT},
+    {"protect_temperature_high", 526u, 1u, REG_TYPE_FLOAT},
+    {"can_id", 527u, 1u, REG_TYPE_INT},
+    {"can_timeout_ms", 528u, 1u, REG_TYPE_INT},
+    {"can_sync_target_enable", 529u, 1u, REG_TYPE_INT},
+    {"mit_mode", 530u, 1u, REG_TYPE_INT},
+    {"max_pos", 531u, 1u, REG_TYPE_FLOAT},
+    {"max_vel", 532u, 1u, REG_TYPE_FLOAT},
+    {"max_tor", 533u, 1u, REG_TYPE_FLOAT},
+    {"kp_max", 534u, 1u, REG_TYPE_FLOAT},
+    {"kd_max", 535u, 1u, REG_TYPE_FLOAT},
+    {"usr_enc1_offset", 536u, 1u, REG_TYPE_INT},
+    {"usr_enc2_offset", 537u, 1u, REG_TYPE_FLOAT},
+    {"can_mode_switch", 538u, 1u, REG_TYPE_INT},
+    {"master_id", 539u, 1u, REG_TYPE_INT},
+    {"protect_i_abc_error", 540u, 1u, REG_TYPE_FLOAT},
+    {"field_weaken_mode", 541u, 1u, REG_TYPE_INT},
+    {"sync_boot_id_flag", 542u, 1u, REG_TYPE_INT},
+    {"un_use", 543u, 16u, REG_TYPE_INT},
+    {"crc", 559u, 1u, REG_TYPE_UINT},
+};
 
 static uint64_t timebase64_get(void)
 {
@@ -53,6 +139,216 @@ static void print_data(const uint8_t *data, unsigned int len)
     }
 }
 
+static void u32_to_data(uint32_t value, uint8_t *data)
+{
+    data[0] = (uint8_t)((value >> 0) & 0xffu);
+    data[1] = (uint8_t)((value >> 8) & 0xffu);
+    data[2] = (uint8_t)((value >> 16) & 0xffu);
+    data[3] = (uint8_t)((value >> 24) & 0xffu);
+}
+
+static uint32_t data_to_u32(const uint8_t *data)
+{
+    return ((uint32_t)data[0] << 0) |
+           ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+}
+
+static int32_t data_to_i32(const uint8_t *data)
+{
+    return (int32_t)data_to_u32(data);
+}
+
+static uint32_t float_to_u32(float value)
+{
+    uint32_t raw;
+
+    memcpy(&raw, &value, sizeof(raw));
+    return raw;
+}
+
+static float u32_to_float(uint32_t raw)
+{
+    float value;
+
+    memcpy(&value, &raw, sizeof(value));
+    return value;
+}
+
+static const char *reg_type_name(unsigned int type)
+{
+    switch (type) {
+    case REG_TYPE_INT:
+        return "int";
+    case REG_TYPE_UINT:
+        return "uint";
+    case REG_TYPE_FLOAT:
+        return "float";
+    default:
+        return "raw";
+    }
+}
+
+static int parse_i32_arg(const char *text, int32_t *value)
+{
+    char *end = NULL;
+    long parsed;
+
+    errno = 0;
+    parsed = strtol(text, &end, 0);
+    if (errno != 0 || end == text || *end != '\0' ||
+        parsed < INT32_MIN || parsed > INT32_MAX) {
+        return -1;
+    }
+
+    *value = (int32_t)parsed;
+    return 0;
+}
+
+static const config_reg *find_config_reg(const char *name)
+{
+    size_t i;
+
+    for (i = 0u; i < sizeof(config_regs) / sizeof(config_regs[0]); i++) {
+        if (strcmp(config_regs[i].name, name) == 0) {
+            return &config_regs[i];
+        }
+    }
+
+    return NULL;
+}
+
+static int parse_reg_ref(const char *text,
+                         unsigned int *index,
+                         unsigned int *type,
+                         char *name,
+                         size_t name_len)
+{
+    unsigned int numeric_index;
+    char base_name[96];
+    const char *bracket;
+    const config_reg *reg;
+    unsigned int element = 0u;
+
+    if (shell_parse_uint_arg(text, &numeric_index) == 0) {
+        *index = numeric_index;
+        *type = REG_TYPE_RAW;
+        if (name_len > 0u) {
+            snprintf(name, name_len, "%u", numeric_index);
+        }
+        return 0;
+    }
+
+    bracket = strchr(text, '[');
+    if (bracket != NULL) {
+        const char *end_bracket = strchr(bracket, ']');
+        char element_text[32];
+        size_t base_len = (size_t)(bracket - text);
+        size_t element_len;
+
+        if (end_bracket == NULL || end_bracket[1] != '\0' ||
+            base_len == 0u || base_len >= sizeof(base_name)) {
+            return -1;
+        }
+
+        element_len = (size_t)(end_bracket - bracket - 1);
+        if (element_len == 0u || element_len >= sizeof(element_text)) {
+            return -1;
+        }
+
+        memcpy(base_name, text, base_len);
+        base_name[base_len] = '\0';
+        memcpy(element_text, bracket + 1, element_len);
+        element_text[element_len] = '\0';
+
+        if (shell_parse_uint_arg(element_text, &element) != 0) {
+            return -1;
+        }
+    } else {
+        snprintf(base_name, sizeof(base_name), "%s", text);
+    }
+
+    reg = find_config_reg(base_name);
+    if (reg == NULL) {
+        return -1;
+    }
+    if (element >= reg->count) {
+        return -1;
+    }
+
+    *index = reg->index + element;
+    *type = reg->type;
+    if (name_len > 0u) {
+        if (reg->count > 1u || bracket != NULL) {
+            snprintf(name, name_len, "%s[%u]", reg->name, element);
+        } else {
+            snprintf(name, name_len, "%s", reg->name);
+        }
+    }
+
+    return 0;
+}
+
+static void remember_reg_request(app_state *state,
+                                 unsigned int index,
+                                 unsigned int type,
+                                 const char *name)
+{
+    state->last_reg_index = index;
+    state->last_reg_type = type;
+    snprintf(state->last_reg_name, sizeof(state->last_reg_name), "%s", name != NULL ? name : "");
+}
+
+static void forget_reg_request(app_state *state)
+{
+    state->last_reg_index = 0u;
+    state->last_reg_type = REG_TYPE_RAW;
+    state->last_reg_name[0] = '\0';
+}
+
+static int is_reg_cmd_id(unsigned int can_id)
+{
+    unsigned int cmd = can_id >> 4;
+
+    return cmd == CAN_CMD_REG_READ ||
+           cmd == CAN_CMD_REG_WRITE ||
+           cmd == CAN_CMD_REG_SAVE ||
+           cmd == CAN_CMD_REG_INFO;
+}
+
+static int print_reg_reply(app_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
+{
+    unsigned int cmd = can_id >> 4;
+    uint32_t value;
+    int32_t status;
+
+    if (!is_reg_cmd_id(can_id) || len < 8u) {
+        return 0;
+    }
+
+    if (cmd == CAN_CMD_REG_INFO) {
+        printf(" | reg_count:%u writable:%u", data_to_u32(&data[0]), data_to_u32(&data[4]));
+        return 1;
+    }
+
+    status = data_to_i32(&data[0]);
+    value = data_to_u32(&data[4]);
+    if (state->last_reg_name[0] != '\0') {
+        printf(" | reg:%s index:%u type:%s",
+               state->last_reg_name,
+               state->last_reg_index,
+               reg_type_name(state->last_reg_type));
+    }
+    printf(" | status:%d value:0x%08x uint:%u int:%d float:%g",
+           status,
+           value,
+           value,
+           (int32_t)value,
+           u32_to_float(value));
+    return 1;
+}
+
 int shell_can_rx_callback(void *arg, canfd_packet *msg)
 {
     app_state *state = (app_state *)arg;
@@ -71,6 +367,7 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
 
     can_id = clean_can_id(msg->frame.can_id);
     candidate_reply = state->print_all || can_id == state->master_id ||
+                      (state->last_tx_can_id != 0u && can_id == state->last_tx_can_id) ||
                       (msg->frame.len >= BXI_MOTOR_MIT_LEN && msg->frame.data[0] == state->motor_id);
 
     if (!candidate_reply) {
@@ -86,7 +383,9 @@ int shell_can_rx_callback(void *arg, canfd_packet *msg)
            msg->frame.flags);
     print_data(msg->frame.data, msg->frame.len);
 
-    if (msg->frame.len >= BXI_MOTOR_MIT_LEN) {
+    if (print_reg_reply(state, can_id, msg->frame.data, msg->frame.len)) {
+        /* Already decoded above. */
+    } else if (msg->frame.len >= BXI_MOTOR_MIT_LEN) {
         bxi_motor_reply reply;
 
         if (bxi_motor_unpack_reply(msg->frame.data, msg->frame.len, &state->limits, &reply) == 0) {
@@ -151,6 +450,7 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s [options] enable|disable|zero|terminal-on|terminal-off [wait_ms]\n", prog);
     printf("  sudo %s [options] cmd <pos> <vel> <kp> <kd> <torque> [duration_ms] [period_ms]\n", prog);
     printf("  sudo %s [options] scan [max_id]\n", prog);
+    printf("  sudo %s [options] reg help|info|list|read|write|write-raw|write-float|save ...\n", prog);
     printf("\nOptions:\n");
     printf("  -b, --bus N          CANFD bus, default 0\n");
     printf("  -i, --id N           target motor can_id, default 1\n");
@@ -174,6 +474,7 @@ void shell_print_usage(const char *prog)
     printf("  sudo %s --bus 0 --id 1 enable\n", prog);
     printf("  sudo %s --bus 0 --id 1 cmd 0 0 0 0 0 1000 10\n", prog);
     printf("  sudo %s --bus 0 scan 8\n", prog);
+    printf("  sudo %s --bus 0 --id 1 reg read can_id\n", prog);
 }
 
 static int send_packet(app_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
@@ -202,6 +503,7 @@ static int send_packet(app_state *state, unsigned int can_id, const uint8_t *dat
     printf("\n");
     fflush(stdout);
 
+    state->last_tx_can_id = clean_can_id(packet.frame.can_id);
     state->last_tx_time_us = timebase64_get();
     ret = canfd_send_packet(&packet, 1u);
     if (ret < 0) {
@@ -378,6 +680,307 @@ static int run_scan(app_state *state, int argc, char **argv)
     return 0;
 }
 
+static int reg_frame_id(const app_state *state, unsigned int cmd, unsigned int *frame_id)
+{
+    if (state->motor_id == 0u || state->motor_id > 0x0fu) {
+        fprintf(stderr, "reg commands require motor id in [1, 15], current id is 0x%x\n", state->motor_id);
+        return -1;
+    }
+
+    *frame_id = (cmd << 4) | (state->motor_id & 0x0fu);
+    return 0;
+}
+
+static int run_reg_info(app_state *state, int argc, char **argv)
+{
+    uint8_t data[4] = {0u, 0u, 0u, 0u};
+    unsigned int frame_id;
+    unsigned int wait_ms = 1000u;
+    unsigned int before;
+
+    if (argc > 0 && shell_parse_uint_arg(argv[0], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[0]);
+        return -1;
+    }
+    if (reg_frame_id(state, CAN_CMD_REG_INFO, &frame_id) != 0) {
+        return -1;
+    }
+
+    forget_reg_request(state);
+    before = state->rx_count;
+    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
+        return -1;
+    }
+    return command_wait_reply(state, wait_ms, before);
+}
+
+static int run_reg_read(app_state *state, int argc, char **argv)
+{
+    uint8_t data[4];
+    unsigned int frame_id;
+    unsigned int reg;
+    unsigned int type;
+    unsigned int wait_ms = 1000u;
+    unsigned int before;
+    char name[64];
+
+    if (argc < 1 || parse_reg_ref(argv[0], &reg, &type, name, sizeof(name)) != 0) {
+        fprintf(stderr, "usage: reg read <index|name|array[index]> [wait_ms]\n");
+        return -1;
+    }
+    if (argc > 1 && shell_parse_uint_arg(argv[1], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[1]);
+        return -1;
+    }
+    if (reg_frame_id(state, CAN_CMD_REG_READ, &frame_id) != 0) {
+        return -1;
+    }
+
+    u32_to_data(reg, data);
+    remember_reg_request(state, reg, type, name);
+    before = state->rx_count;
+    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
+        return -1;
+    }
+    return command_wait_reply(state, wait_ms, before);
+}
+
+static int send_reg_write_raw(app_state *state,
+                              unsigned int reg,
+                              uint32_t value,
+                              unsigned int type,
+                              const char *name,
+                              unsigned int wait_ms)
+{
+    uint8_t data[8];
+    unsigned int frame_id;
+    unsigned int before;
+
+    if (reg_frame_id(state, CAN_CMD_REG_WRITE, &frame_id) != 0) {
+        return -1;
+    }
+
+    u32_to_data(reg, &data[0]);
+    u32_to_data(value, &data[4]);
+    remember_reg_request(state, reg, type, name);
+    before = state->rx_count;
+    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
+        return -1;
+    }
+    return command_wait_reply(state, wait_ms, before);
+}
+
+static int run_reg_write(app_state *state, int argc, char **argv)
+{
+    unsigned int reg;
+    unsigned int type;
+    uint32_t value;
+    unsigned int wait_ms = 1000u;
+    char name[64];
+
+    if (argc < 2 || parse_reg_ref(argv[0], &reg, &type, name, sizeof(name)) != 0) {
+        fprintf(stderr, "usage: reg write <index|name|array[index]> <value> [wait_ms]\n");
+        return -1;
+    }
+
+    if (type == REG_TYPE_FLOAT) {
+        float parsed;
+
+        if (shell_parse_float_arg(argv[1], &parsed) != 0) {
+            fprintf(stderr, "invalid float value for %s: %s\n", name, argv[1]);
+            return -1;
+        }
+        value = float_to_u32(parsed);
+    } else if (type == REG_TYPE_INT) {
+        int32_t parsed;
+
+        if (parse_i32_arg(argv[1], &parsed) != 0) {
+            fprintf(stderr, "invalid int value for %s: %s\n", name, argv[1]);
+            return -1;
+        }
+        value = (uint32_t)parsed;
+    } else {
+        unsigned int parsed;
+
+        if (shell_parse_uint_arg(argv[1], &parsed) != 0) {
+            fprintf(stderr, "invalid u32 value for %s: %s\n", name, argv[1]);
+            return -1;
+        }
+        value = (uint32_t)parsed;
+    }
+
+    if (argc > 2 && shell_parse_uint_arg(argv[2], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[2]);
+        return -1;
+    }
+
+    return send_reg_write_raw(state, reg, value, type, name, wait_ms);
+}
+
+static int run_reg_write_raw(app_state *state, int argc, char **argv)
+{
+    unsigned int reg;
+    unsigned int type;
+    unsigned int value;
+    unsigned int wait_ms = 1000u;
+    char name[64];
+
+    if (argc < 2 ||
+        parse_reg_ref(argv[0], &reg, &type, name, sizeof(name)) != 0 ||
+        shell_parse_uint_arg(argv[1], &value) != 0) {
+        fprintf(stderr, "usage: reg write-raw <index|name|array[index]> <u32_value> [wait_ms]\n");
+        return -1;
+    }
+    if (argc > 2 && shell_parse_uint_arg(argv[2], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[2]);
+        return -1;
+    }
+
+    return send_reg_write_raw(state, reg, (uint32_t)value, type, name, wait_ms);
+}
+
+static int run_reg_write_float(app_state *state, int argc, char **argv)
+{
+    unsigned int reg;
+    unsigned int type;
+    unsigned int wait_ms = 1000u;
+    float value;
+    char name[64];
+
+    if (argc < 2 ||
+        parse_reg_ref(argv[0], &reg, &type, name, sizeof(name)) != 0 ||
+        shell_parse_float_arg(argv[1], &value) != 0) {
+        fprintf(stderr, "usage: reg write-float <index|name|array[index]> <float_value> [wait_ms]\n");
+        return -1;
+    }
+    if (argc > 2 && shell_parse_uint_arg(argv[2], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[2]);
+        return -1;
+    }
+
+    return send_reg_write_raw(state, reg, float_to_u32(value), type, name, wait_ms);
+}
+
+static int run_reg_save(app_state *state, int argc, char **argv)
+{
+    uint8_t data[4] = {0u, 0u, 0u, 0u};
+    unsigned int frame_id;
+    unsigned int wait_ms = 1000u;
+    unsigned int before;
+
+    if (argc > 0 && shell_parse_uint_arg(argv[0], &wait_ms) != 0) {
+        fprintf(stderr, "invalid wait_ms: %s\n", argv[0]);
+        return -1;
+    }
+    if (reg_frame_id(state, CAN_CMD_REG_SAVE, &frame_id) != 0) {
+        return -1;
+    }
+
+    forget_reg_request(state);
+    before = state->rx_count;
+    if (send_packet(state, frame_id, data, sizeof(data)) != 0) {
+        return -1;
+    }
+    return command_wait_reply(state, wait_ms, before);
+}
+
+static int reg_matches_filter(const config_reg *reg, const char *filter)
+{
+    if (filter == NULL || filter[0] == '\0') {
+        return 1;
+    }
+
+    return strstr(reg->name, filter) != NULL ||
+           strstr(reg_type_name(reg->type), filter) != NULL;
+}
+
+static int run_reg_list(app_state *state, int argc, char **argv)
+{
+    const char *filter = argc > 0 ? argv[0] : NULL;
+    size_t i;
+    unsigned int shown = 0u;
+
+    (void)state;
+
+    printf("Configured registers from usr_config.h:\n");
+    for (i = 0u; i < sizeof(config_regs) / sizeof(config_regs[0]); i++) {
+        const config_reg *reg = &config_regs[i];
+        unsigned int last_index = reg->index + reg->count - 1u;
+
+        if (!reg_matches_filter(reg, filter)) {
+            continue;
+        }
+
+        if (reg->count > 1u) {
+            printf("  %-24s index:%3u..%-3u type:%-5s count:%u\n",
+                   reg->name,
+                   reg->index,
+                   last_index,
+                   reg_type_name(reg->type),
+                   reg->count);
+        } else {
+            printf("  %-24s index:%3u     type:%-5s\n",
+                   reg->name,
+                   reg->index,
+                   reg_type_name(reg->type));
+        }
+        shown++;
+    }
+
+    printf("shown %u register entr%s%s\n",
+           shown,
+           shown == 1u ? "y" : "ies",
+           filter != NULL ? " matching filter" : "");
+    return 0;
+}
+
+static void print_reg_help(void)
+{
+    printf("Register commands:\n");
+    printf("  reg list [filter]                                      list usr_config.h registers\n");
+    printf("  reg info [wait_ms]                                     read register count\n");
+    printf("  reg read <index|name|array[index]> [wait_ms]           read one 32-bit register\n");
+    printf("  reg write <index|name|array[index]> <value> [wait_ms]  write with known type\n");
+    printf("  reg write-raw <index|name|array[index]> <u32> [wait_ms] write raw 32-bit value\n");
+    printf("  reg write-float <index|name|array[index]> <f> [wait_ms] write IEEE-754 float bits\n");
+    printf("  reg save [wait_ms]                                     save writable registers\n");
+    printf("Examples: reg read can_id | reg write can_id 2 | reg write pos_gain 20 | reg read offset_lut[3]\n");
+    printf("Reply status: 0=OK, -1=invalid addr, -2=read only, -3=save fail, -4=invalid len\n");
+}
+
+static int run_reg(app_state *state, int argc, char **argv)
+{
+    if (argc <= 0 || strcmp(argv[0], "help") == 0 || strcmp(argv[0], "?") == 0) {
+        print_reg_help();
+        return 0;
+    }
+    if (strcmp(argv[0], "info") == 0) {
+        return run_reg_info(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "list") == 0) {
+        return run_reg_list(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "read") == 0) {
+        return run_reg_read(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "write") == 0) {
+        return run_reg_write(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "write-raw") == 0) {
+        return run_reg_write_raw(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "write-float") == 0) {
+        return run_reg_write_float(state, argc - 1, argv + 1);
+    }
+    if (strcmp(argv[0], "save") == 0) {
+        return run_reg_save(state, argc - 1, argv + 1);
+    }
+
+    fprintf(stderr, "unknown reg command: %s\n", argv[0]);
+    print_reg_help();
+    return -1;
+}
+
 static void print_config(const app_state *state)
 {
     printf("config: bus=%u id=0x%x master_id=0x%x frame=%s print_all=%s\n",
@@ -420,6 +1023,7 @@ static void print_terminal_help(void)
     printf("  terminal-on|terminal-off        toggle motor terminal output\n");
     printf("  cmd <p> <v> <kp> <kd> <t> [duration_ms] [period_ms]\n");
     printf("  scan [max_id]                   scan motor ids 1..max_id\n");
+    printf("  reg help                        show CAN register commands from usr_config.h\n");
 }
 
 static int split_line(char *line, char **argv, int max_args)
@@ -486,11 +1090,86 @@ static const char *const command_words[] = {
     "scan",
     "terminal",
     "term",
+    "reg",
 };
 
 static const char *const on_off_words[] = {
     "on",
     "off",
+};
+
+static const char *const reg_words[] = {
+    "help",
+    "info",
+    "list",
+    "read",
+    "write",
+    "write-raw",
+    "write-float",
+    "save",
+};
+
+static const char *const reg_name_words[] = {
+    "motor_pole_pairs",
+    "motor_phase_resistance",
+    "motor_phase_inductance",
+    "inertia",
+    "reduction_ratio",
+    "encoder_dir_rev",
+    "encoder_offset",
+    "ldc1614_dir",
+    "ldc1614_offset",
+    "ldc_channel1_max",
+    "ldc_channel1_min",
+    "ldc_channel1_middle",
+    "ldc_channel2_max",
+    "ldc_channel2_min",
+    "ldc_channel2_middle",
+    "offset_lut",
+    "ldc1614_offset_lut",
+    "calib_valid",
+    "ldc1614_calib_valid",
+    "calib_current",
+    "calib_max_voltage",
+    "control_mode",
+    "current_ramp_rate",
+    "vel_ramp_rate",
+    "traj_vel",
+    "traj_accel",
+    "traj_decel",
+    "pos_gain",
+    "vel_gain",
+    "vel_integrator_gain",
+    "vel_limit",
+    "current_limit",
+    "torquet_limit",
+    "torque_limit",
+    "current_ctrl_p_gain",
+    "current_ctrl_i_gain",
+    "current_ctrl_bandwidth",
+    "protect_under_voltage",
+    "protect_over_voltage",
+    "protect_over_speed",
+    "protect_temperature_low",
+    "protect_temperature_high",
+    "can_id",
+    "can_timeout_ms",
+    "can_sync_target_enable",
+    "mit_mode",
+    "max_pos",
+    "max_vel",
+    "max_tor",
+    "kp_max",
+    "kd_max",
+    "usr_enc1_offset",
+    "usr_enc2_offset",
+    "can_mode_switch",
+    "master_id",
+    "protect_i_abc_error",
+    "field_weaken_mode",
+    "sync_boot_id_flag",
+    "un_use",
+    "crc",
 };
 
 static int starts_with(const char *text, const char *prefix)
@@ -515,28 +1194,105 @@ static int current_token_start(const char *line, size_t len)
     return pos;
 }
 
+static unsigned int count_tokens_before(const char *line, int end)
+{
+    unsigned int count = 0u;
+    int pos = 0;
+
+    while (pos < end) {
+        while (pos < end && isspace((unsigned char)line[pos])) {
+            pos++;
+        }
+        if (pos >= end) {
+            break;
+        }
+        count++;
+        while (pos < end && !isspace((unsigned char)line[pos])) {
+            pos++;
+        }
+    }
+
+    return count;
+}
+
+static int copy_nth_token(const char *line, unsigned int target, char *out, size_t out_len)
+{
+    unsigned int count = 0u;
+    size_t pos = 0u;
+
+    if (out_len == 0u) {
+        return -1;
+    }
+
+    while (line[pos] != '\0') {
+        size_t out_pos = 0u;
+
+        while (line[pos] != '\0' && isspace((unsigned char)line[pos])) {
+            pos++;
+        }
+        if (line[pos] == '\0') {
+            break;
+        }
+
+        if (count == target) {
+            while (line[pos] != '\0' && !isspace((unsigned char)line[pos])) {
+                if (out_pos + 1u < out_len) {
+                    out[out_pos++] = line[pos];
+                }
+                pos++;
+            }
+            out[out_pos] = '\0';
+            return 0;
+        }
+
+        count++;
+        while (line[pos] != '\0' && !isspace((unsigned char)line[pos])) {
+            pos++;
+        }
+    }
+
+    out[0] = '\0';
+    return -1;
+}
+
 static const char *const *completion_words_for_line(const char *line, size_t len, size_t *count)
 {
     int start = current_token_start(line, len);
     char first[64];
-    size_t first_len = 0u;
+    char second[64];
+    unsigned int tokens_before = count_tokens_before(line, start);
 
-    if (start == 0) {
+    if (tokens_before == 0u) {
         *count = sizeof(command_words) / sizeof(command_words[0]);
         return command_words;
     }
 
-    while (line[first_len] != '\0' &&
-           !isspace((unsigned char)line[first_len]) &&
-           first_len + 1u < sizeof(first)) {
-        first[first_len] = line[first_len];
-        first_len++;
+    if (copy_nth_token(line, 0u, first, sizeof(first)) != 0) {
+        *count = 0u;
+        return NULL;
     }
-    first[first_len] = '\0';
 
-    if (strcmp(first, "power") == 0 || strcmp(first, "all") == 0) {
+    if ((strcmp(first, "power") == 0 || strcmp(first, "all") == 0) &&
+        tokens_before == 1u) {
         *count = sizeof(on_off_words) / sizeof(on_off_words[0]);
         return on_off_words;
+    }
+    if (strcmp(first, "reg") == 0) {
+        if (tokens_before == 1u) {
+            *count = sizeof(reg_words) / sizeof(reg_words[0]);
+            return reg_words;
+        }
+
+        if (tokens_before == 2u &&
+            copy_nth_token(line, 1u, second, sizeof(second)) == 0 &&
+            (strcmp(second, "read") == 0 ||
+             strcmp(second, "write") == 0 ||
+             strcmp(second, "write-raw") == 0 ||
+             strcmp(second, "write-float") == 0 ||
+             strcmp(second, "list") == 0)) {
+            *count = sizeof(reg_name_words) / sizeof(reg_name_words[0]);
+            return reg_name_words;
+        }
     }
 
     *count = 0u;
@@ -546,7 +1302,7 @@ static const char *const *completion_words_for_line(const char *line, size_t len
 static void complete_line(char *line, size_t *len, size_t max_len, const char *prompt)
 {
     const char *const *words;
-    const char *matches[32];
+    const char *matches[96];
     size_t word_count;
     size_t match_count = 0u;
     int token_start = current_token_start(line, *len);
@@ -810,6 +1566,10 @@ static int run_terminal_command(app_state *state, int argc, char **argv)
         run_scan(state, argc - 1, argv + 1);
         return 0;
     }
+    if (strcmp(cmd, "reg") == 0) {
+        run_reg(state, argc - 1, argv + 1);
+        return 0;
+    }
 
     printf("unknown command: %s\n", cmd);
     printf("type help for commands, q to exit\n");
@@ -884,6 +1644,9 @@ int shell_run_command(app_state *state, int argc, char **argv)
     }
     if (strcmp(cmd, "scan") == 0) {
         return run_scan(state, argc, argv);
+    }
+    if (strcmp(cmd, "reg") == 0) {
+        return run_reg(state, argc, argv);
     }
     if (strcmp(cmd, "terminal") == 0 || strcmp(cmd, "term") == 0) {
         return run_terminal(state);

@@ -19,6 +19,10 @@ typedef struct
     bool power_enabled_by_tool;
     volatile unsigned int rx_count;
     volatile uint64_t last_tx_time_us;
+    volatile unsigned int last_tx_can_id;
+    unsigned int last_reg_index;
+    unsigned int last_reg_type;
+    char last_reg_name[64];
     bxi_motor_limits limits;
 } app_state;
 
