@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -628,6 +629,49 @@ static int send_mit(app_state *state, float position, float velocity, float kp, 
     return send_packet(state, state->motor_id, data, BXI_MOTOR_MIT_LEN);
 }
 
+static void restore_process_output(int saved_stdout, int saved_stderr)
+{
+    fflush(stdout);
+    fflush(stderr);
+    if (saved_stdout >= 0) {
+        dup2(saved_stdout, STDOUT_FILENO);
+        close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+    }
+}
+
+static int silence_process_output(int *saved_stdout, int *saved_stderr)
+{
+    int null_fd;
+
+    *saved_stdout = -1;
+    *saved_stderr = -1;
+    null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd < 0) {
+        return -1;
+    }
+
+    fflush(stdout);
+    fflush(stderr);
+    *saved_stdout = dup(STDOUT_FILENO);
+    *saved_stderr = dup(STDERR_FILENO);
+    if (*saved_stdout < 0 || *saved_stderr < 0 ||
+        dup2(null_fd, STDOUT_FILENO) < 0 ||
+        dup2(null_fd, STDERR_FILENO) < 0) {
+        close(null_fd);
+        restore_process_output(*saved_stdout, *saved_stderr);
+        *saved_stdout = -1;
+        *saved_stderr = -1;
+        return -1;
+    }
+
+    close(null_fd);
+    return 0;
+}
+
 static int command_wait_reply(app_state *state, unsigned int wait_ms, unsigned int before)
 {
     unsigned int waited = 0u;
@@ -686,6 +730,9 @@ int shell_can_warmup(app_state *state, unsigned int count, unsigned int period_m
     unsigned int before;
     unsigned int sent = 0u;
     bool old_quiet;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool output_silenced = false;
 
     if (state == NULL) {
         return -1;
@@ -699,13 +746,22 @@ int shell_can_warmup(app_state *state, unsigned int count, unsigned int period_m
     before = state->rx_count;
     old_quiet = state->quiet_can_frames;
     state->quiet_can_frames = true;
+    if (silence_process_output(&saved_stdout, &saved_stderr) == 0) {
+        output_silenced = true;
+    }
     while (!shell_stop_requested && sent < count) {
         if (send_mit(state, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) != 0) {
+            if (output_silenced) {
+                restore_process_output(saved_stdout, saved_stderr);
+            }
             state->quiet_can_frames = old_quiet;
             return -1;
         }
         sent++;
         shell_sleep_ms(period_ms);
+    }
+    if (output_silenced) {
+        restore_process_output(saved_stdout, saved_stderr);
     }
     state->quiet_can_frames = old_quiet;
 
