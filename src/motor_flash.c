@@ -450,8 +450,8 @@ static bool mit_reply_id_matches(unsigned int can_id, unsigned int motor_id)
            can_id == (0x10u | (motor_id & 0x0fu));
 }
 
-static bool boot_log_at_line_start[MOTOR_MAP_MAX];
-static bool boot_log_initialized[MOTOR_MAP_MAX];
+static char boot_log_lines[MOTOR_MAP_MAX][LINE_LEN];
+static size_t boot_log_line_lens[MOTOR_MAP_MAX];
 static unsigned char boot_log_last_newline[MOTOR_MAP_MAX];
 
 static void print_boot_output_prefix(const motor_map_entry *entry,
@@ -460,6 +460,25 @@ static void print_boot_output_prefix(const motor_map_entry *entry,
     printf("%s index=%u bus=%u id=%u can_id=0x%03x: ",
            "[boot输出]",
            entry->index, entry->bus, entry->id, can_id);
+}
+
+static void print_boot_log_line(const motor_map_entry *entry,
+                                unsigned int can_id,
+                                size_t idx,
+                                bool force)
+{
+    if (idx >= MOTOR_MAP_MAX) {
+        idx = 0u;
+    }
+    if (boot_log_line_lens[idx] == 0u && !force) {
+        return;
+    }
+
+    boot_log_lines[idx][boot_log_line_lens[idx]] = '\0';
+    print_boot_output_prefix(entry, can_id);
+    printf("%s\n", boot_log_lines[idx]);
+    boot_log_line_lens[idx] = 0u;
+    boot_log_lines[idx][0] = '\0';
 }
 
 static void print_boot_terminal_output(const motor_map_entry *entry,
@@ -476,34 +495,32 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
         if (idx >= MOTOR_MAP_MAX) {
             idx = 0u;
         }
-        if (!boot_log_initialized[idx]) {
-            boot_log_at_line_start[idx] = true;
-            boot_log_initialized[idx] = true;
-        }
         if (ch == '\n' || ch == '\r') {
             if (boot_log_last_newline[idx] != 0u && ch != boot_log_last_newline[idx]) {
                 boot_log_last_newline[idx] = 0u;
                 continue;
             }
-            if (boot_log_at_line_start[idx]) {
-                print_boot_output_prefix(entry, can_id);
-            }
-            putchar('\n');
-            boot_log_at_line_start[idx] = true;
+            print_boot_log_line(entry, can_id, idx, false);
             boot_log_last_newline[idx] = ch;
             continue;
-        }
-
-        if (boot_log_at_line_start[idx]) {
-            print_boot_output_prefix(entry, can_id);
-            boot_log_at_line_start[idx] = false;
         }
         boot_log_last_newline[idx] = 0u;
 
         if (ch == '\t' || ch >= 0x20u) {
-            fwrite(&ch, 1u, 1u, stdout);
+            if (boot_log_line_lens[idx] + 1u >= LINE_LEN) {
+                print_boot_log_line(entry, can_id, idx, true);
+            }
+            boot_log_lines[idx][boot_log_line_lens[idx]++] = (char)ch;
         } else {
-            printf("\\x%02x", ch);
+            char escaped[5];
+
+            snprintf(escaped, sizeof(escaped), "\\x%02x", ch);
+            if (boot_log_line_lens[idx] + strlen(escaped) >= LINE_LEN) {
+                print_boot_log_line(entry, can_id, idx, true);
+            }
+            snprintf(&boot_log_lines[idx][boot_log_line_lens[idx]],
+                     LINE_LEN - boot_log_line_lens[idx], "%s", escaped);
+            boot_log_line_lens[idx] += strlen(escaped);
         }
     }
 }
