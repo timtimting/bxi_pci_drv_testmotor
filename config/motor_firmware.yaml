@@ -32,6 +32,10 @@ home_soft_start_ms: 2000
 scan_timeout_ms: 1000
 power_on_wait_ms: 2000
 
+# 烧录时发送 r 复位后，等待多久发送一次 m 进入 Boot 菜单。
+# 如果看到 Invalid state!get :6d，说明 m 没打进 Boot 窗口，可尝试 100/200/300。
+boot_enter_delay_ms: 100
+
 # MIT 控制帧使用 CAN-FD；实时打印并解析收到的 CAN 帧。
 mit_canfd: on
 live_output: on

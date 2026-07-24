@@ -116,6 +116,7 @@ typedef struct
     unsigned int home_soft_start_ms;
     unsigned int scan_timeout_ms;
     unsigned int power_on_wait_ms;
+    unsigned int boot_enter_delay_ms;
     bxi_motor_limits mit_limits;
     bool mit_canfd;
     bool live_output;
@@ -181,6 +182,7 @@ typedef struct
     bool config_loaded;
     bool motor_power_on;
     bool show_can_output;
+    bool show_motor_input;
     bool language_override_active;
     bool chinese_override;
     char config_path[PATH_LEN];
@@ -521,6 +523,96 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
     }
 }
 
+static const motor_map_entry *find_motor_by_bus_id(const flash_state *state,
+                                                   unsigned int bus,
+                                                   unsigned int id)
+{
+    size_t i;
+
+    if (state == NULL || !state->config_loaded) {
+        return NULL;
+    }
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *entry = &state->config.entries[i];
+
+        if (entry->bus == bus && entry->id == id) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static void print_motor_input_prefix(const flash_state *state,
+                                     unsigned int bus,
+                                     unsigned int id)
+{
+    const motor_map_entry *entry = find_motor_by_bus_id(state, bus, id);
+
+    if (entry != NULL) {
+        printf("[motor%02u]:", entry->index);
+    } else {
+        printf("[motor?? bus=%u id=%u]:", bus, id);
+    }
+}
+
+static void print_motor_input_data(const uint8_t *data, unsigned int len)
+{
+    unsigned int i;
+
+    printf(" data:");
+    for (i = 0u; i < len; i++) {
+        printf(" %02x", data[i]);
+    }
+}
+
+static void print_motor_input_byte(flash_state *state, uint8_t byte)
+{
+    if (!state->show_motor_input) {
+        return;
+    }
+
+    flockfile(stdout);
+    printf("\n");
+    print_motor_input_prefix(state, state->bus, state->boot_id);
+    printf("boot/debug tx can_id=0x%03x", state->tx_id);
+    if (byte == '\r') {
+        printf(" char='\\r'");
+    } else if (byte == '\n') {
+        printf(" char='\\n'");
+    } else if (byte == '\t') {
+        printf(" char='\\t'");
+    } else if (byte >= 0x20u && byte <= 0x7eu) {
+        printf(" char='%c'", byte);
+    }
+    printf(" hex=0x%02x\n", byte);
+    fflush(stdout);
+    funlockfile(stdout);
+}
+
+static void print_motor_input_frame(flash_state *state,
+                                    const char *kind,
+                                    unsigned int can_id,
+                                    const uint8_t *data,
+                                    unsigned int len,
+                                    unsigned int flags)
+{
+    unsigned int id = can_id & 0x0fu;
+
+    if (!state->show_motor_input) {
+        return;
+    }
+
+    flockfile(stdout);
+    printf("\n");
+    print_motor_input_prefix(state, state->bus, id);
+    printf("%s tx can_id=0x%03x len=%u flags=0x%02x",
+           kind, can_id, len, flags);
+    print_motor_input_data(data, len);
+    printf("\n");
+    fflush(stdout);
+    funlockfile(stdout);
+}
+
 static int can_rx_callback(void *arg, canfd_packet *msg)
 {
     flash_state *state = (flash_state *)arg;
@@ -727,6 +819,10 @@ static int send_debug_packet(flash_state *state, unsigned int can_id, const uint
     packet.frame.flags = state->debug_use_canfd ? (CANFD_BRS | CANFD_FDF) : 0u;
     memcpy(packet.frame.data, data, len);
 
+    if (can_id != state->boot_id) {
+        print_motor_input_frame(state, "debug", can_id, data, len, packet.frame.flags);
+    }
+
     if (!state->quiet_tx) {
         printf("tx can[%u] id:0x%03x len:%u flags:0x%02x data:",
                packet.bus,
@@ -906,6 +1002,7 @@ static int send_boot_data(flash_state *state, const uint8_t *data, size_t len)
 
 static int send_boot_byte(flash_state *state, uint8_t byte)
 {
+    print_motor_input_byte(state, byte);
     return send_boot_data(state, &byte, 1u);
 }
 
@@ -1069,6 +1166,11 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     uint64_t deadline;
     char text[2048];
     size_t text_len = 0u;
+    unsigned int m_delay_ms = state->config.boot_enter_delay_ms;
+
+    if (m_delay_ms == 0u || m_delay_ms > 1000u) {
+        m_delay_ms = 100u;
+    }
 
     if (probe_boot_menu(state) == 0) {
         printf("boot menu is already responding on id 0x%03x\n", state->rx_id);
@@ -1076,12 +1178,12 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     }
 
     if (power_cycle) {
-        printf("power cycling motor, then sending one 'm' inside the 500 ms boot window\n");
+        printf("power cycling motor, then sending one 'm' after %u ms\n", m_delay_ms);
         if (power_cycle_motor() != 0) {
             return -1;
         }
     } else {
-        printf("sending app reset command 'r', then one 'm' inside the 500 ms boot window\n");
+        printf("sending app reset command 'r', then one 'm' after %u ms\n", m_delay_ms);
         rx_ring_clear(&state->rx);
         if (send_boot_byte(state, 'r') != 0) {
             return -1;
@@ -1090,7 +1192,7 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
 
     rx_ring_clear(&state->rx);
     text[0] = '\0';
-    sleep_ms(20u);
+    sleep_ms(m_delay_ms);
     if (send_boot_byte(state, 'm') != 0) {
         return -1;
     }
@@ -1662,6 +1764,12 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+        } else if (strcmp(key, "boot_enter_delay_ms") == 0) {
+            if (parse_uint_arg(value, &config->boot_enter_delay_ms) != 0) {
+                fprintf(stderr, "%s:%u: invalid boot_enter_delay_ms\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
         } else if (strncmp(key, "mit_", 4u) == 0 &&
                    strcmp(key, "mit_canfd") != 0) {
             float *target = NULL;
@@ -1772,6 +1880,7 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->home_soft_start_ms = 2000u;
     config->scan_timeout_ms = 1000u;
     config->power_on_wait_ms = 2000u;
+    config->boot_enter_delay_ms = 100u;
     config->mit_limits = bxi_motor_default_limits;
     config->mit_canfd = true;
     config->live_output = true;
@@ -1817,9 +1926,11 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     if (ret == 0 && (config->scan_timeout_ms == 0u ||
                      config->scan_timeout_ms > 60000u ||
                      config->home_soft_start_ms > 60000u ||
-                     config->power_on_wait_ms > 60000u)) {
+                     config->power_on_wait_ms > 60000u ||
+                     config->boot_enter_delay_ms == 0u ||
+                     config->boot_enter_delay_ms > 1000u)) {
         fprintf(stderr, "%s: timing values must be in the supported 0..60000 ms range "
-                        "and scan_timeout_ms cannot be zero\n", map_path);
+                        "and boot_enter_delay_ms must be in 1..1000 ms\n", map_path);
         return -1;
     }
     return ret;

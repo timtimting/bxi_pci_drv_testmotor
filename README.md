@@ -347,7 +347,7 @@ flash_all
 
 1. 探测电机是否已经位于 Boot 菜单。
 2. 如果不在 Boot，向应用程序发送复位命令 `r`。
-3. 在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
+3. 等待 `boot_enter_delay_ms`，在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
 4. 收到 `Commands:` 后确认进入 Boot。
 5. 发送 `u` 进入烧录功能。
 6. 通过 CAN/YMODEM 传输固件。
@@ -367,6 +367,21 @@ flash_all cycle
 ```
 
 `cycle` 会操作电机总电源，使用前应确认其他机构处于安全状态。
+
+如果看到 `Invalid state!get :6d`，说明 `m` 被应用程序收到，没有打进 Boot 窗口。
+可以先用调试烧录命令临时扫描延时：
+
+```text
+flash_debug 0 1 bxi_motor_50.bin 100
+flash_debug 0 1 bxi_motor_50.bin 200
+flash_debug 0 1 bxi_motor_50.bin 300
+```
+
+找到合适值后，写入配置：
+
+```yaml
+boot_enter_delay_ms: 200
+```
 
 ## 10. 配置文件
 
@@ -430,7 +445,7 @@ config_reload /path/to/config.yaml
 | `stand_up` | 无 | 全部在线电机软启动回零 |
 | `flash_single` | `<index> [cycle]` | 烧录单台电机 |
 | `flash_all` | `[cycle]` | 烧录全部电机 |
-| `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
+| `flash_debug` | `<bus> <id> <firmware.bin\|path> [delay_ms] [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
 | `config_show` | 无 | 显示当前配置 |
