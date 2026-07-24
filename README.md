@@ -301,19 +301,19 @@ can_status reset
 firmware_dir: firmware
 
 firmware_files:
-  50: motor_50.bin
-  50L: motor_50L.bin
-  70: motor_70.bin
-  85: motor_85.bin
+  50: bxi_motor_50.bin
+  50L: bxi_motor_50L.bin
+  70: bxi_motor_70.bin
+  85: bxi_motor_85.bin
 ```
 
 对应文件应放在：
 
 ```text
-firmware/motor_50.bin
-firmware/motor_50L.bin
-firmware/motor_70.bin
-firmware/motor_85.bin
+firmware/bxi_motor_50.bin
+firmware/bxi_motor_50L.bin
+firmware/bxi_motor_70.bin
+firmware/bxi_motor_85.bin
 ```
 
 ### 9.2 烧录单台电机
@@ -347,9 +347,17 @@ flash_all
 
 1. 探测电机是否已经位于 Boot 菜单。
 2. 如果不在 Boot，向应用程序发送复位命令 `r`。
-3. 在 Boot 窗口连续发送 `m`。
+3. 在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
 4. 收到 `Commands:` 后确认进入 Boot。
-5. 发送 `u` 并通过 CAN/YMODEM 传输固件。
+5. 发送 `u` 进入烧录功能。
+6. 通过 CAN/YMODEM 传输固件。
+
+CAN ID 约定：
+
+| 功能 | 主机发送 | 主机接收 |
+|---|---:|---:|
+| Boot/调试串口命令，如 `r`、`m`、`u` | `0x7e0 \| id` | `0x7f0 \| id` |
+| MIT 控制 | `0x00 \| id` | `0x10 \| id` |
 
 如果软复位无法进入 Boot，可以增加 `cycle`：
 
@@ -422,6 +430,7 @@ config_reload /path/to/config.yaml
 | `stand_up` | 无 | 全部在线电机软启动回零 |
 | `flash_single` | `<index> [cycle]` | 烧录单台电机 |
 | `flash_all` | `[cycle]` | 烧录全部电机 |
+| `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
 | `config_show` | 无 | 显示当前配置 |

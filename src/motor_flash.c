@@ -230,9 +230,11 @@ static bool is_hardware_error_frame(canid_t can_id)
 
 static void update_boot_ids(flash_state *state)
 {
-    state->tx_id = 0x7e0u + state->boot_id;
-    state->rx_id = 0x7f0u + state->boot_id;
-    state->master_id = state->boot_id | 0x10u;
+    unsigned int id = state->boot_id & 0x0fu;
+
+    state->tx_id = 0x7e0u | id;     /* Host -> motor boot/debug terminal. */
+    state->rx_id = 0x7f0u | id;     /* Motor -> host boot/debug terminal. */
+    state->master_id = 0x10u | id;  /* Motor -> host MIT feedback. */
 }
 
 static int parse_uint_arg(const char *text, unsigned int *value)
@@ -445,7 +447,7 @@ static bool boot_output_id_matches(unsigned int can_id, unsigned int motor_id)
 static bool mit_reply_id_matches(unsigned int can_id, unsigned int motor_id)
 {
     return motor_id > 0u && motor_id <= 0x0fu &&
-           (can_id == motor_id || can_id == (0x10u | (motor_id & 0x0fu)));
+           can_id == (0x10u | (motor_id & 0x0fu));
 }
 
 static bool boot_log_at_line_start[MOTOR_MAP_MAX];
@@ -807,7 +809,7 @@ static int debug_frame_matches(flash_state *state,
     if (expected_id != 0u && frame->can_id == expected_id) {
         return 1;
     }
-    if (frame->can_id == state->master_id || frame->can_id == state->boot_id) {
+    if (frame->can_id == state->master_id) {
         return 1;
     }
     if (is_reg_cmd_id(frame->can_id) && node_id == state->boot_id) {
@@ -1052,7 +1054,6 @@ static int probe_boot_menu(flash_state *state)
 static int enter_boot_menu(flash_state *state, bool power_cycle)
 {
     uint64_t deadline;
-    uint64_t next_send;
     char text[2048];
     size_t text_len = 0u;
 
@@ -1062,33 +1063,27 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     }
 
     if (power_cycle) {
-        printf("power cycling motor and catching the 500 ms boot window\n");
+        printf("power cycling motor, then sending one 'm' inside the 500 ms boot window\n");
         if (power_cycle_motor() != 0) {
             return -1;
         }
     } else {
-        printf("sending app reset command 'r', then catching the boot window with 'm'\n");
+        printf("sending app reset command 'r', then one 'm' inside the 500 ms boot window\n");
         rx_ring_clear(&state->rx);
         if (send_boot_byte(state, 'r') != 0) {
             return -1;
         }
-        sleep_ms(20u);
     }
 
     rx_ring_clear(&state->rx);
     text[0] = '\0';
+    sleep_ms(20u);
+    if (send_boot_byte(state, 'm') != 0) {
+        return -1;
+    }
     deadline = time_us() + 1800ULL * 1000ULL;
-    next_send = 0u;
     while (!stop_requested && time_us() < deadline) {
-        uint64_t now = time_us();
         uint8_t byte;
-
-        if (now >= next_send) {
-            if (send_boot_byte(state, 'm') != 0) {
-                return -1;
-            }
-            next_send = now + 10ULL * 1000ULL;
-        }
 
         while (rx_ring_pop(&state->rx, &byte, 0u)) {
             append_rx_text(text, &text_len, sizeof(text), byte, true);

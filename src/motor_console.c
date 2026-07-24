@@ -12,8 +12,8 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
-    "flash_single", "flash_all", "can_status", "can_monitor", "config_show",
-    "config_reload", "language", "lang", "quit", "exit", "q",
+    "flash_single", "flash_all", "flash_debug", "can_status", "can_monitor",
+    "config_show", "config_reload", "language", "lang", "quit", "exit", "q",
 };
 
 static const char *console_text(const flash_state *state,
@@ -138,6 +138,8 @@ static void console_print_help(bool chinese)
         printf("      按电机型号选择固件并烧录单台电机；cycle 表示断电重启进入 Boot。\n");
         printf("  flash_all [cycle]\n");
         printf("      预检并烧录配置中的全部电机，最后输出成功/失败汇总。\n");
+        printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
+        printf("      调试烧录指定 Bus/ID，不检查配置中的电机型号；文件名找不到时会尝试固件目录。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -183,6 +185,10 @@ static void console_print_help(bool chinese)
     printf("      a power cycle instead of the normal application reset path.\n");
     printf("  flash_all [cycle]\n");
     printf("      Preflight and flash every configured motor; failures are summarized.\n");
+    printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
+    printf("      Debug-flash one Bus/ID with an explicit firmware file, bypassing the\n");
+    printf("      configured motor type mapping. A bare file name is also searched under\n");
+    printf("      firmware_dir.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
@@ -787,6 +793,103 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     return 0;
 }
 
+static int console_resolve_firmware_path(const flash_state *state,
+                                         const char *input,
+                                         char *path,
+                                         size_t path_len)
+{
+    int written;
+
+    if (input == NULL || input[0] == '\0') {
+        return -1;
+    }
+    snprintf(path, path_len, "%s", input);
+    if (access(path, R_OK) == 0) {
+        return 0;
+    }
+
+    written = snprintf(path, path_len, "%s/%s", state->config.firmware_dir, input);
+    if (written < 0 || (size_t)written >= path_len) {
+        return -1;
+    }
+    if (access(path, R_OK) == 0) {
+        return 0;
+    }
+    return -1;
+}
+
+static int console_flash_debug(flash_state *state, int argc, char **argv)
+{
+    char path[PATH_LEN];
+    unsigned int bus;
+    unsigned int id;
+    unsigned int old_bus;
+    unsigned int old_id;
+    bool cycle = false;
+    bool old_monitor;
+    int ret;
+
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+    if (console_any_enabled(state)) {
+        printf("%s\n", console_text(state,
+               "调试烧录被拒绝：进入 Bootloader 前必须失能全部电机",
+               "debug flash refused: disable all motors before entering bootloader"));
+        return -1;
+    }
+    if (argc < 4 || argc > 5 ||
+        parse_uint_arg(argv[1], &bus) != 0 ||
+        parse_uint_arg(argv[2], &id) != 0 ||
+        bus >= CANFD_DEVICE_NUM ||
+        id == 0u || id > 8u) {
+        printf("%s: flash_debug <bus> <id> <firmware.bin|path> [cycle]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (argc == 5) {
+        if (strcmp(argv[4], "cycle") != 0) {
+            printf("%s\n", console_text(state,
+                   "可选参数只能是 cycle", "optional argument must be: cycle"));
+            return -1;
+        }
+        cycle = true;
+    }
+    if (console_resolve_firmware_path(state, argv[3], path, sizeof(path)) != 0) {
+        printf("%s: %s  %s: %s/%s\n",
+               console_text(state,
+                            "找不到调试固件文件",
+                            "cannot read debug firmware file"),
+               argv[3],
+               console_text(state, "也尝试过固件目录", "also tried firmware_dir"),
+               state->config.firmware_dir,
+               argv[3]);
+        return -1;
+    }
+
+    old_bus = state->bus;
+    old_id = state->boot_id;
+    state->bus = bus;
+    set_target_id(state, id);
+
+    printf("\n######## DEBUG FLASH: bus=%u id=%u file=%s%s ########\n",
+           bus, id, path, cycle ? " cycle" : "");
+    old_monitor = state->show_can_output;
+    state->show_can_output = false;
+    ret = boot_flash_file(state, path, cycle);
+    state->show_can_output = old_monitor;
+
+    state->bus = old_bus;
+    set_target_id(state, old_id);
+
+    if (ret == 0) {
+        printf("######## DEBUG FLASH SUCCESS: bus=%u id=%u ########\n", bus, id);
+        return 0;
+    }
+    fprintf(stderr, "######## DEBUG FLASH FAILED: bus=%u id=%u ########\n", bus, id);
+    return -1;
+}
+
 static int console_reload_config(flash_state *state, const char *path)
 {
     motor_map_config new_config;
@@ -912,6 +1015,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_flash(state, argc, argv, false);
     } else if (strcmp(cmd, "flash_all") == 0) {
         return console_flash(state, argc, argv, true);
+    } else if (strcmp(cmd, "flash_debug") == 0) {
+        return console_flash_debug(state, argc, argv);
     } else if (strcmp(cmd, "can_status") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "reset") != 0)) {
             printf("%s: can_status [reset]\n", console_text(state, "用法", "usage"));
