@@ -454,16 +454,12 @@ static char boot_log_lines[MOTOR_MAP_MAX][LINE_LEN];
 static size_t boot_log_line_lens[MOTOR_MAP_MAX];
 static unsigned char boot_log_last_newline[MOTOR_MAP_MAX];
 
-static void print_boot_output_prefix(const motor_map_entry *entry,
-                                     unsigned int can_id)
+static void print_boot_output_prefix(const motor_map_entry *entry)
 {
-    printf("%s index=%u bus=%u id=%u can_id=0x%03x: ",
-           "[boot输出]",
-           entry->index, entry->bus, entry->id, can_id);
+    printf("[motor%02u]:", entry->index);
 }
 
 static void print_boot_log_line(const motor_map_entry *entry,
-                                unsigned int can_id,
                                 size_t idx,
                                 bool force)
 {
@@ -475,7 +471,7 @@ static void print_boot_log_line(const motor_map_entry *entry,
     }
 
     boot_log_lines[idx][boot_log_line_lens[idx]] = '\0';
-    print_boot_output_prefix(entry, can_id);
+    print_boot_output_prefix(entry);
     printf("%s\n", boot_log_lines[idx]);
     boot_log_line_lens[idx] = 0u;
     boot_log_lines[idx][0] = '\0';
@@ -500,7 +496,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
                 boot_log_last_newline[idx] = 0u;
                 continue;
             }
-            print_boot_log_line(entry, can_id, idx, false);
+            print_boot_log_line(entry, idx, false);
             boot_log_last_newline[idx] = ch;
             continue;
         }
@@ -508,7 +504,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
 
         if (ch == '\t' || ch >= 0x20u) {
             if (boot_log_line_lens[idx] + 1u >= LINE_LEN) {
-                print_boot_log_line(entry, can_id, idx, true);
+                print_boot_log_line(entry, idx, true);
             }
             boot_log_lines[idx][boot_log_line_lens[idx]++] = (char)ch;
         } else {
@@ -516,7 +512,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
 
             snprintf(escaped, sizeof(escaped), "\\x%02x", ch);
             if (boot_log_line_lens[idx] + strlen(escaped) >= LINE_LEN) {
-                print_boot_log_line(entry, can_id, idx, true);
+                print_boot_log_line(entry, idx, true);
             }
             snprintf(&boot_log_lines[idx][boot_log_line_lens[idx]],
                      LINE_LEN - boot_log_line_lens[idx], "%s", escaped);
