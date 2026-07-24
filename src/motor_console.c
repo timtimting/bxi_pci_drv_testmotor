@@ -23,6 +23,48 @@ static const char *console_text(const flash_state *state,
     return state->config.chinese_ui ? chinese : english;
 }
 
+static const char *console_default_config_path(const char *argv0,
+                                               char *resolved,
+                                               size_t resolved_size)
+{
+    char exe_path[PATH_LEN];
+    char *slash;
+    ssize_t len;
+
+    if (access(DEFAULT_FIRMWARE_MAP, R_OK) == 0) {
+        return DEFAULT_FIRMWARE_MAP;
+    }
+
+    len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1u);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        slash = strrchr(exe_path, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            snprintf(resolved, resolved_size, "%s/../%s",
+                     exe_path, DEFAULT_FIRMWARE_MAP);
+            if (access(resolved, R_OK) == 0) {
+                return resolved;
+            }
+        }
+    }
+
+    if (argv0 != NULL && strchr(argv0, '/') != NULL) {
+        snprintf(exe_path, sizeof(exe_path), "%s", argv0);
+        slash = strrchr(exe_path, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            snprintf(resolved, resolved_size, "%s/../%s",
+                     exe_path, DEFAULT_FIRMWARE_MAP);
+            if (access(resolved, R_OK) == 0) {
+                return resolved;
+            }
+        }
+    }
+
+    return DEFAULT_FIRMWARE_MAP;
+}
+
 static const motor_map_entry *console_motor_by_index(flash_state *state,
                                                       unsigned int index,
                                                       size_t *slot)
@@ -958,12 +1000,14 @@ static int console_terminal(flash_state *state)
 
 int main(int argc, char **argv)
 {
-    const char *config_path = DEFAULT_FIRMWARE_MAP;
+    char resolved_config_path[PATH_LEN];
+    const char *config_path = NULL;
     flash_state state;
     int opt;
     int ret;
     bool check_config = false;
     bool show_help = false;
+    bool config_explicit = false;
     const char *language_override = NULL;
 
     static const struct option options[] = {
@@ -977,6 +1021,7 @@ int main(int argc, char **argv)
     while ((opt = getopt_long(argc, argv, "c:Cl:h", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
+            config_explicit = true;
         } else if (opt == 'C') {
             check_config = true;
         } else if (opt == 'l') {
@@ -999,6 +1044,10 @@ int main(int argc, char **argv)
     if (optind != argc) {
         printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config]\n", argv[0]);
         return 1;
+    }
+    if (!config_explicit) {
+        config_path = console_default_config_path(argv[0], resolved_config_path,
+                                                  sizeof(resolved_config_path));
     }
 
     memset(&state, 0, sizeof(state));

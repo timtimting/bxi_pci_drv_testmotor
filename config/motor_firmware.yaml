@@ -36,8 +36,8 @@ power_on_wait_ms: 2000
 mit_canfd: on
 live_output: on
 
-# 终端默认语言：默认英文；zh=中文，en=英文；运行时可用 language 命令切换。
-language: en
+# 终端默认语言：默认中文；zh=中文，en=英文；运行时可用 language 命令切换。
+language: zh
 
 # -----------------------------------------------------------------------------
 # MIT 协议参数范围

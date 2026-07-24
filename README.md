@@ -48,6 +48,13 @@ build/drv_test        原有板卡测试工具
 sudo ./build/motor_console
 ```
 
+也可以进入 `build/` 目录后直接启动：
+
+```bash
+cd build
+sudo ./motor_console
+```
+
 指定其他配置文件：
 
 ```bash
@@ -67,13 +74,13 @@ sudo ./build/motor_console --language en
 默认语言为英文，因此默认提示符：
 
 ```text
-motor[power-off]>
+motor[POWER-OFF]>
 ```
 
 电机上电后提示符变为：
 
 ```text
-motor[power-on]>
+motor[POWER-ON]>
 ```
 
 ## 4. 终端编辑功能

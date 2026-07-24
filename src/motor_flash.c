@@ -223,6 +223,11 @@ static unsigned int clean_can_id(canid_t can_id)
     return can_id & CAN_SFF_MASK;
 }
 
+static bool is_hardware_error_frame(canid_t can_id)
+{
+    return (can_id & CAN_ERR_FLAG) != 0u;
+}
+
 static void update_boot_ids(flash_state *state)
 {
     state->tx_id = 0x7e0u + state->boot_id;
@@ -431,12 +436,83 @@ static int frame_ring_pop(frame_ring *ring, rx_can_frame *frame, unsigned int ti
     return ret;
 }
 
+static bool boot_output_id_matches(unsigned int can_id, unsigned int motor_id)
+{
+    return motor_id > 0u && motor_id <= 0x0fu &&
+           can_id == (0x7f0u | (motor_id & 0x0fu));
+}
+
+static bool mit_reply_id_matches(unsigned int can_id, unsigned int motor_id)
+{
+    return motor_id > 0u && motor_id <= 0x0fu &&
+           (can_id == motor_id || can_id == (0x10u | (motor_id & 0x0fu)));
+}
+
+static bool boot_log_at_line_start[MOTOR_MAP_MAX];
+static bool boot_log_initialized[MOTOR_MAP_MAX];
+static unsigned char boot_log_last_newline[MOTOR_MAP_MAX];
+
+static void print_boot_output_prefix(const motor_map_entry *entry,
+                                     unsigned int can_id)
+{
+    printf("%s index=%u bus=%u id=%u can_id=0x%03x: ",
+           "[boot输出]",
+           entry->index, entry->bus, entry->id, can_id);
+}
+
+static void print_boot_terminal_output(const motor_map_entry *entry,
+                                       unsigned int can_id,
+                                       const uint8_t *data,
+                                       unsigned int len)
+{
+    unsigned int i;
+
+    for (i = 0u; i < len; i++) {
+        unsigned char ch = data[i];
+        size_t idx = entry->index;
+
+        if (idx >= MOTOR_MAP_MAX) {
+            idx = 0u;
+        }
+        if (!boot_log_initialized[idx]) {
+            boot_log_at_line_start[idx] = true;
+            boot_log_initialized[idx] = true;
+        }
+        if (ch == '\n' || ch == '\r') {
+            if (boot_log_last_newline[idx] != 0u && ch != boot_log_last_newline[idx]) {
+                boot_log_last_newline[idx] = 0u;
+                continue;
+            }
+            if (boot_log_at_line_start[idx]) {
+                print_boot_output_prefix(entry, can_id);
+            }
+            putchar('\n');
+            boot_log_at_line_start[idx] = true;
+            boot_log_last_newline[idx] = ch;
+            continue;
+        }
+
+        if (boot_log_at_line_start[idx]) {
+            print_boot_output_prefix(entry, can_id);
+            boot_log_at_line_start[idx] = false;
+        }
+        boot_log_last_newline[idx] = 0u;
+
+        if (ch == '\t' || ch >= 0x20u) {
+            fwrite(&ch, 1u, 1u, stdout);
+        } else {
+            printf("\\x%02x", ch);
+        }
+    }
+}
+
 static int can_rx_callback(void *arg, canfd_packet *msg)
 {
     flash_state *state = (flash_state *)arg;
     unsigned int can_id;
     rx_can_frame frame;
     bool decoded_motor = false;
+    bool decoded_boot = false;
 
     if (state == NULL || msg == NULL) {
         return 0;
@@ -446,6 +522,27 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     }
 
     state->can_stats[msg->bus].rx_packets++;
+
+    if (is_hardware_error_frame(msg->frame.can_id)) {
+        unsigned int i;
+
+        if (state->show_can_output) {
+            flockfile(stdout);
+            printf("\n【hardware】 bus=%u raw_id=0x%08x err=0x%08x len=%u flags=0x%02x data:",
+                   msg->bus,
+                   msg->frame.can_id,
+                   msg->frame.can_id & CAN_ERR_MASK,
+                   msg->frame.len,
+                   msg->frame.flags);
+            for (i = 0u; i < msg->frame.len && i < CANFD_MAX_DLEN; i++) {
+                printf(" %02x", msg->frame.data[i]);
+            }
+            printf("\n");
+            fflush(stdout);
+            funlockfile(stdout);
+        }
+        return 0;
+    }
 
     can_id = clean_can_id(msg->frame.can_id);
     memset(&frame, 0, sizeof(frame));
@@ -464,18 +561,39 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
         rx_ring_push(&state->rx, msg->frame.data, msg->frame.len);
     }
 
-    if (state->config_loaded && frame.len >= BXI_MOTOR_MIT_LEN) {
+    if (state->config_loaded) {
         size_t i;
 
         for (i = 0u; i < state->config.entry_count; i++) {
             const motor_map_entry *entry = &state->config.entries[i];
+            motor_runtime *runtime = &state->motors[i];
 
-            if (entry->bus == msg->bus && frame.data[0] == entry->id) {
+            if (entry->bus == msg->bus && boot_output_id_matches(frame.can_id, entry->id)) {
+                runtime->online = true;
+                runtime->last_reply_us = frame.time_us;
+                runtime->rx_count++;
+                decoded_boot = true;
+                if (state->can_stats[msg->bus].outstanding_replies > 0u) {
+                    state->can_stats[msg->bus].outstanding_replies--;
+                    state->can_stats[msg->bus].received_replies++;
+                }
+                if (state->show_can_output) {
+                    flockfile(stdout);
+                    printf("\n");
+                    print_boot_terminal_output(entry, frame.can_id,
+                                               frame.data, frame.len);
+                    fflush(stdout);
+                    funlockfile(stdout);
+                }
+                break;
+            }
+            if (frame.len >= BXI_MOTOR_MIT_LEN &&
+                entry->bus == msg->bus &&
+                (frame.data[0] == entry->id ||
+                 mit_reply_id_matches(frame.can_id, entry->id))) {
                 bxi_motor_reply reply;
 
                 if (bxi_motor_unpack_reply(frame.data, frame.len, &state->limits, &reply) == 0) {
-                    motor_runtime *runtime = &state->motors[i];
-
                     runtime->online = true;
                     runtime->last_reply_us = frame.time_us;
                     runtime->last_reply = reply;
@@ -509,7 +627,7 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
             }
         }
     }
-    if (state->show_can_output && !decoded_motor) {
+    if (state->show_can_output && !decoded_motor && !decoded_boot) {
         unsigned int i;
 
         flockfile(stdout);
