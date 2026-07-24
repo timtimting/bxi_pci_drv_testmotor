@@ -816,6 +816,15 @@ static int console_resolve_firmware_path(const flash_state *state,
     if (access(path, R_OK) == 0) {
         return 0;
     }
+
+    written = snprintf(path, path_len, "%s/bxi_motor_%s",
+                       state->config.firmware_dir, input);
+    if (written < 0 || (size_t)written >= path_len) {
+        return -1;
+    }
+    if (access(path, R_OK) == 0) {
+        return 0;
+    }
     return -1;
 }
 

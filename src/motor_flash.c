@@ -1146,20 +1146,6 @@ static int power_cycle_motor(void)
     return 0;
 }
 
-static int probe_boot_menu(flash_state *state)
-{
-    rx_ring_clear(&state->rx);
-    if (send_boot_byte(state, 'v') != 0) {
-        return -1;
-    }
-    if (wait_for_pattern(state, "version_", 600u, false) == 0 ||
-        wait_for_pattern(state, "Commands:", 100u, false) == 0) {
-        collect_text(state, 80u, 300u);
-        return 0;
-    }
-    return -1;
-}
-
 static int enter_boot_menu(flash_state *state, bool power_cycle)
 {
     uint64_t deadline;
@@ -1169,11 +1155,6 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
 
     if (m_delay_ms == 0u || m_delay_ms > 1000u) {
         m_delay_ms = 100u;
-    }
-
-    if (probe_boot_menu(state) == 0) {
-        printf("boot menu is already responding on id 0x%03x\n", state->rx_id);
-        return 0;
     }
 
     if (power_cycle) {

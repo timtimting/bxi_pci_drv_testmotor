@@ -345,12 +345,13 @@ flash_all
 
 默认流程：
 
-1. 探测电机是否已经位于 Boot 菜单。
-2. 如果不在 Boot，向应用程序发送复位命令 `r`。
-3. 等待 `boot_enter_delay_ms`，在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
-4. 收到 `Commands:` 后确认进入 Boot。
-5. 发送 `u` 进入烧录功能。
-6. 通过 CAN/YMODEM 传输固件。
+1. 向应用程序发送复位命令 `r`。
+2. 等待 `boot_enter_delay_ms`，在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
+3. 收到 `Commands:` 后确认进入 Boot。
+4. 发送 `u` 进入烧录功能。
+5. 通过 CAN/YMODEM 传输固件。
+
+烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
 
 CAN ID 约定：
 
@@ -372,9 +373,9 @@ flash_all cycle
 可以先用调试烧录命令临时扫描延时：
 
 ```text
-flash_debug 0 1 bxi_motor_50.bin 100
-flash_debug 0 1 bxi_motor_50.bin 200
-flash_debug 0 1 bxi_motor_50.bin 300
+flash_debug 0 1 50.bin 100
+flash_debug 0 1 50.bin 200
+flash_debug 0 1 50.bin 300
 ```
 
 找到合适值后，写入配置：
