@@ -348,7 +348,7 @@ flash_all
 1. 向应用程序发送复位命令 `r`。
 2. 等待 `boot_enter_delay_ms`，在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
 3. 收到 `Commands:` 后确认进入 Boot。
-4. 发送 `u` 进入烧录功能。
+4. 等待 `boot_update_delay_ms` 后发送 `u` 进入烧录功能。
 5. 通过 CAN/YMODEM 传输固件。
 
 烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
@@ -373,15 +373,16 @@ flash_all cycle
 可以先用调试烧录命令临时扫描延时：
 
 ```text
-flash_debug 0 1 50.bin 100
-flash_debug 0 1 50.bin 200
-flash_debug 0 1 50.bin 300
+flash_debug 0 1 50 100
+flash_debug 0 1 50 200
+flash_debug 0 1 50L 300
 ```
 
 找到合适值后，写入配置：
 
 ```yaml
 boot_enter_delay_ms: 200
+boot_update_delay_ms: 200
 ```
 
 ## 10. 配置文件

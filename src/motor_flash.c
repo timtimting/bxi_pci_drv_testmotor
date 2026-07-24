@@ -117,6 +117,7 @@ typedef struct
     unsigned int scan_timeout_ms;
     unsigned int power_on_wait_ms;
     unsigned int boot_enter_delay_ms;
+    unsigned int boot_update_delay_ms;
     bxi_motor_limits mit_limits;
     bool mit_canfd;
     bool live_output;
@@ -1750,6 +1751,12 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+        } else if (strcmp(key, "boot_update_delay_ms") == 0) {
+            if (parse_uint_arg(value, &config->boot_update_delay_ms) != 0) {
+                fprintf(stderr, "%s:%u: invalid boot_update_delay_ms\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
         } else if (strncmp(key, "mit_", 4u) == 0 &&
                    strcmp(key, "mit_canfd") != 0) {
             float *target = NULL;
@@ -1861,6 +1868,7 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->scan_timeout_ms = 1000u;
     config->power_on_wait_ms = 2000u;
     config->boot_enter_delay_ms = 100u;
+    config->boot_update_delay_ms = 200u;
     config->mit_limits = bxi_motor_default_limits;
     config->mit_canfd = true;
     config->live_output = true;
@@ -1908,9 +1916,10 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
                      config->home_soft_start_ms > 60000u ||
                      config->power_on_wait_ms > 60000u ||
                      config->boot_enter_delay_ms == 0u ||
-                     config->boot_enter_delay_ms > 1000u)) {
+                     config->boot_enter_delay_ms > 1000u ||
+                     config->boot_update_delay_ms > 5000u)) {
         fprintf(stderr, "%s: timing values must be in the supported 0..60000 ms range "
-                        "and boot_enter_delay_ms must be in 1..1000 ms\n", map_path);
+                        "and boot update timing must be in supported range\n", map_path);
         return -1;
     }
     return ret;
@@ -2128,10 +2137,19 @@ static int ymodem_send_file(flash_state *state, const char *path)
 
 static int boot_flash_file(flash_state *state, const char *path, bool power_cycle)
 {
+    unsigned int update_delay_ms = state->config.boot_update_delay_ms;
+
     if (enter_boot_menu(state, power_cycle) != 0) {
         return -1;
     }
     rx_ring_clear(&state->rx);
+    if (update_delay_ms > 5000u) {
+        update_delay_ms = 200u;
+    }
+    if (update_delay_ms != 0u) {
+        printf("waiting %u ms before sending 'u'\n", update_delay_ms);
+        sleep_ms(update_delay_ms);
+    }
     if (send_boot_byte(state, 'u') != 0) {
         return -1;
     }

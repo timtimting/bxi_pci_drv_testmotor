@@ -206,7 +206,7 @@ static void console_print_config(const flash_state *state)
 
     printf("%s=%s  %s=%s  %s=%zu  home_kp=%g home_kd=%g "
            "soft_start_ms=%u scan_timeout_ms=%u power_on_wait_ms=%u "
-           "boot_enter_delay_ms=%u "
+           "boot_enter_delay_ms=%u boot_update_delay_ms=%u "
            "mit_canfd=%s live_output=%s language=%s\n",
            console_text(state, "配置文件", "config"),
            state->config_path,
@@ -220,6 +220,7 @@ static void console_print_config(const flash_state *state)
            state->config.scan_timeout_ms,
            state->config.power_on_wait_ms,
            state->config.boot_enter_delay_ms,
+           state->config.boot_update_delay_ms,
            state->config.mit_canfd ? "on" : "off",
            state->config.live_output ? "on" : "off",
            state->config.chinese_ui ? "zh" : "en");
@@ -800,13 +801,25 @@ static int console_resolve_firmware_path(const flash_state *state,
                                          size_t path_len)
 {
     int written;
+    bool has_bin_suffix;
 
     if (input == NULL || input[0] == '\0') {
         return -1;
     }
+    has_bin_suffix = has_suffix(input, ".bin");
+
     snprintf(path, path_len, "%s", input);
     if (access(path, R_OK) == 0) {
         return 0;
+    }
+    if (!has_bin_suffix) {
+        written = snprintf(path, path_len, "%s.bin", input);
+        if (written < 0 || (size_t)written >= path_len) {
+            return -1;
+        }
+        if (access(path, R_OK) == 0) {
+            return 0;
+        }
     }
 
     written = snprintf(path, path_len, "%s/%s", state->config.firmware_dir, input);
@@ -816,6 +829,16 @@ static int console_resolve_firmware_path(const flash_state *state,
     if (access(path, R_OK) == 0) {
         return 0;
     }
+    if (!has_bin_suffix) {
+        written = snprintf(path, path_len, "%s/%s.bin",
+                           state->config.firmware_dir, input);
+        if (written < 0 || (size_t)written >= path_len) {
+            return -1;
+        }
+        if (access(path, R_OK) == 0) {
+            return 0;
+        }
+    }
 
     written = snprintf(path, path_len, "%s/bxi_motor_%s",
                        state->config.firmware_dir, input);
@@ -824,6 +847,16 @@ static int console_resolve_firmware_path(const flash_state *state,
     }
     if (access(path, R_OK) == 0) {
         return 0;
+    }
+    if (!has_bin_suffix) {
+        written = snprintf(path, path_len, "%s/bxi_motor_%s.bin",
+                           state->config.firmware_dir, input);
+        if (written < 0 || (size_t)written >= path_len) {
+            return -1;
+        }
+        if (access(path, R_OK) == 0) {
+            return 0;
+        }
     }
     return -1;
 }
