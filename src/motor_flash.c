@@ -686,7 +686,6 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                 }
                 if (state->show_can_output) {
                     flockfile(stdout);
-                    printf("\n");
                     print_boot_terminal_output(entry, frame.can_id,
                                                frame.data, frame.len);
                     fflush(stdout);
@@ -3538,7 +3537,10 @@ int main(int argc, char **argv)
     if (power_requested) {
         if (motor_pwr_set(1u) < 0) {
             fprintf(stderr, "motor_pwr_set(1) failed\n");
-            bxi_pci_exit();
+            if (state.pci_started) {
+                bxi_pci_exit();
+                state.pci_started = false;
+            }
             return 1;
         }
         printf("motor power on; waiting 2 seconds for soft start\n");
@@ -3560,6 +3562,7 @@ int main(int argc, char **argv)
     }
     if (state.pci_started) {
         bxi_pci_exit();
+        state.pci_started = false;
     }
 
     return ret == 0 ? 0 : 1;

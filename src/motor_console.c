@@ -1225,6 +1225,9 @@ int main(int argc, char **argv)
                 "warning: console stopped while motor power state is ON; powering off"));
         console_power_off(&state);
     }
-    bxi_pci_exit();
+    if (state.pci_started) {
+        bxi_pci_exit();
+        state.pci_started = false;
+    }
     return ret == 0 ? 0 : 1;
 }
