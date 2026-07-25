@@ -389,6 +389,10 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
     unsigned int old_bus = state->bus;
     unsigned int old_id = state->boot_id;
     bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool output_silenced = false;
     uint64_t deadline;
     size_t i;
     size_t found = 0u;
@@ -399,6 +403,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
         return -1;
     }
     state->show_can_output = false;
+    state->show_motor_input = false;
     frame_ring_clear(&state->frames);
     for (bus = 0u; bus < CANFD_DEVICE_NUM; bus++) {
         timeout_before[bus] = state->can_stats[bus].reply_timeouts;
@@ -414,12 +419,19 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
         printf("probing %zu configured motors across %u CAN buses...\n",
                state->config.entry_count, CANFD_DEVICE_NUM);
     }
+    if (console_silence_process_output(&saved_stdout, &saved_stderr) == 0) {
+        output_silenced = true;
+    }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
 
         console_use_motor(state, m);
         console_expect_reply(state, m->bus);
         send_debug_mit(state, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        sleep_ms(5u);
+    }
+    if (output_silenced) {
+        console_restore_process_output(saved_stdout, saved_stderr);
     }
     state->bus = old_bus;
     state->boot_id = old_id;
@@ -457,6 +469,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
         }
     }
     state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
     return found == 0u ? -1 : 0;
 }
 
@@ -910,7 +923,9 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     int flash_argc = 0;
     bool cycle = false;
     bool old_monitor;
+    bool old_input;
     bool old_suppress_boot_text;
+    bool old_brief_flash_output;
     int ret;
     size_t flashed_slot = 0u;
 
@@ -956,14 +971,20 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         flash_argv[flash_argc++] = "cycle";
     }
     old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
     old_suppress_boot_text = state->suppress_boot_text;
+    old_brief_flash_output = state->brief_flash_output;
     state->show_can_output = false;
     if (all) {
+        state->show_motor_input = false;
         state->suppress_boot_text = true;
+        state->brief_flash_output = true;
     }
     ret = run_flash_auto(state, flash_argc, flash_argv);
     state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
     state->suppress_boot_text = old_suppress_boot_text;
+    state->brief_flash_output = old_brief_flash_output;
     if (ret != 0) {
         return -1;
     }

@@ -197,6 +197,10 @@ typedef struct
     bool show_can_output;
     bool show_motor_input;
     bool suppress_boot_text;
+    bool brief_flash_output;
+    unsigned int brief_flash_index;
+    size_t brief_flash_ordinal;
+    size_t brief_flash_total;
     bool language_override_active;
     bool chinese_override;
     char config_path[PATH_LEN];
@@ -1266,12 +1270,16 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     unsigned int m_delay_ms = DEFAULT_BOOT_ENTER_DELAY_MS;
 
     if (power_cycle) {
-        printf("power cycling motor, then sending one 'm' after %u ms\n", m_delay_ms);
+        if (!state->brief_flash_output) {
+            printf("power cycling motor, then sending one 'm' after %u ms\n", m_delay_ms);
+        }
         if (power_cycle_motor() != 0) {
             return -1;
         }
     } else {
-        printf("sending app reset command 'r', then one 'm' after %u ms\n", m_delay_ms);
+        if (!state->brief_flash_output) {
+            printf("sending app reset command 'r', then one 'm' after %u ms\n", m_delay_ms);
+        }
         rx_ring_clear(&state->rx);
         if (send_boot_byte(state, 'r') != 0) {
             return -1;
@@ -1289,9 +1297,11 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
         uint8_t byte;
 
         while (rx_ring_pop(&state->rx, &byte, 0u)) {
-            append_rx_text(text, &text_len, sizeof(text), byte, true);
+            append_rx_text(text, &text_len, sizeof(text), byte, !state->brief_flash_output);
             if (boot_menu_text_seen(state, text)) {
-                printf("\nentered boot menu on tx=0x%03x rx=0x%03x\n", state->tx_id, state->rx_id);
+                if (!state->brief_flash_output) {
+                    printf("\nentered boot menu on tx=0x%03x rx=0x%03x\n", state->tx_id, state->rx_id);
+                }
                 return 0;
             }
         }
@@ -2133,7 +2143,9 @@ static int send_ymodem_packet_with_retry(flash_state *state,
             }
         }
 
-        printf("packet retry %u/%u\n", attempt, retry_limit);
+        if (!state->brief_flash_output) {
+            printf("packet retry %u/%u\n", attempt, retry_limit);
+        }
     }
 
     return -1;
@@ -2177,21 +2189,25 @@ static int ymodem_send_file(flash_state *state, const char *path)
         return -1;
     }
 
-    printf("waiting for YMODEM C request\n");
-    if (wait_for_byte(state, YMODEM_C, 5000u, true) != 0) {
+    if (!state->brief_flash_output) {
+        printf("waiting for YMODEM C request\n");
+    }
+    if (wait_for_byte(state, YMODEM_C, 5000u, !state->brief_flash_output) != 0) {
         fprintf(stderr, "bootloader did not request YMODEM transfer\n");
         fclose(fp);
         return -1;
     }
 
-    printf("\nsending header: %s (%u bytes)\n", name, file_size);
+    if (!state->brief_flash_output) {
+        printf("\nsending header: %s (%u bytes)\n", name, file_size);
+    }
     packet_len = make_ymodem_packet(packet, 0u, header, sizeof(header), YMODEM_PACKET_128, 0u);
     if (send_ymodem_packet_with_retry(state, packet, packet_len, 15000u, 5u) != 0) {
         fprintf(stderr, "failed to send YMODEM header\n");
         fclose(fp);
         return -1;
     }
-    if (wait_for_byte(state, YMODEM_C, 5000u, true) != 0) {
+    if (wait_for_byte(state, YMODEM_C, 5000u, !state->brief_flash_output) != 0) {
         fprintf(stderr, "bootloader did not request first data packet\n");
         fclose(fp);
         return -1;
@@ -2220,7 +2236,15 @@ static int ymodem_send_file(flash_state *state, const char *path)
         sent += n;
         seq = (uint8_t)(seq + 1u);
         progress = file_size == 0u ? 100u : sent * 100u / (size_t)file_size;
-        printf("\rflashing: %zu/%u bytes (%zu%%)", sent, file_size, progress);
+        if (state->brief_flash_output) {
+            printf("\rFLASH PROGRESS %02zu/%02zu index=%02u %zu%%",
+                   state->brief_flash_ordinal,
+                   state->brief_flash_total,
+                   state->brief_flash_index,
+                   progress);
+        } else {
+            printf("\rflashing: %zu/%u bytes (%zu%%)", sent, file_size, progress);
+        }
         fflush(stdout);
     }
     printf("\n");
@@ -2228,10 +2252,10 @@ static int ymodem_send_file(flash_state *state, const char *path)
     fclose(fp);
 
     if (send_boot_byte(state, YMODEM_EOT) != 0 ||
-        wait_for_byte(state, YMODEM_NAK, 5000u, true) != 0 ||
+        wait_for_byte(state, YMODEM_NAK, 5000u, !state->brief_flash_output) != 0 ||
         send_boot_byte(state, YMODEM_EOT) != 0 ||
-        wait_for_byte(state, YMODEM_ACK, 5000u, true) != 0 ||
-        wait_for_byte(state, YMODEM_C, 5000u, true) != 0) {
+        wait_for_byte(state, YMODEM_ACK, 5000u, !state->brief_flash_output) != 0 ||
+        wait_for_byte(state, YMODEM_C, 5000u, !state->brief_flash_output) != 0) {
         fprintf(stderr, "failed during YMODEM EOT handshake\n");
         return -1;
     }
@@ -2242,7 +2266,9 @@ static int ymodem_send_file(flash_state *state, const char *path)
         return -1;
     }
 
-    printf("firmware transfer complete\n");
+    if (!state->brief_flash_output) {
+        printf("firmware transfer complete\n");
+    }
     collect_text(state, 250u, 2000u);
     return 0;
 }
@@ -2267,7 +2293,9 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
     }
 
     if (already_in_boot_menu) {
-        printf("motor is already in boot menu; skip 'r'/'m'\n");
+        if (!state->brief_flash_output) {
+            printf("motor is already in boot menu; skip 'r'/'m'\n");
+        }
     } else {
         if (enter_boot_menu(state, power_cycle) != 0) {
             return -1;
@@ -2275,7 +2303,9 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
     }
     rx_ring_clear(&state->rx);
     if (update_delay_ms != 0u) {
-        printf("waiting %u ms before sending 'u'\n", update_delay_ms);
+        if (!state->brief_flash_output) {
+            printf("waiting %u ms before sending 'u'\n", update_delay_ms);
+        }
         sleep_ms(update_delay_ms);
     }
     if (send_boot_byte(state, 'u') != 0) {
@@ -2286,7 +2316,9 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
         return ret;
     }
 
-    printf("sending jump-to-app command 'a'\n");
+    if (!state->brief_flash_output) {
+        printf("sending jump-to-app command 'a'\n");
+    }
     rx_ring_clear(&state->rx);
     if (send_boot_byte(state, 'a') != 0) {
         return -1;
@@ -2357,12 +2389,17 @@ static int run_flash_auto(flash_state *state, int argc, char **argv)
         return -1;
     }
 
-    printf("\nBATCH FLASH: selection=%s targets=%zu map=%s power must be ON\n",
-           selection, selected, map_path);
+    if (state->brief_flash_output) {
+        printf("FLASH SUMMARY total=%zu start\n", selected);
+    } else {
+        printf("\nBATCH FLASH: selection=%s targets=%zu map=%s power must be ON\n",
+               selection, selected, map_path);
+    }
     failed = 0u;
     for (i = 0u; i < config.entry_count && !stop_requested; i++) {
         char path[PATH_LEN] = "";
         const motor_map_entry *entry = &config.entries[i];
+        size_t ordinal;
 
         if (!motor_is_selected(entry, state, selection)) {
             continue;
@@ -2370,20 +2407,44 @@ static int run_flash_auto(flash_state *state, int argc, char **argv)
         state->bus = entry->bus;
         set_target_id(state, entry->id);
         configured_firmware_path(&config, entry->type, path, sizeof(path));
-        printf("\n######## FLASH %zu/%zu: bus=%u id=%u type=%s file=%s ########\n",
-               succeeded + failed + 1u, selected, entry->bus, entry->id, entry->type, path);
+        ordinal = succeeded + failed + 1u;
+        state->brief_flash_index = entry->index;
+        state->brief_flash_ordinal = ordinal;
+        state->brief_flash_total = selected;
+        if (state->brief_flash_output) {
+            printf("FLASH START %02zu/%02zu index=%02u bus=%u id=%u type=%s\n",
+                   ordinal, selected, entry->index, entry->bus, entry->id, entry->type);
+        } else {
+            printf("\n######## FLASH %zu/%zu: bus=%u id=%u type=%s file=%s ########\n",
+                   ordinal, selected, entry->bus, entry->id, entry->type, path);
+        }
         if (boot_flash_file(state, path, cycle) == 0) {
             succeeded++;
-            printf("######## SUCCESS: bus=%u id=%u ########\n", entry->bus, entry->id);
+            if (state->brief_flash_output) {
+                printf("FLASH DONE  %02zu/%02zu index=%02u result=OK\n",
+                       ordinal, selected, entry->index);
+            } else {
+                printf("######## SUCCESS: bus=%u id=%u ########\n", entry->bus, entry->id);
+            }
         } else {
             failed++;
-            fprintf(stderr, "######## FAILED: bus=%u id=%u ########\n", entry->bus, entry->id);
+            if (state->brief_flash_output) {
+                fprintf(stderr, "FLASH DONE  %02zu/%02zu index=%02u result=FAILED\n",
+                        ordinal, selected, entry->index);
+            } else {
+                fprintf(stderr, "######## FAILED: bus=%u id=%u ########\n", entry->bus, entry->id);
+            }
         }
     }
     state->bus = original_bus;
     set_target_id(state, original_id);
-    printf("\nBATCH SUMMARY: selected=%zu success=%zu failed=%zu%s\n",
-           selected, succeeded, failed, stop_requested ? " interrupted" : "");
+    if (state->brief_flash_output) {
+        printf("FLASH SUMMARY total=%zu success=%zu failed=%zu%s\n",
+               selected, succeeded, failed, stop_requested ? " interrupted" : "");
+    } else {
+        printf("\nBATCH SUMMARY: selected=%zu success=%zu failed=%zu%s\n",
+               selected, succeeded, failed, stop_requested ? " interrupted" : "");
+    }
     return failed == 0u && succeeded == selected ? 0 : -1;
 }
 
