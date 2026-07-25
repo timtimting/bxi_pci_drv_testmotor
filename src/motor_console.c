@@ -47,6 +47,20 @@ static void console_trim_line(char *line)
     *end = '\0';
 }
 
+static int console_parse_index_arg(const char *text, unsigned int *index)
+{
+    if (text == NULL || index == NULL ||
+        strlen(text) != 2u ||
+        !isdigit((unsigned char)text[0]) ||
+        !isdigit((unsigned char)text[1])) {
+        return -1;
+    }
+
+    *index = (unsigned int)(text[0] - '0') * 10u +
+             (unsigned int)(text[1] - '0');
+    return 0;
+}
+
 static void console_restore_process_output(int saved_stdout, int saved_stderr)
 {
     fflush(stdout);
@@ -191,23 +205,23 @@ static void console_print_help(bool chinese)
         printf("      显示序号、Bus、CAN ID、型号、在线/使能状态和最后一次反馈。\n");
         printf("  mit_zero_set\n");
         printf("      给全部电机发送 MIT 零位校准帧；要求电机已上电并处于失能状态。\n");
-        printf("  mit_zero_set_single <index>\n");
+        printf("  mit_zero_set_single <index00>\n");
         printf("      给指定逻辑序号的电机发送 MIT 零位校准帧。\n");
         printf("  mit_enable_all | mit_disable_all\n");
         printf("      使能或失能全部配置电机。\n");
-        printf("  mit_enable_single <index> | mit_disable_single <index>\n");
+        printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
         printf("      使能或失能指定电机。\n");
-        printf("  motor_set <index> <pos> <torque> <vel> <kp> <kd>\n");
+        printf("  motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
-        printf("  flash_single <index> [cycle]\n");
+        printf("  flash_single <index00> [cycle]\n");
         printf("      按电机型号选择固件并烧录单台电机；cycle 表示断电重启进入 Boot。\n");
         printf("  flash_all [cycle]\n");
         printf("      预检并烧录配置中的全部电机，最后输出成功/失败汇总。\n");
         printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
         printf("      调试烧录指定 Bus/ID，不检查型号；烧录流程使用程序默认时序。\n");
-        printf("  motor_dbg <index>\n");
+        printf("  motor_dbg <index00>\n");
         printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
         printf("  motor_all_dbg <bus> <id>\n");
         printf("      按 Bus/ID 进入单电机直通调试，不依赖配置文件；` 退出。\n");
@@ -240,18 +254,18 @@ static void console_print_help(bool chinese)
     printf("  mit_zero_set\n");
     printf("      Send the MIT zero-calibration frame to every configured motor. Motors must\n");
     printf("      be powered and disabled.\n");
-    printf("  mit_zero_set_single <index>\n");
+    printf("  mit_zero_set_single <index00>\n");
     printf("      Send the MIT zero-calibration frame to one configured motor.\n");
     printf("  mit_enable_all | mit_disable_all\n");
     printf("      Send MIT enable/disable to every configured motor.\n");
-    printf("  mit_enable_single <index> | mit_disable_single <index>\n");
+    printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
     printf("      Send MIT enable/disable to one motor.\n");
-    printf("  motor_set <index> <pos> <torque> <vel> <kp> <kd>\n");
+    printf("  motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
     printf("      Send one MIT control frame. The selected motor must be enabled.\n");
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
-    printf("  flash_single <index> [cycle]\n");
+    printf("  flash_single <index00> [cycle]\n");
     printf("      Select firmware by motor type and flash one disabled motor. `cycle` uses\n");
     printf("      a power cycle instead of the normal application reset path.\n");
     printf("  flash_all [cycle]\n");
@@ -259,7 +273,7 @@ static void console_print_help(bool chinese)
     printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
     printf("      Debug-flash one Bus/ID with an explicit firmware file, bypassing the\n");
     printf("      configured motor type mapping. Flash timing uses built-in defaults.\n");
-    printf("  motor_dbg <index>\n");
+    printf("  motor_dbg <index00>\n");
     printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
     printf("      is sent immediately; ` exits debug mode.\n");
     printf("  motor_all_dbg <bus> <id>\n");
@@ -664,13 +678,13 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
     size_t slot;
     const motor_map_entry *motor;
 
-    if (argc != 7 || parse_uint_arg(argv[1], &index) != 0 ||
+    if (argc != 7 || console_parse_index_arg(argv[1], &index) != 0 ||
         parse_float_arg(argv[2], &pos) != 0 ||
         parse_float_arg(argv[3], &torque) != 0 ||
         parse_float_arg(argv[4], &vel) != 0 ||
         parse_float_arg(argv[5], &kp) != 0 ||
         parse_float_arg(argv[6], &kd) != 0) {
-        printf("%s: motor_set <index> <pos> <torque> <vel> <kp> <kd>\n",
+        printf("%s: motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n",
                console_text(state, "用法", "usage"));
         return -1;
     }
@@ -911,7 +925,7 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     }
     if ((!all && (argc < 2 || argc > 3)) || (all && argc > 2)) {
         printf("%s: %s%s\n", console_text(state, "用法", "usage"),
-               all ? "flash_all" : "flash_single <index>", " [cycle]");
+               all ? "flash_all" : "flash_single <index00>", " [cycle]");
         return -1;
     }
     if ((!all && argc == 3 && strcmp(argv[2], "cycle") == 0) ||
@@ -926,7 +940,7 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         unsigned int index;
         const motor_map_entry *motor;
 
-        if (parse_uint_arg(argv[1], &index) != 0 ||
+        if (console_parse_index_arg(argv[1], &index) != 0 ||
             (motor = console_motor_by_index(state, index, &flashed_slot)) == NULL) {
             printf("%s: %s\n", console_text(state,
                    "未知的电机序号", "unknown motor index"), argv[1]);
@@ -1194,9 +1208,9 @@ static int console_motor_dbg(flash_state *state, int argc, char **argv)
     size_t slot;
     const motor_map_entry *motor;
 
-    if (argc != 2 || parse_uint_arg(argv[1], &index) != 0 ||
+    if (argc != 2 || console_parse_index_arg(argv[1], &index) != 0 ||
         (motor = console_motor_by_index(state, index, &slot)) == NULL) {
-        printf("%s: motor_dbg <index>\n", console_text(state, "用法", "usage"));
+        printf("%s: motor_dbg <index00>\n", console_text(state, "用法", "usage"));
         return -1;
     }
     (void)slot;
@@ -1313,9 +1327,9 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         uint8_t special = strcmp(cmd, "mit_zero_set_single") == 0 ? BXI_MOTOR_CMD_ZERO :
                           (strcmp(cmd, "mit_enable_single") == 0 ? BXI_MOTOR_CMD_ENABLE :
                            BXI_MOTOR_CMD_DISABLE);
-        if (argc != 2 || parse_uint_arg(argv[1], &index) != 0 ||
+        if (argc != 2 || console_parse_index_arg(argv[1], &index) != 0 ||
             console_motor_by_index(state, index, &slot) == NULL) {
-            printf("%s: %s <index>\n", console_text(state, "用法", "usage"), cmd);
+            printf("%s: %s <index00>\n", console_text(state, "用法", "usage"), cmd);
             return -1;
         }
         return console_send_special(state, (int)slot, special, cmd);

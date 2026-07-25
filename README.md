@@ -114,6 +114,8 @@ lang en
 命令名称在中英文模式下保持一致，方便脚本和操作记录复用。Bootloader 和 YMODEM
 底层协议的原始回显保持固件端原文，便于定位升级问题。
 
+涉及配置电机序号的命令统一使用两位十进制 `index00` 参数，例如 `00`、`08`、`30`。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：
@@ -173,7 +175,7 @@ mit_zero_set
 给单台电机发送零位校准帧：
 
 ```text
-mit_zero_set_single 0
+mit_zero_set_single 00
 ```
 
 零位校准要求目标电机处于失能状态。如果软件记录该电机仍然使能，命令会被拒绝。
@@ -184,8 +186,8 @@ mit_zero_set_single 0
 mit_enable_all
 mit_disable_all
 
-mit_enable_single 0
-mit_disable_single 0
+mit_enable_single 00
+mit_disable_single 00
 ```
 
 只有收到电机回复后，软件才会把该电机记录为已使能或已失能。可以通过
@@ -194,13 +196,13 @@ mit_disable_single 0
 ### 7.4 单电机 MIT 控制
 
 ```text
-motor_set <index> <pos> <torque> <vel> <kp> <kd>
+motor_set <index00> <pos> <torque> <vel> <kp> <kd>
 ```
 
-示例：控制 `index 0` 到位置 `0.5`，目标速度和前馈转矩为 0：
+示例：控制 `index 00` 到位置 `0.5`，目标速度和前馈转矩为 0：
 
 ```text
-motor_set 0 0.5 0 0 10 1
+motor_set 00 0.5 0 0 10 1
 ```
 
 参数顺序：
@@ -321,13 +323,13 @@ firmware/bxi_motor_85.bin
 ```text
 power_on
 mit_disable_all
-flash_single <index>
+flash_single <index00>
 ```
 
 示例：
 
 ```text
-flash_single 0
+flash_single 00
 ```
 
 ### 9.3 烧录全部电机
@@ -359,7 +361,7 @@ flash_all
 如果需要手动调试 Boot 菜单，可以进入单电机调试模式：
 
 ```text
-motor_dbg 0          # 按配置 index 调试
+motor_dbg 00         # 按配置 index 调试
 motor_all_dbg 0 1    # 按 bus/id 调试，不依赖配置
 ```
 
@@ -385,7 +387,7 @@ CAN ID 约定：
 如果软复位无法进入 Boot，可以增加 `cycle`：
 
 ```text
-flash_single 0 cycle
+flash_single 00 cycle
 flash_all cycle
 ```
 
@@ -453,17 +455,17 @@ config_reload /path/to/config.yaml
 | `motor_scan` | `[timeout_ms]` | 扫描全部配置电机 |
 | `motor_list` | 无 | 显示电机状态和最后反馈 |
 | `mit_zero_set` | 无 | 全部电机校准零位 |
-| `mit_zero_set_single` | `<index>` | 单电机校准零位 |
+| `mit_zero_set_single` | `<index00>` | 单电机校准零位 |
 | `mit_enable_all` | 无 | 使能全部电机 |
 | `mit_disable_all` | 无 | 失能全部电机 |
-| `mit_enable_single` | `<index>` | 使能单台电机 |
-| `mit_disable_single` | `<index>` | 失能单台电机 |
-| `motor_set` | `<index> <pos> <torque> <vel> <kp> <kd>` | 单次 MIT 控制 |
+| `mit_enable_single` | `<index00>` | 使能单台电机 |
+| `mit_disable_single` | `<index00>` | 失能单台电机 |
+| `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 单次 MIT 控制 |
 | `stand_up` | 无 | 全部在线电机软启动回零 |
-| `flash_single` | `<index> [cycle]` | 烧录单台电机 |
+| `flash_single` | `<index00> [cycle]` | 烧录单台电机 |
 | `flash_all` | `[cycle]` | 烧录全部电机 |
 | `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
-| `motor_dbg` | `<index>` | 按配置序号进入单电机直通调试 |
+| `motor_dbg` | `<index00>` | 按配置序号进入单电机直通调试 |
 | `motor_all_dbg` | `<bus> <id>` | 按 Bus/ID 进入单电机直通调试 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
