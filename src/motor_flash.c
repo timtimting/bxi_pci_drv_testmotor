@@ -50,6 +50,8 @@ enum {
     HISTORY_DEPTH = 32,
     LINE_LEN = 512,
     MOTOR_TYPE_LEN = 32,
+    MOTOR_STATE_LEN = 32,
+    STATE_PATTERN_LEN = 128,
     PATH_LEN = 512,
     MOTOR_MAP_MAX = 256,
     FIRMWARE_FILE_MAX = 256,
@@ -118,6 +120,10 @@ typedef struct
     unsigned int power_on_wait_ms;
     unsigned int boot_enter_delay_ms;
     unsigned int boot_update_delay_ms;
+    char state_boot_pattern[STATE_PATTERN_LEN];
+    char state_motor_pattern[STATE_PATTERN_LEN];
+    char state_no_app_pattern[STATE_PATTERN_LEN];
+    char state_menu_pattern[STATE_PATTERN_LEN];
     bxi_motor_limits mit_limits;
     bool mit_canfd;
     bool live_output;
@@ -148,6 +154,7 @@ typedef struct
     bxi_motor_reply last_reply;
     unsigned int rx_count;
     unsigned int timeout_count;
+    char state_label[MOTOR_STATE_LEN];
 } motor_runtime;
 
 typedef struct
@@ -457,12 +464,59 @@ static char boot_log_lines[MOTOR_MAP_MAX][LINE_LEN];
 static size_t boot_log_line_lens[MOTOR_MAP_MAX];
 static unsigned char boot_log_last_newline[MOTOR_MAP_MAX];
 
-static void print_boot_output_prefix(const motor_map_entry *entry)
+static void motor_runtime_set_state(motor_runtime *runtime, const char *state)
 {
-    printf("[motor%02u]:", entry->index);
+    if (runtime == NULL || state == NULL || state[0] == '\0') {
+        return;
+    }
+    snprintf(runtime->state_label, sizeof(runtime->state_label), "%s", state);
 }
 
-static void print_boot_log_line(const motor_map_entry *entry,
+static const char *motor_runtime_state(const motor_runtime *runtime)
+{
+    if (runtime == NULL || runtime->state_label[0] == '\0') {
+        return "unknown";
+    }
+    return runtime->state_label;
+}
+
+static void update_motor_state_from_boot_line(flash_state *state,
+                                              motor_runtime *runtime,
+                                              const char *line)
+{
+    const motor_map_config *config;
+
+    if (state == NULL || runtime == NULL || line == NULL) {
+        return;
+    }
+    config = &state->config;
+    if (config->state_boot_pattern[0] != '\0' &&
+        strstr(line, config->state_boot_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "boot");
+    }
+    if (config->state_motor_pattern[0] != '\0' &&
+        strstr(line, config->state_motor_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "motor");
+    }
+    if (config->state_no_app_pattern[0] != '\0' &&
+        strstr(line, config->state_no_app_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "boot");
+    }
+    if (config->state_menu_pattern[0] != '\0' &&
+        strstr(line, config->state_menu_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "menu");
+    }
+}
+
+static void print_boot_output_prefix(const motor_map_entry *entry,
+                                     const motor_runtime *runtime)
+{
+    printf("[motor%02u,%s]:", entry->index, motor_runtime_state(runtime));
+}
+
+static void print_boot_log_line(flash_state *state,
+                                const motor_map_entry *entry,
+                                motor_runtime *runtime,
                                 size_t idx,
                                 bool force)
 {
@@ -474,13 +528,16 @@ static void print_boot_log_line(const motor_map_entry *entry,
     }
 
     boot_log_lines[idx][boot_log_line_lens[idx]] = '\0';
-    print_boot_output_prefix(entry);
+    update_motor_state_from_boot_line(state, runtime, boot_log_lines[idx]);
+    print_boot_output_prefix(entry, runtime);
     printf("%s\n", boot_log_lines[idx]);
     boot_log_line_lens[idx] = 0u;
     boot_log_lines[idx][0] = '\0';
 }
 
-static void print_boot_terminal_output(const motor_map_entry *entry,
+static void print_boot_terminal_output(flash_state *state,
+                                       const motor_map_entry *entry,
+                                       motor_runtime *runtime,
                                        unsigned int can_id,
                                        const uint8_t *data,
                                        unsigned int len)
@@ -499,7 +556,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
                 boot_log_last_newline[idx] = 0u;
                 continue;
             }
-            print_boot_log_line(entry, idx, false);
+            print_boot_log_line(state, entry, runtime, idx, false);
             boot_log_last_newline[idx] = ch;
             continue;
         }
@@ -507,7 +564,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
 
         if (ch == '\t' || ch >= 0x20u) {
             if (boot_log_line_lens[idx] + 1u >= LINE_LEN) {
-                print_boot_log_line(entry, idx, true);
+                print_boot_log_line(state, entry, runtime, idx, true);
             }
             boot_log_lines[idx][boot_log_line_lens[idx]++] = (char)ch;
         } else {
@@ -515,7 +572,7 @@ static void print_boot_terminal_output(const motor_map_entry *entry,
 
             snprintf(escaped, sizeof(escaped), "\\x%02x", ch);
             if (boot_log_line_lens[idx] + strlen(escaped) >= LINE_LEN) {
-                print_boot_log_line(entry, idx, true);
+                print_boot_log_line(state, entry, runtime, idx, true);
             }
             snprintf(&boot_log_lines[idx][boot_log_line_lens[idx]],
                      LINE_LEN - boot_log_line_lens[idx], "%s", escaped);
@@ -687,7 +744,7 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                 }
                 if (state->show_can_output) {
                     flockfile(stdout);
-                    print_boot_terminal_output(entry, frame.can_id,
+                    print_boot_terminal_output(state, entry, runtime, frame.can_id,
                                                frame.data, frame.len);
                     fflush(stdout);
                     funlockfile(stdout);
@@ -705,6 +762,7 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                     runtime->last_reply_us = frame.time_us;
                     runtime->last_reply = reply;
                     runtime->rx_count++;
+                    motor_runtime_set_state(runtime, "motor");
                     decoded_motor = true;
                     state->can_stats[msg->bus].decoded_motor_replies++;
                     if (state->can_stats[msg->bus].outstanding_replies > 0u) {
@@ -1194,6 +1252,11 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     fprintf(stderr, "failed to enter boot menu on tx=0x%03x rx=0x%03x\n",
             state->tx_id,
             state->rx_id);
+    if (text_len != 0u) {
+        fprintf(stderr, "boot text before timeout: %s\n", text);
+    } else {
+        fprintf(stderr, "boot text before timeout: (none)\n");
+    }
     if (!power_cycle) {
         fprintf(stderr, "hint: soft reset did not reach boot; try `enter cycle` or `--power-cycle`\n");
     }
@@ -1757,6 +1820,14 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+        } else if (strcmp(key, "state_boot_pattern") == 0) {
+            snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "%s", value);
+        } else if (strcmp(key, "state_motor_pattern") == 0) {
+            snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "%s", value);
+        } else if (strcmp(key, "state_no_app_pattern") == 0) {
+            snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "%s", value);
+        } else if (strcmp(key, "state_menu_pattern") == 0) {
+            snprintf(config->state_menu_pattern, sizeof(config->state_menu_pattern), "%s", value);
         } else if (strncmp(key, "mit_", 4u) == 0 &&
                    strcmp(key, "mit_canfd") != 0) {
             float *target = NULL;
@@ -1869,6 +1940,10 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->power_on_wait_ms = 2000u;
     config->boot_enter_delay_ms = 100u;
     config->boot_update_delay_ms = 200u;
+    snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "boot...");
+    snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "stm run");
+    snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "no useful app");
+    snprintf(config->state_menu_pattern, sizeof(config->state_menu_pattern), "Commands:");
     config->mit_limits = bxi_motor_default_limits;
     config->mit_canfd = true;
     config->live_output = true;
@@ -2138,9 +2213,27 @@ static int ymodem_send_file(flash_state *state, const char *path)
 static int boot_flash_file(flash_state *state, const char *path, bool power_cycle)
 {
     unsigned int update_delay_ms = state->config.boot_update_delay_ms;
+    bool already_in_boot_menu = false;
+    size_t i;
 
-    if (enter_boot_menu(state, power_cycle) != 0) {
-        return -1;
+    if (state->config_loaded) {
+        for (i = 0u; i < state->config.entry_count; i++) {
+            const motor_map_entry *entry = &state->config.entries[i];
+
+            if (entry->bus == state->bus && entry->id == state->boot_id &&
+                strcmp(motor_runtime_state(&state->motors[i]), "menu") == 0) {
+                already_in_boot_menu = true;
+                break;
+            }
+        }
+    }
+
+    if (already_in_boot_menu) {
+        printf("motor is already in boot menu; skip 'r'/'m'\n");
+    } else {
+        if (enter_boot_menu(state, power_cycle) != 0) {
+            return -1;
+        }
     }
     rx_ring_clear(&state->rx);
     if (update_delay_ms > 5000u) {

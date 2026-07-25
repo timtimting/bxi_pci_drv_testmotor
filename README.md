@@ -352,6 +352,17 @@ flash_all
 5. 通过 CAN/YMODEM 传输固件。
 
 烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
+如果上电输出已经识别到目标电机处于 `menu` 状态，烧录会直接跳过 `r/m`，等待
+`boot_update_delay_ms` 后发送 `u`。
+
+状态识别关键字在配置文件中修改：
+
+```yaml
+state_boot_pattern: boot...
+state_motor_pattern: stm run
+state_no_app_pattern: no useful app
+state_menu_pattern: Commands:
+```
 
 CAN ID 约定：
 

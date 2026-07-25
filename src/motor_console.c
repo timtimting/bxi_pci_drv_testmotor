@@ -253,8 +253,9 @@ static void console_print_motors(const flash_state *state)
         const motor_map_entry *m = &state->config.entries[i];
         const motor_runtime *r = &state->motors[i];
 
-        printf("  index=%-3u bus=%u id=%-2u type=%-4s %s=%-3s %s=%-3s rx=%u",
+        printf("  index=%-3u bus=%u id=%-2u type=%-4s state=%-7s %s=%-3s %s=%-3s rx=%u",
                m->index, m->bus, m->id, m->type,
+               motor_runtime_state(r),
                console_text(state, "在线", "online"),
                r->online ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
                console_text(state, "使能", "enabled"),
