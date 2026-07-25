@@ -2110,7 +2110,7 @@ static int ymodem_send_file(flash_state *state, const char *path)
     FILE *fp = NULL;
     uint8_t packet[YMODEM_MAX_PACKET];
     uint8_t header[YMODEM_PACKET_128];
-    uint8_t payload[YMODEM_PACKET_1K];
+    uint8_t payload[YMODEM_PACKET_128];
     const char *name;
     uint32_t file_size;
     size_t packet_len;
@@ -2175,7 +2175,7 @@ static int ymodem_send_file(flash_state *state, const char *path)
             break;
         }
 
-        packet_len = make_ymodem_packet(packet, seq, payload, n, YMODEM_PACKET_1K, 0x1au);
+        packet_len = make_ymodem_packet(packet, seq, payload, n, YMODEM_PACKET_128, 0x1au);
         if (send_ymodem_packet_with_retry(state, packet, packet_len, 5000u, 5u) != 0) {
             fprintf(stderr, "failed to send data packet seq=%u\n", seq);
             fclose(fp);
