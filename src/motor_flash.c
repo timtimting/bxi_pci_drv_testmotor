@@ -2216,6 +2216,7 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
 {
     unsigned int update_delay_ms = DEFAULT_BOOT_UPDATE_DELAY_MS;
     bool already_in_boot_menu = false;
+    int ret;
     size_t i;
 
     if (state->config_loaded) {
@@ -2245,7 +2246,18 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
     if (send_boot_byte(state, 'u') != 0) {
         return -1;
     }
-    return ymodem_send_file(state, path);
+    ret = ymodem_send_file(state, path);
+    if (ret != 0) {
+        return ret;
+    }
+
+    printf("sending jump-to-app command 'a'\n");
+    rx_ring_clear(&state->rx);
+    if (send_boot_byte(state, 'a') != 0) {
+        return -1;
+    }
+    collect_text(state, 250u, 2000u);
+    return 0;
 }
 
 static int run_flash_auto(flash_state *state, int argc, char **argv)

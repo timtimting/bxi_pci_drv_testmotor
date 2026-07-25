@@ -12,8 +12,9 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
-    "flash_single", "flash_all", "flash_debug", "can_status", "can_monitor",
-    "config_show", "config_reload", "language", "lang", "quit", "exit", "q",
+    "flash_single", "flash_all", "flash_debug", "motor_dbg", "motor_all_dbg",
+    "can_status", "can_monitor",
+    "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",
 };
 
 static const char *console_text(const flash_state *state,
@@ -21,6 +22,24 @@ static const char *console_text(const flash_state *state,
                                 const char *english)
 {
     return state->config.chinese_ui ? chinese : english;
+}
+
+static void console_trim_line(char *line)
+{
+    char *start = line;
+    char *end;
+
+    while (*start != '\0' && isspace((unsigned char)*start)) {
+        start++;
+    }
+    if (start != line) {
+        memmove(line, start, strlen(start) + 1u);
+    }
+    end = line + strlen(line);
+    while (end > line && isspace((unsigned char)end[-1])) {
+        end--;
+    }
+    *end = '\0';
 }
 
 static const char *console_default_config_path(const char *argv0,
@@ -140,6 +159,10 @@ static void console_print_help(bool chinese)
         printf("      预检并烧录配置中的全部电机，最后输出成功/失败汇总。\n");
         printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
         printf("      调试烧录指定 Bus/ID，不检查型号；烧录流程使用程序默认时序。\n");
+        printf("  motor_dbg <index>\n");
+        printf("      按配置序号进入单电机 Boot 调试交互；可直接输入 a/v/u/s 等字母，q/qq 退出。\n");
+        printf("  motor_all_dbg <bus> <id>\n");
+        printf("      按 Bus/ID 进入单电机 Boot 调试交互，不依赖配置文件。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -147,7 +170,7 @@ static void console_print_help(bool chinese)
         printf("      开启或关闭实时 CAN 输出和电机反馈解析。\n");
         printf("  config_show | config_reload [path]\n");
         printf("      显示或重载 YAML 配置；电机上电或使能时禁止重载。\n");
-        printf("  quit | exit | q\n");
+        printf("  quit | exit | q | qq\n");
         printf("      退出终端；电机电源开启时必须先执行 `power_off`。\n");
         return;
     }
@@ -188,6 +211,11 @@ static void console_print_help(bool chinese)
     printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
     printf("      Debug-flash one Bus/ID with an explicit firmware file, bypassing the\n");
     printf("      configured motor type mapping. Flash timing uses built-in defaults.\n");
+    printf("  motor_dbg <index>\n");
+    printf("      Enter one configured motor's boot debug mode by index. Type letters such\n");
+    printf("      as a/v/u/s directly; q/qq exits debug mode.\n");
+    printf("  motor_all_dbg <bus> <id>\n");
+    printf("      Enter one motor's boot debug mode by Bus/ID, bypassing the config map.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
@@ -196,7 +224,7 @@ static void console_print_help(bool chinese)
     printf("  config_show | config_reload [path]\n");
     printf("      Show or reload the unified YAML configuration. Reload is refused while\n");
     printf("      motor power is on or motors are enabled.\n");
-    printf("  quit | exit | q\n");
+    printf("  quit | exit | q | qq\n");
     printf("      Exit. `power_off` is required first while motor power is on.\n");
 }
 
@@ -933,6 +961,99 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     return -1;
 }
 
+static int console_motor_debug_loop(flash_state *state, unsigned int bus, unsigned int id)
+{
+    unsigned int old_bus = state->bus;
+    unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    char prompt[64];
+    char line[LINE_LEN];
+
+    if (bus >= CANFD_DEVICE_NUM || id == 0u || id > 8u) {
+        printf("%s\n", console_text(state,
+               "motor_dbg 参数错误：bus 必须在范围内，id 必须为 1..8",
+               "motor_dbg argument error: bus must be valid and id must be 1..8"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    state->bus = bus;
+    set_target_id(state, id);
+    state->show_can_output = true;
+    state->show_motor_input = true;
+    rx_ring_clear(&state->rx);
+
+    printf("%s bus=%u id=%u tx=0x%03x rx=0x%03x\n",
+           console_text(state,
+                        "进入电机 Boot 调试，输入 q 退出；输入内容会按字节发送",
+                        "enter motor boot debug; q exits; input is sent byte-by-byte"),
+           bus,
+           id,
+           state->tx_id,
+           state->rx_id);
+
+    while (!stop_requested) {
+        snprintf(prompt, sizeof(prompt), "motor_dbg[%u,%u]> ", bus, id);
+        if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
+            break;
+        }
+        console_trim_line(line);
+        if (line[0] == '\0') {
+            collect_text(state, 250u, 1000u);
+            continue;
+        }
+        if (strcmp(line, "q") == 0 ||
+            strcmp(line, "qq") == 0 ||
+            strcmp(line, "quit") == 0 ||
+            strcmp(line, "exit") == 0) {
+            break;
+        }
+        rx_ring_clear(&state->rx);
+        if (send_boot_data(state, (const uint8_t *)line, strlen(line)) != 0) {
+            break;
+        }
+        collect_text(state, 250u, 2000u);
+    }
+
+    state->bus = old_bus;
+    set_target_id(state, old_id);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return 0;
+}
+
+static int console_motor_dbg(flash_state *state, int argc, char **argv)
+{
+    unsigned int index;
+    size_t slot;
+    const motor_map_entry *motor;
+
+    if (argc != 2 || parse_uint_arg(argv[1], &index) != 0 ||
+        (motor = console_motor_by_index(state, index, &slot)) == NULL) {
+        printf("%s: motor_dbg <index>\n", console_text(state, "用法", "usage"));
+        return -1;
+    }
+    (void)slot;
+    return console_motor_debug_loop(state, motor->bus, motor->id);
+}
+
+static int console_motor_all_dbg(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+
+    if (argc != 3 ||
+        parse_uint_arg(argv[1], &bus) != 0 ||
+        parse_uint_arg(argv[2], &id) != 0) {
+        printf("%s: motor_all_dbg <bus> <id>\n", console_text(state, "用法", "usage"));
+        return -1;
+    }
+    return console_motor_debug_loop(state, bus, id);
+}
+
 static int console_reload_config(flash_state *state, const char *path)
 {
     motor_map_config new_config;
@@ -1061,6 +1182,10 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_flash(state, argc, argv, true);
     } else if (strcmp(cmd, "flash_debug") == 0) {
         return console_flash_debug(state, argc, argv);
+    } else if (strcmp(cmd, "motor_dbg") == 0) {
+        return console_motor_dbg(state, argc, argv);
+    } else if (strcmp(cmd, "motor_all_dbg") == 0) {
+        return console_motor_all_dbg(state, argc, argv);
     } else if (strcmp(cmd, "can_status") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "reset") != 0)) {
             printf("%s: can_status [reset]\n", console_text(state, "用法", "usage"));
@@ -1089,7 +1214,10 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_reload_config(state, argc == 2 ? argv[1] : state->config_path);
-    } else if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0 || strcmp(cmd, "exit") == 0) {
+    } else if (strcmp(cmd, "q") == 0 ||
+               strcmp(cmd, "qq") == 0 ||
+               strcmp(cmd, "quit") == 0 ||
+               strcmp(cmd, "exit") == 0) {
         if (state->motor_power_on) {
             printf("%s\n", console_text(state,
                    "退出被拒绝：电机仍处于上电状态，请先执行 `power_off`",
