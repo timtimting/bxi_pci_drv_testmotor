@@ -1139,7 +1139,7 @@ static int console_motor_debug_loop(flash_state *state, unsigned int bus, unsign
     state->bus = bus;
     set_target_id(state, id);
     state->show_can_output = true;
-    state->show_motor_input = true;
+    state->show_motor_input = false;
     rx_ring_clear(&state->rx);
 
     printf("%s bus=%u id=%u tx=0x%03x rx=0x%03x\n",
