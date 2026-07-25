@@ -805,13 +805,13 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                     if (state->show_can_output) {
                         flockfile(stdout);
                         if (state->config.chinese_ui) {
-                            printf("\n[电机输出] index=%u bus=%u id=%u "
+                            printf("\n[电机输出] index=%02u bus=%u id=%u "
                                    "位置=% .5f 速度=% .5f 转矩=% .5f MOS温度=% .1fC 电机温度=% .1fC\n",
                                    entry->index, entry->bus, entry->id,
                                    reply.position, reply.velocity, reply.torque,
                                    reply.mos_temperature, reply.motor_temperature);
                         } else {
-                            printf("\n[MOTOR OUTPUT] index=%u bus=%u id=%u "
+                            printf("\n[MOTOR OUTPUT] index=%02u bus=%u id=%u "
                                    "pos=% .5f vel=% .5f torque=% .5f mos=% .1fC motor=% .1fC\n",
                                    entry->index, entry->bus, entry->id,
                                    reply.position, reply.velocity, reply.torque,

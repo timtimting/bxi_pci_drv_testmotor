@@ -8,6 +8,11 @@
 #include "motor_flash.c"
 #undef main
 
+enum {
+    CONSOLE_CAN_WARMUP_DEFAULT_COUNT = 130u,
+    CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS = 10u,
+};
+
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
@@ -40,6 +45,49 @@ static void console_trim_line(char *line)
         end--;
     }
     *end = '\0';
+}
+
+static void console_restore_process_output(int saved_stdout, int saved_stderr)
+{
+    fflush(stdout);
+    fflush(stderr);
+    if (saved_stdout >= 0) {
+        dup2(saved_stdout, STDOUT_FILENO);
+        close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+    }
+}
+
+static int console_silence_process_output(int *saved_stdout, int *saved_stderr)
+{
+    int null_fd;
+
+    *saved_stdout = -1;
+    *saved_stderr = -1;
+    null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd < 0) {
+        return -1;
+    }
+
+    fflush(stdout);
+    fflush(stderr);
+    *saved_stdout = dup(STDOUT_FILENO);
+    *saved_stderr = dup(STDERR_FILENO);
+    if (*saved_stdout < 0 || *saved_stderr < 0 ||
+        dup2(null_fd, STDOUT_FILENO) < 0 ||
+        dup2(null_fd, STDERR_FILENO) < 0) {
+        close(null_fd);
+        console_restore_process_output(*saved_stdout, *saved_stderr);
+        *saved_stdout = -1;
+        *saved_stderr = -1;
+        return -1;
+    }
+
+    close(null_fd);
+    return 0;
 }
 
 static const char *console_default_config_path(const char *argv0,
@@ -279,7 +327,7 @@ static void console_print_motors(const flash_state *state)
         const motor_map_entry *m = &state->config.entries[i];
         const motor_runtime *r = &state->motors[i];
 
-        printf("  index=%-3u bus=%u id=%-2u type=%-4s state=%-7s %s=%-3s %s=%-3s rx=%u",
+        printf("  index=%02u bus=%u id=%-2u type=%-4s state=%-10s %s=%-3s %s=%-3s rx=%u",
                m->index, m->bus, m->id, m->type,
                motor_runtime_state(r),
                console_text(state, "在线", "online"),
@@ -372,7 +420,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
     for (i = 0u; i < state->config.entry_count; i++) {
         if (state->motors[i].rx_count != before[i]) {
             state->motors[i].online = true;
-            printf(" %u", state->config.entries[i].index);
+            printf(" %02u", state->config.entries[i].index);
             found++;
         }
     }
@@ -419,10 +467,10 @@ static int console_send_special(flash_state *state,
         }
         if (command == BXI_MOTOR_CMD_ZERO && state->motors[i].enabled) {
             if (state->config.chinese_ui) {
-                printf("%s 被拒绝：电机 index %u 仍处于使能状态，请先失能\n",
+                printf("%s 被拒绝：电机 index %02u 仍处于使能状态，请先失能\n",
                        name, state->config.entries[i].index);
             } else {
-                printf("%s refused: motor index %u is enabled; disable it first\n",
+                printf("%s refused: motor index %02u is enabled; disable it first\n",
                        name, state->config.entries[i].index);
             }
             return -1;
@@ -467,6 +515,75 @@ static int console_send_special(flash_state *state,
     return sent == 0u ? -1 : 0;
 }
 
+static int console_can_warmup(flash_state *state, unsigned int count, unsigned int period_ms)
+{
+    unsigned int old_bus = state->bus;
+    unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool output_silenced = false;
+    unsigned int sent = 0u;
+    unsigned int before_rx = 0u;
+    size_t i;
+
+    if (state == NULL || state->config.entry_count == 0u || count == 0u) {
+        return 0;
+    }
+    if (period_ms == 0u) {
+        period_ms = 1u;
+    }
+
+    for (i = 0u; i < state->config.entry_count; i++) {
+        before_rx += state->motors[i].rx_count;
+    }
+    printf("%s\n", console_text(state,
+           "CAN warmup：上电后静默发送零 MIT 帧，让 CAN 错误计数自然恢复",
+           "CAN warmup: silently sending zero MIT frames so CAN error counters recover"));
+
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    if (console_silence_process_output(&saved_stdout, &saved_stderr) == 0) {
+        output_silenced = true;
+    }
+
+    while (!stop_requested && sent < count) {
+        const motor_map_entry *m = &state->config.entries[sent % state->config.entry_count];
+
+        console_use_motor(state, m);
+        if (send_debug_mit(state, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) != 0) {
+            break;
+        }
+        sent++;
+        sleep_ms(period_ms);
+    }
+
+    if (output_silenced) {
+        console_restore_process_output(saved_stdout, saved_stderr);
+    }
+    state->bus = old_bus;
+    state->boot_id = old_id;
+    update_boot_ids(state);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+
+    {
+        unsigned int after_rx = 0u;
+
+        for (i = 0u; i < state->config.entry_count; i++) {
+            after_rx += state->motors[i].rx_count;
+        }
+        printf("%s %u/%u%s%u\n",
+               console_text(state, "CAN warmup 完成，发送", "CAN warmup finished, sent"),
+               sent,
+               count,
+               console_text(state, "，期间接收回复=", ", replies="),
+               after_rx - before_rx);
+    }
+    return sent == count ? 0 : -1;
+}
+
 static int console_power_on(flash_state *state)
 {
     bool old_monitor = state->show_can_output;
@@ -494,6 +611,13 @@ static int console_power_on(flash_state *state)
                state->config.power_on_wait_ms);
     }
     sleep_ms(state->config.power_on_wait_ms);
+    if (console_can_warmup(state,
+                           CONSOLE_CAN_WARMUP_DEFAULT_COUNT,
+                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS) != 0) {
+        printf("%s\n", console_text(state,
+               "CAN warmup 未完全完成，继续执行扫描",
+               "CAN warmup did not complete; continuing to scan"));
+    }
     ret = console_probe_motors(state, state->config.scan_timeout_ms);
     state->show_can_output = old_monitor;
     return ret;
@@ -561,9 +685,9 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
     }
     if (!state->motors[slot].enabled) {
         if (state->config.chinese_ui) {
-            printf("motor_set 被拒绝：电机 index %u 尚未确认使能\n", index);
+            printf("motor_set 被拒绝：电机 index %02u 尚未确认使能\n", index);
         } else {
-            printf("motor_set refused: motor index %u is not known to be enabled\n", index);
+            printf("motor_set refused: motor index %02u is not known to be enabled\n", index);
         }
         return -1;
     }
@@ -623,10 +747,10 @@ static int console_move_zero(flash_state *state)
     for (i = 0u; i < state->config.entry_count; i++) {
         if (!state->motors[i].online || !state->motors[i].enabled) {
             if (state->config.chinese_ui) {
-                printf("stand_up 被拒绝：index %u 未同时满足在线和使能状态\n",
+                printf("stand_up 被拒绝：index %02u 未同时满足在线和使能状态\n",
                        state->config.entries[i].index);
             } else {
-                printf("stand_up refused: index %u is not online and enabled\n",
+                printf("stand_up refused: index %02u is not online and enabled\n",
                        state->config.entries[i].index);
             }
             return -1;
@@ -664,7 +788,7 @@ static int console_move_zero(flash_state *state)
             console_expect_reply(state, m->bus);
             if (send_debug_mit(state, 0.0f, 0.0f, kp,
                                state->config.home_kd, 0.0f) != 0) {
-                printf("%s index %u\n", console_text(state,
+                printf("%s index %02u\n", console_text(state,
                        "stand_up 发送失败：", "stand_up send failed at"), m->index);
             }
         }
