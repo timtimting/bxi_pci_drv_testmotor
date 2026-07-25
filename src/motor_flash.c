@@ -126,6 +126,8 @@ typedef struct
     char state_boot_pattern[STATE_PATTERN_LEN];
     char state_motor_pattern[STATE_PATTERN_LEN];
     char state_no_app_pattern[STATE_PATTERN_LEN];
+    char state_boot_menu_pattern[STATE_PATTERN_LEN];
+    char state_motor_menu_pattern[STATE_PATTERN_LEN];
     char state_menu_pattern[STATE_PATTERN_LEN];
     bxi_motor_limits mit_limits;
     bool mit_canfd;
@@ -194,6 +196,7 @@ typedef struct
     bool motor_power_on;
     bool show_can_output;
     bool show_motor_input;
+    bool suppress_boot_text;
     bool language_override_active;
     bool chinese_override;
     char config_path[PATH_LEN];
@@ -505,10 +508,37 @@ static void update_motor_state_from_boot_line(flash_state *state,
         strstr(line, config->state_no_app_pattern) != NULL) {
         motor_runtime_set_state(runtime, "boot");
     }
+    if (config->state_boot_menu_pattern[0] != '\0' &&
+        strstr(line, config->state_boot_menu_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "boot_menu");
+    }
+    if (config->state_motor_menu_pattern[0] != '\0' &&
+        strstr(line, config->state_motor_menu_pattern) != NULL) {
+        motor_runtime_set_state(runtime, "motor_menu");
+    }
     if (config->state_menu_pattern[0] != '\0' &&
         strstr(line, config->state_menu_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "menu");
+        motor_runtime_set_state(runtime, "boot_menu");
     }
+}
+
+static bool boot_menu_text_seen(const flash_state *state, const char *text)
+{
+    const motor_map_config *config;
+
+    if (state == NULL || text == NULL) {
+        return false;
+    }
+    config = &state->config;
+    if (config->state_boot_menu_pattern[0] != '\0' &&
+        strstr(text, config->state_boot_menu_pattern) != NULL) {
+        return true;
+    }
+    if (config->state_menu_pattern[0] != '\0' &&
+        strstr(text, config->state_menu_pattern) != NULL) {
+        return true;
+    }
+    return strstr(text, "Boot menu:") != NULL || strstr(text, "Commands:") != NULL;
 }
 
 static void print_boot_output_prefix(const motor_map_entry *entry,
@@ -1194,7 +1224,7 @@ static void collect_text(flash_state *state, unsigned int quiet_ms, unsigned int
         uint8_t byte;
 
         if (rx_ring_pop(&state->rx, &byte, 20u)) {
-            if (byte != '\r') {
+            if (byte != '\r' && !state->suppress_boot_text) {
                 if (byte == '\n' || byte == '\t' || byte >= 0x20u) {
                     fwrite(&byte, 1u, 1u, stdout);
                 } else {
@@ -1260,7 +1290,7 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
 
         while (rx_ring_pop(&state->rx, &byte, 0u)) {
             append_rx_text(text, &text_len, sizeof(text), byte, true);
-            if (strstr(text, "Commands:") != NULL) {
+            if (boot_menu_text_seen(state, text)) {
                 printf("\nentered boot menu on tx=0x%03x rx=0x%03x\n", state->tx_id, state->rx_id);
                 return 0;
             }
@@ -1833,6 +1863,10 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "%s", value);
         } else if (strcmp(key, "state_no_app_pattern") == 0) {
             snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "%s", value);
+        } else if (strcmp(key, "state_boot_menu_pattern") == 0) {
+            snprintf(config->state_boot_menu_pattern, sizeof(config->state_boot_menu_pattern), "%s", value);
+        } else if (strcmp(key, "state_motor_menu_pattern") == 0) {
+            snprintf(config->state_motor_menu_pattern, sizeof(config->state_motor_menu_pattern), "%s", value);
         } else if (strcmp(key, "state_menu_pattern") == 0) {
             snprintf(config->state_menu_pattern, sizeof(config->state_menu_pattern), "%s", value);
         } else if (strncmp(key, "mit_", 4u) == 0 &&
@@ -1948,7 +1982,8 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "boot...");
     snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "stm run");
     snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "no useful app");
-    snprintf(config->state_menu_pattern, sizeof(config->state_menu_pattern), "Commands:");
+    snprintf(config->state_boot_menu_pattern, sizeof(config->state_boot_menu_pattern), "Boot menu:");
+    snprintf(config->state_motor_menu_pattern, sizeof(config->state_motor_menu_pattern), "Motor main menu:");
     config->mit_limits = bxi_motor_default_limits;
     config->mit_canfd = true;
     config->live_output = true;
@@ -2224,7 +2259,7 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
             const motor_map_entry *entry = &state->config.entries[i];
 
             if (entry->bus == state->bus && entry->id == state->boot_id &&
-                strcmp(motor_runtime_state(&state->motors[i]), "menu") == 0) {
+                strcmp(motor_runtime_state(&state->motors[i]), "boot_menu") == 0) {
                 already_in_boot_menu = true;
                 break;
             }

@@ -160,9 +160,9 @@ static void console_print_help(bool chinese)
         printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
         printf("      调试烧录指定 Bus/ID，不检查型号；烧录流程使用程序默认时序。\n");
         printf("  motor_dbg <index>\n");
-        printf("      按配置序号进入单电机 Boot 调试交互；可直接输入 a/v/u/s 等字母，q/qq 退出。\n");
+        printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
         printf("  motor_all_dbg <bus> <id>\n");
-        printf("      按 Bus/ID 进入单电机 Boot 调试交互，不依赖配置文件。\n");
+        printf("      按 Bus/ID 进入单电机直通调试，不依赖配置文件；` 退出。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -212,10 +212,11 @@ static void console_print_help(bool chinese)
     printf("      Debug-flash one Bus/ID with an explicit firmware file, bypassing the\n");
     printf("      configured motor type mapping. Flash timing uses built-in defaults.\n");
     printf("  motor_dbg <index>\n");
-    printf("      Enter one configured motor's boot debug mode by index. Type letters such\n");
-    printf("      as a/v/u/s directly; q/qq exits debug mode.\n");
+    printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
+    printf("      is sent immediately; ` exits debug mode.\n");
     printf("  motor_all_dbg <bus> <id>\n");
-    printf("      Enter one motor's boot debug mode by Bus/ID, bypassing the config map.\n");
+    printf("      Enter one motor's pass-through debug mode by Bus/ID, bypassing the\n");
+    printf("      config map; ` exits debug mode.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
@@ -325,6 +326,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
     unsigned int before[MOTOR_MAP_MAX];
     unsigned int old_bus = state->bus;
     unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
     uint64_t deadline;
     size_t i;
     size_t found = 0u;
@@ -334,6 +336,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
     if (console_require_power(state) != 0) {
         return -1;
     }
+    state->show_can_output = false;
     frame_ring_clear(&state->frames);
     for (bus = 0u; bus < CANFD_DEVICE_NUM; bus++) {
         timeout_before[bus] = state->can_stats[bus].reply_timeouts;
@@ -391,6 +394,7 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
                    (unsigned long long)state->can_stats[bus].tx_failed);
         }
     }
+    state->show_can_output = old_monitor;
     return found == 0u ? -1 : 0;
 }
 
@@ -465,6 +469,9 @@ static int console_send_special(flash_state *state,
 
 static int console_power_on(flash_state *state)
 {
+    bool old_monitor = state->show_can_output;
+    int ret;
+
     if (state->motor_power_on) {
         printf("%s\n", console_text(state,
                "电机电源已经开启，重新扫描电机",
@@ -478,6 +485,7 @@ static int console_power_on(flash_state *state)
         return -1;
     }
     state->motor_power_on = true;
+    state->show_can_output = false;
     if (state->config.chinese_ui) {
         printf("电机电源已开启，等待 %u ms 完成软启动\n",
                state->config.power_on_wait_ms);
@@ -486,7 +494,9 @@ static int console_power_on(flash_state *state)
                state->config.power_on_wait_ms);
     }
     sleep_ms(state->config.power_on_wait_ms);
-    return console_probe_motors(state, state->config.scan_timeout_ms);
+    ret = console_probe_motors(state, state->config.scan_timeout_ms);
+    state->show_can_output = old_monitor;
+    return ret;
 }
 
 static int console_power_off(flash_state *state)
@@ -762,6 +772,7 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     int flash_argc = 0;
     bool cycle = false;
     bool old_monitor;
+    bool old_suppress_boot_text;
     int ret;
     size_t flashed_slot = 0u;
 
@@ -807,9 +818,14 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         flash_argv[flash_argc++] = "cycle";
     }
     old_monitor = state->show_can_output;
+    old_suppress_boot_text = state->suppress_boot_text;
     state->show_can_output = false;
+    if (all) {
+        state->suppress_boot_text = true;
+    }
     ret = run_flash_auto(state, flash_argc, flash_argv);
     state->show_can_output = old_monitor;
+    state->suppress_boot_text = old_suppress_boot_text;
     if (ret != 0) {
         return -1;
     }
@@ -967,8 +983,10 @@ static int console_motor_debug_loop(flash_state *state, unsigned int bus, unsign
     unsigned int old_id = state->boot_id;
     bool old_monitor = state->show_can_output;
     bool old_input = state->show_motor_input;
-    char prompt[64];
-    char line[LINE_LEN];
+    struct termios old_term;
+    struct termios new_term;
+    bool raw_enabled = false;
+    int result = 0;
 
     if (bus >= CANFD_DEVICE_NUM || id == 0u || id > 8u) {
         printf("%s\n", console_text(state,
@@ -988,41 +1006,62 @@ static int console_motor_debug_loop(flash_state *state, unsigned int bus, unsign
 
     printf("%s bus=%u id=%u tx=0x%03x rx=0x%03x\n",
            console_text(state,
-                        "进入电机 Boot 调试，输入 q 退出；输入内容会按字节发送",
-                        "enter motor boot debug; q exits; input is sent byte-by-byte"),
+                        "进入电机直通调试，所有按键都会立即发送给电机；按 ` 退出",
+                        "enter motor pass-through debug; every key is sent immediately; ` exits"),
            bus,
            id,
            state->tx_id,
            state->rx_id);
 
-    while (!stop_requested) {
-        snprintf(prompt, sizeof(prompt), "motor_dbg[%u,%u]> ", bus, id);
-        if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
-            break;
+    if (isatty(STDIN_FILENO)) {
+        if (tcgetattr(STDIN_FILENO, &old_term) != 0) {
+            result = -1;
+            goto out;
         }
-        console_trim_line(line);
-        if (line[0] == '\0') {
-            collect_text(state, 250u, 1000u);
-            continue;
+        new_term = old_term;
+        new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+        new_term.c_cc[VMIN] = 1;
+        new_term.c_cc[VTIME] = 0;
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &new_term) != 0) {
+            result = -1;
+            goto out;
         }
-        if (strcmp(line, "q") == 0 ||
-            strcmp(line, "qq") == 0 ||
-            strcmp(line, "quit") == 0 ||
-            strcmp(line, "exit") == 0) {
-            break;
-        }
-        rx_ring_clear(&state->rx);
-        if (send_boot_data(state, (const uint8_t *)line, strlen(line)) != 0) {
-            break;
-        }
-        collect_text(state, 250u, 2000u);
+        raw_enabled = true;
     }
 
+    while (!stop_requested) {
+        uint8_t byte;
+        ssize_t n = read(STDIN_FILENO, &byte, 1u);
+
+        if (n <= 0) {
+            result = -1;
+            break;
+        }
+        if (byte == '`') {
+            break;
+        }
+        if (send_boot_byte(state, byte) != 0) {
+            result = -1;
+            break;
+        }
+    }
+    if (raw_enabled) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+        raw_enabled = false;
+    }
+    printf("\n%s\n", console_text(state,
+           "已退出电机直通调试",
+           "motor pass-through debug exited"));
+
+out:
+    if (raw_enabled) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+    }
     state->bus = old_bus;
     set_target_id(state, old_id);
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
-    return 0;
+    return result;
 }
 
 static int console_motor_dbg(flash_state *state, int argc, char **argv)

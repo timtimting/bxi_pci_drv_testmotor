@@ -347,13 +347,13 @@ flash_all
 
 1. 向应用程序发送复位命令 `r`。
 2. 程序按默认延时在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
-3. 收到 `Commands:` 后确认进入 Boot。
+3. 收到 `Boot menu:` 后确认进入 Boot。
 4. 程序按默认延时发送 `u` 进入烧录功能。
 5. 通过 CAN/YMODEM 传输固件；数据包使用 128B YMODEM 包，降低连续 CAN 分片发送压力。
 6. 烧录成功后自动发送 `a`，让电机从 Boot 菜单跳转到电机程序。
 
 烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
-如果上电输出已经识别到目标电机处于 `menu` 状态，烧录会直接跳过 `r/m`，等待
+如果上电输出已经识别到目标电机处于 `boot_menu` 状态，烧录会直接跳过 `r/m`，等待
 默认延时后发送 `u`。
 
 如果需要手动调试 Boot 菜单，可以进入单电机调试模式：
@@ -363,7 +363,7 @@ motor_dbg 0          # 按配置 index 调试
 motor_all_dbg 0 1    # 按 bus/id 调试，不依赖配置
 ```
 
-进入后直接输入 `a`、`v`、`u`、`s` 等字符即可发送给电机，输入 `q` 或 `qq` 返回主终端。
+进入后所有键盘输入都会立即发送给电机，包括回车、空格和退格；按反引号键 `` ` `` 返回主终端。
 
 状态识别关键字在配置文件中修改：
 
@@ -371,7 +371,8 @@ motor_all_dbg 0 1    # 按 bus/id 调试，不依赖配置
 state_boot_pattern: boot...
 state_motor_pattern: stm run
 state_no_app_pattern: no useful app
-state_menu_pattern: Commands:
+state_boot_menu_pattern: Boot menu:
+state_motor_menu_pattern: Motor main menu:
 ```
 
 CAN ID 约定：
@@ -462,8 +463,8 @@ config_reload /path/to/config.yaml
 | `flash_single` | `<index> [cycle]` | 烧录单台电机 |
 | `flash_all` | `[cycle]` | 烧录全部电机 |
 | `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
-| `motor_dbg` | `<index>` | 按配置序号进入单电机 Boot 调试 |
-| `motor_all_dbg` | `<bus> <id>` | 按 Bus/ID 进入单电机 Boot 调试 |
+| `motor_dbg` | `<index>` | 按配置序号进入单电机直通调试 |
+| `motor_all_dbg` | `<bus> <id>` | 按 Bus/ID 进入单电机直通调试 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
 | `config_show` | 无 | 显示当前配置 |

@@ -36,7 +36,8 @@ power_on_wait_ms: 2000
 state_boot_pattern: boot...
 state_motor_pattern: stm run
 state_no_app_pattern: no useful app
-state_menu_pattern: Commands:
+state_boot_menu_pattern: Boot menu:
+state_motor_menu_pattern: Motor main menu:
 
 # MIT 控制帧使用 CAN-FD；实时打印并解析收到的 CAN 帧。
 mit_canfd: on
