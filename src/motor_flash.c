@@ -24,6 +24,11 @@
 
 #define DEFAULT_FIRMWARE_DIR "firmware"
 #define DEFAULT_FIRMWARE_MAP "config/motor_firmware.yaml"
+#define DEFAULT_BOOT_ENTER_DELAY_MS 100u
+#define DEFAULT_BOOT_UPDATE_DELAY_MS 200u
+#define DEFAULT_BOOT_TX_GAP_MS 1u
+#define DEFAULT_BOOT_TX_RETRY_COUNT 5u
+#define DEFAULT_BOOT_TX_RETRY_DELAY_MS 2u
 
 enum {
     CAN_CMD_REG_READ = 23,
@@ -118,8 +123,6 @@ typedef struct
     unsigned int home_soft_start_ms;
     unsigned int scan_timeout_ms;
     unsigned int power_on_wait_ms;
-    unsigned int boot_enter_delay_ms;
-    unsigned int boot_update_delay_ms;
     char state_boot_pattern[STATE_PATTERN_LEN];
     char state_motor_pattern[STATE_PATTERN_LEN];
     char state_no_app_pattern[STATE_PATTERN_LEN];
@@ -822,6 +825,9 @@ static int send_can_bytes(flash_state *state, unsigned int can_id, const uint8_t
 {
     canfd_packet packet;
     int ret;
+    unsigned int attempt;
+    unsigned int retry_count = DEFAULT_BOOT_TX_RETRY_COUNT;
+    unsigned int retry_delay_ms = DEFAULT_BOOT_TX_RETRY_DELAY_MS;
 
     if (len > 8u) {
         fprintf(stderr, "classic boot CAN frame length %u is too large\n", len);
@@ -845,15 +851,28 @@ static int send_can_bytes(flash_state *state, unsigned int can_id, const uint8_t
         fflush(stdout);
     }
 
-    ret = canfd_send_packet(&packet, 1u);
-    state->can_stats[packet.bus].tx_packets++;
-    if (ret < 0) {
+    for (attempt = 0u; attempt <= retry_count && !stop_requested; attempt++) {
+        ret = canfd_send_packet(&packet, 1u);
+        state->can_stats[packet.bus].tx_packets++;
+        if (ret >= 0) {
+            return 0;
+        }
+
         state->can_stats[packet.bus].tx_failed++;
-        fprintf(stderr, "canfd_send_packet failed: %d\n", ret);
+        if (attempt < retry_count) {
+            if (retry_delay_ms != 0u) {
+                sleep_ms(retry_delay_ms);
+            }
+            continue;
+        }
+
+        fprintf(stderr, "canfd_send_packet failed after %u retries: %d\n",
+                retry_count,
+                ret);
         return -1;
     }
 
-    return 0;
+    return -1;
 }
 
 static int send_debug_packet(flash_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
@@ -1045,6 +1064,7 @@ static int send_debug_special(flash_state *state, uint8_t command)
 static int send_boot_data(flash_state *state, const uint8_t *data, size_t len)
 {
     size_t offset = 0u;
+    unsigned int tx_gap_ms = DEFAULT_BOOT_TX_GAP_MS;
 
     while (offset < len && !stop_requested) {
         unsigned int chunk = (len - offset) > 8u ? 8u : (unsigned int)(len - offset);
@@ -1053,6 +1073,9 @@ static int send_boot_data(flash_state *state, const uint8_t *data, size_t len)
             return -1;
         }
         offset += chunk;
+        if (tx_gap_ms != 0u && offset < len) {
+            sleep_ms(tx_gap_ms);
+        }
     }
 
     return stop_requested ? -1 : 0;
@@ -1210,11 +1233,7 @@ static int enter_boot_menu(flash_state *state, bool power_cycle)
     uint64_t deadline;
     char text[2048];
     size_t text_len = 0u;
-    unsigned int m_delay_ms = state->config.boot_enter_delay_ms;
-
-    if (m_delay_ms == 0u || m_delay_ms > 1000u) {
-        m_delay_ms = 100u;
-    }
+    unsigned int m_delay_ms = DEFAULT_BOOT_ENTER_DELAY_MS;
 
     if (power_cycle) {
         printf("power cycling motor, then sending one 'm' after %u ms\n", m_delay_ms);
@@ -1808,18 +1827,6 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
-        } else if (strcmp(key, "boot_enter_delay_ms") == 0) {
-            if (parse_uint_arg(value, &config->boot_enter_delay_ms) != 0) {
-                fprintf(stderr, "%s:%u: invalid boot_enter_delay_ms\n", map_path, line_no);
-                fclose(fp);
-                return -1;
-            }
-        } else if (strcmp(key, "boot_update_delay_ms") == 0) {
-            if (parse_uint_arg(value, &config->boot_update_delay_ms) != 0) {
-                fprintf(stderr, "%s:%u: invalid boot_update_delay_ms\n", map_path, line_no);
-                fclose(fp);
-                return -1;
-            }
         } else if (strcmp(key, "state_boot_pattern") == 0) {
             snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "%s", value);
         } else if (strcmp(key, "state_motor_pattern") == 0) {
@@ -1938,8 +1945,6 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->home_soft_start_ms = 2000u;
     config->scan_timeout_ms = 1000u;
     config->power_on_wait_ms = 2000u;
-    config->boot_enter_delay_ms = 100u;
-    config->boot_update_delay_ms = 200u;
     snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "boot...");
     snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "stm run");
     snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "no useful app");
@@ -1989,12 +1994,9 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     if (ret == 0 && (config->scan_timeout_ms == 0u ||
                      config->scan_timeout_ms > 60000u ||
                      config->home_soft_start_ms > 60000u ||
-                     config->power_on_wait_ms > 60000u ||
-                     config->boot_enter_delay_ms == 0u ||
-                     config->boot_enter_delay_ms > 1000u ||
-                     config->boot_update_delay_ms > 5000u)) {
-        fprintf(stderr, "%s: timing values must be in the supported 0..60000 ms range "
-                        "and boot update timing must be in supported range\n", map_path);
+                     config->power_on_wait_ms > 60000u)) {
+        fprintf(stderr, "%s: timing values must be in the supported 0..60000 ms range\n",
+                map_path);
         return -1;
     }
     return ret;
@@ -2212,7 +2214,7 @@ static int ymodem_send_file(flash_state *state, const char *path)
 
 static int boot_flash_file(flash_state *state, const char *path, bool power_cycle)
 {
-    unsigned int update_delay_ms = state->config.boot_update_delay_ms;
+    unsigned int update_delay_ms = DEFAULT_BOOT_UPDATE_DELAY_MS;
     bool already_in_boot_menu = false;
     size_t i;
 
@@ -2236,9 +2238,6 @@ static int boot_flash_file(flash_state *state, const char *path, bool power_cycl
         }
     }
     rx_ring_clear(&state->rx);
-    if (update_delay_ms > 5000u) {
-        update_delay_ms = 200u;
-    }
     if (update_delay_ms != 0u) {
         printf("waiting %u ms before sending 'u'\n", update_delay_ms);
         sleep_ms(update_delay_ms);

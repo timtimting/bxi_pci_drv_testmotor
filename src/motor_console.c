@@ -138,8 +138,8 @@ static void console_print_help(bool chinese)
         printf("      按电机型号选择固件并烧录单台电机；cycle 表示断电重启进入 Boot。\n");
         printf("  flash_all [cycle]\n");
         printf("      预检并烧录配置中的全部电机，最后输出成功/失败汇总。\n");
-        printf("  flash_debug <bus> <id> <firmware.bin|path> [delay_ms] [cycle]\n");
-        printf("      调试烧录指定 Bus/ID，不检查型号；delay_ms 调整 r 后发送 m 的时机。\n");
+        printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
+        printf("      调试烧录指定 Bus/ID，不检查型号；烧录流程使用程序默认时序。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -185,9 +185,9 @@ static void console_print_help(bool chinese)
     printf("      a power cycle instead of the normal application reset path.\n");
     printf("  flash_all [cycle]\n");
     printf("      Preflight and flash every configured motor; failures are summarized.\n");
-    printf("  flash_debug <bus> <id> <firmware.bin|path> [delay_ms] [cycle]\n");
+    printf("  flash_debug <bus> <id> <firmware.bin|path> [cycle]\n");
     printf("      Debug-flash one Bus/ID with an explicit firmware file, bypassing the\n");
-    printf("      configured motor type mapping. delay_ms tunes when 'm' is sent after 'r'.\n");
+    printf("      configured motor type mapping. Flash timing uses built-in defaults.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
@@ -206,7 +206,6 @@ static void console_print_config(const flash_state *state)
 
     printf("%s=%s  %s=%s  %s=%zu  home_kp=%g home_kd=%g "
            "soft_start_ms=%u scan_timeout_ms=%u power_on_wait_ms=%u "
-           "boot_enter_delay_ms=%u boot_update_delay_ms=%u "
            "mit_canfd=%s live_output=%s language=%s\n",
            console_text(state, "配置文件", "config"),
            state->config_path,
@@ -219,8 +218,6 @@ static void console_print_config(const flash_state *state)
            state->config.home_soft_start_ms,
            state->config.scan_timeout_ms,
            state->config.power_on_wait_ms,
-           state->config.boot_enter_delay_ms,
-           state->config.boot_update_delay_ms,
            state->config.mit_canfd ? "on" : "off",
            state->config.live_output ? "on" : "off",
            state->config.chinese_ui ? "zh" : "en");
@@ -869,8 +866,6 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     unsigned int id;
     unsigned int old_bus;
     unsigned int old_id;
-    unsigned int old_delay_ms;
-    unsigned int delay_ms = state->config.boot_enter_delay_ms;
     bool cycle = false;
     bool old_monitor;
     int ret;
@@ -885,35 +880,22 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
                "debug flash refused: disable all motors before entering bootloader"));
         return -1;
     }
-    if (argc < 4 || argc > 6 ||
+    if (argc < 4 || argc > 5 ||
         parse_uint_arg(argv[1], &bus) != 0 ||
         parse_uint_arg(argv[2], &id) != 0 ||
         bus >= CANFD_DEVICE_NUM ||
         id == 0u || id > 8u) {
-        printf("%s: flash_debug <bus> <id> <firmware.bin|path> [delay_ms] [cycle]\n",
+        printf("%s: flash_debug <bus> <id> <firmware.bin|path> [cycle]\n",
                console_text(state, "用法", "usage"));
         return -1;
     }
     for (argi = 4; argi < argc; argi++) {
-        unsigned int parsed_delay;
-
         if (strcmp(argv[argi], "cycle") == 0) {
             cycle = true;
             continue;
         }
-        if (parse_uint_arg(argv[argi], &parsed_delay) == 0 &&
-            parsed_delay >= 1u && parsed_delay <= 1000u) {
-            delay_ms = parsed_delay;
-            continue;
-        }
-        printf("%s: flash_debug <bus> <id> <firmware.bin|path> [delay_ms] [cycle]\n",
+        printf("%s: flash_debug <bus> <id> <firmware.bin|path> [cycle]\n",
                console_text(state, "用法", "usage"));
-        return -1;
-    }
-    if (delay_ms == 0u || delay_ms > 1000u) {
-        printf("%s\n", console_text(state,
-               "delay_ms 必须在 1..1000 之间",
-               "delay_ms must be in 1..1000"));
         return -1;
     }
     if (console_resolve_firmware_path(state, argv[3], path, sizeof(path)) != 0) {
@@ -930,13 +912,11 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
 
     old_bus = state->bus;
     old_id = state->boot_id;
-    old_delay_ms = state->config.boot_enter_delay_ms;
     state->bus = bus;
     set_target_id(state, id);
-    state->config.boot_enter_delay_ms = delay_ms;
 
-    printf("\n######## DEBUG FLASH: bus=%u id=%u file=%s delay=%u ms%s ########\n",
-           bus, id, path, delay_ms, cycle ? " cycle" : "");
+    printf("\n######## DEBUG FLASH: bus=%u id=%u file=%s%s ########\n",
+           bus, id, path, cycle ? " cycle" : "");
     old_monitor = state->show_can_output;
     state->show_can_output = false;
     ret = boot_flash_file(state, path, cycle);
@@ -944,7 +924,6 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
 
     state->bus = old_bus;
     set_target_id(state, old_id);
-    state->config.boot_enter_delay_ms = old_delay_ms;
 
     if (ret == 0) {
         printf("######## DEBUG FLASH SUCCESS: bus=%u id=%u ########\n", bus, id);

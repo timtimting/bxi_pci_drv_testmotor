@@ -346,14 +346,14 @@ flash_all
 默认流程：
 
 1. 向应用程序发送复位命令 `r`。
-2. 等待 `boot_enter_delay_ms`，在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
+2. 程序按默认延时在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
 3. 收到 `Commands:` 后确认进入 Boot。
-4. 等待 `boot_update_delay_ms` 后发送 `u` 进入烧录功能。
+4. 程序按默认延时发送 `u` 进入烧录功能。
 5. 通过 CAN/YMODEM 传输固件。
 
 烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
 如果上电输出已经识别到目标电机处于 `menu` 状态，烧录会直接跳过 `r/m`，等待
-`boot_update_delay_ms` 后发送 `u`。
+默认延时后发送 `u`。
 
 状态识别关键字在配置文件中修改：
 
@@ -381,20 +381,13 @@ flash_all cycle
 `cycle` 会操作电机总电源，使用前应确认其他机构处于安全状态。
 
 如果看到 `Invalid state!get :6d`，说明 `m` 被应用程序收到，没有打进 Boot 窗口。
-可以先用调试烧录命令临时扫描延时：
+此时优先尝试带 `cycle` 的烧录命令，或者确认电机上电后 Boot 窗口是否正常输出：
 
 ```text
-flash_debug 0 1 50 100
-flash_debug 0 1 50 200
-flash_debug 0 1 50L 300
+flash_debug 0 1 50L cycle
 ```
 
-找到合适值后，写入配置：
-
-```yaml
-boot_enter_delay_ms: 200
-boot_update_delay_ms: 200
-```
+烧录过程参数不放在配置文件中，程序内部使用默认时序和 CAN 发送重试策略。
 
 ## 10. 配置文件
 
@@ -458,7 +451,7 @@ config_reload /path/to/config.yaml
 | `stand_up` | 无 | 全部在线电机软启动回零 |
 | `flash_single` | `<index> [cycle]` | 烧录单台电机 |
 | `flash_all` | `[cycle]` | 烧录全部电机 |
-| `flash_debug` | `<bus> <id> <firmware.bin\|path> [delay_ms] [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
+| `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
 | `config_show` | 无 | 显示当前配置 |
