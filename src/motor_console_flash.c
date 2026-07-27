@@ -317,78 +317,6 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     return -1;
 }
 
-static int console_flash_file(flash_state *state, int argc, char **argv)
-{
-    char path[PATH_LEN];
-    unsigned int index;
-    unsigned int old_bus;
-    unsigned int old_id;
-    bool cycle = false;
-    bool old_monitor;
-    size_t slot;
-    const motor_map_entry *motor;
-    int ret;
-
-    if (console_require_power(state) != 0) {
-        return -1;
-    }
-    if (console_any_enabled(state)) {
-        printf("%s\n", console_text(state,
-               "指定固件烧录被拒绝：进入 Bootloader 前必须失能全部电机",
-               "explicit flash refused: disable all motors before entering bootloader"));
-        return -1;
-    }
-    if (argc < 3 || argc > 4 ||
-        console_parse_index_arg(argv[1], &index) != 0 ||
-        (argc == 4 && strcmp(argv[3], "cycle") != 0)) {
-        printf("%s: flash_file <index00> <version|firmware.bin> [cycle]\n",
-               console_text(state, "用法", "usage"));
-        return -1;
-    }
-    if (argc == 4) {
-        cycle = true;
-    }
-    motor = console_motor_by_index(state, index, &slot);
-    if (motor == NULL) {
-        printf("%s: %s\n", console_text(state,
-               "未知的电机序号", "unknown motor index"), argv[1]);
-        return -1;
-    }
-    if (console_resolve_firmware_path(state, argv[2], path, sizeof(path)) != 0) {
-        printf("%s: %s  %s: %s/%s\n",
-               console_text(state,
-                            "找不到固件文件",
-                            "cannot read firmware file"),
-               argv[2],
-               console_text(state, "也尝试过固件目录", "also tried firmware_dir"),
-               state->config.firmware_dir,
-               argv[2]);
-        return -1;
-    }
-
-    old_bus = state->bus;
-    old_id = state->boot_id;
-    console_use_motor(state, motor);
-
-    printf("\n######## FLASH FILE: index=%02u bus=%u id=%u type=%s file=%s%s ########\n",
-           motor->index, motor->bus, motor->id, motor->type, path, cycle ? " cycle" : "");
-    old_monitor = state->show_can_output;
-    state->show_can_output = false;
-    ret = boot_flash_file(state, path, cycle);
-    state->show_can_output = old_monitor;
-
-    state->bus = old_bus;
-    set_target_id(state, old_id);
-
-    if (ret == 0) {
-        memset(&state->motors[slot], 0, sizeof(state->motors[slot]));
-        printf("######## FLASH FILE SUCCESS: index=%02u ########\n", motor->index);
-        return 0;
-    }
-    fprintf(stderr, "######## FLASH FILE FAILED: index=%02u ########\n", motor->index);
-    return -1;
-}
-
 static int flash_plan_finalize_target(const char *path,
                                       flash_plan_config *plan,
                                       const flash_plan_target *target)
@@ -569,7 +497,7 @@ static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
     return NULL;
 }
 
-static int console_flash_plan(flash_state *state, int argc, char **argv)
+static int console_flash_plan_file(flash_state *state, const char *plan_path, bool cycle)
 {
     flash_plan_config plan;
     char resolved_paths[FLASH_PLAN_MAX_TARGETS][PATH_LEN];
@@ -584,10 +512,6 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
     size_t succeeded = 0u;
     size_t failed = 0u;
 
-    if (argc != 2) {
-        printf("%s: flash_plan <plan.yaml>\n", console_text(state, "用法", "usage"));
-        return -1;
-    }
     if (console_require_power(state) != 0) {
         return -1;
     }
@@ -597,7 +521,7 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
                "plan flash refused: disable all motors before entering bootloader"));
         return -1;
     }
-    if (load_flash_plan_config(argv[1], &plan) != 0) {
+    if (load_flash_plan_config(plan_path, &plan) != 0) {
         return -1;
     }
 
@@ -610,7 +534,7 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
         if (configured_motor != NULL && configured_motor->index != target->index) {
             fprintf(stderr,
                     "%s:%u: warning: plan index=%02u but terminal config has index=%02u for bus=%u id=%u\n",
-                    argv[1], target->line_no, target->index, configured_motor->index,
+                    plan_path, target->line_no, target->index, configured_motor->index,
                     target->bus, target->id);
         }
         slots[i] = configured_motor != NULL ? slot : (size_t)-1;
@@ -618,13 +542,13 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
                                                  resolved_paths[i],
                                                  sizeof(resolved_paths[i])) != 0) {
             fprintf(stderr, "%s:%u: cannot read firmware version: %s (firmware_dir=%s)\n",
-                    argv[1], target->line_no, target->version, plan.firmware_dir);
+                    plan_path, target->line_no, target->version, plan.firmware_dir);
             failed++;
             continue;
         }
     }
     if (failed != 0u) {
-        fprintf(stderr, "flash_plan preflight failed: %zu/%zu targets unavailable; nothing flashed\n",
+        fprintf(stderr, "flash_all preflight failed: %zu/%zu targets unavailable; nothing flashed\n",
                 failed, plan.target_count);
         return -1;
     }
@@ -640,10 +564,10 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
     state->suppress_boot_text = true;
     state->brief_flash_output = true;
 
-    printf("FLASH PLAN file=%s total=%zu start\n", argv[1], plan.target_count);
+    printf("FLASH ALL plan=%s total=%zu start%s\n",
+           plan_path, plan.target_count, cycle ? " cycle" : "");
     for (i = 0u; i < plan.target_count && !stop_requested; i++) {
         const flash_plan_target *target = &plan.targets[i];
-        bool cycle = false;
         int ret;
 
         state->bus = target->bus;
@@ -675,9 +599,34 @@ static int console_flash_plan(flash_state *state, int argc, char **argv)
     state->bus = old_bus;
     set_target_id(state, old_id);
 
-    printf("FLASH PLAN SUMMARY total=%zu success=%zu failed=%zu%s\n",
+    printf("FLASH ALL SUMMARY total=%zu success=%zu failed=%zu%s\n",
            plan.target_count, succeeded, failed, stop_requested ? " interrupted" : "");
     return failed == 0u && succeeded == plan.target_count ? 0 : -1;
+}
+
+static int console_flash_all(flash_state *state, int argc, char **argv)
+{
+    const char *plan_path = DEFAULT_FLASH_PLAN;
+    bool has_plan = false;
+    bool cycle = false;
+    int i;
+
+    if (argc > 3) {
+        printf("%s: flash_all [plan.yaml] [cycle]\n", console_text(state, "用法", "usage"));
+        return -1;
+    }
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "cycle") == 0) {
+            cycle = true;
+        } else if (!has_plan) {
+            plan_path = argv[i];
+            has_plan = true;
+        } else {
+            printf("%s: flash_all [plan.yaml] [cycle]\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+    }
+    return console_flash_plan_file(state, plan_path, cycle);
 }
 
 static int console_load_default_topology(motor_map_config *config)

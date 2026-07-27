@@ -39,7 +39,7 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
-    "flash_single", "flash_all", "flash_file", "flash_plan", "flash_debug",
+    "flash_single", "flash_all", "flash_debug",
     "motor_dbg", "motor_all_dbg",
     "can_status", "can_monitor",
     "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",

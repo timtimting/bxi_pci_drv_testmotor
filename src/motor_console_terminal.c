@@ -132,11 +132,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
     } else if (strcmp(cmd, "flash_single") == 0) {
         return console_flash(state, argc, argv, false);
     } else if (strcmp(cmd, "flash_all") == 0) {
-        return console_flash(state, argc, argv, true);
-    } else if (strcmp(cmd, "flash_file") == 0) {
-        return console_flash_file(state, argc, argv);
-    } else if (strcmp(cmd, "flash_plan") == 0) {
-        return console_flash_plan(state, argc, argv);
+        return console_flash_all(state, argc, argv);
     } else if (strcmp(cmd, "flash_debug") == 0) {
         return console_flash_debug(state, argc, argv);
     } else if (strcmp(cmd, "motor_dbg") == 0) {

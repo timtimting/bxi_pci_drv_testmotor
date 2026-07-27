@@ -34,10 +34,10 @@ static void console_print_help(bool chinese)
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
         printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
         printf("      烧录单台电机；不写固件时使用默认烧录配置里的 version。\n");
-        printf("  flash_all [cycle]\n");
-        printf("      预检并烧录配置中的全部电机，最后输出成功/失败汇总。\n");
-        printf("  flash_plan <plan.yaml>\n");
-        printf("      按独立烧录配置依次烧录 index/bus/id/version 目标；默认配置见 config/flash_plan_default.yaml。\n");
+        printf("  flash_all [plan.yaml] [cycle]\n");
+        printf("      按烧录配置依次烧录多个电机；不写 plan 时使用 config/flash_plan_default.yaml。\n");
+        printf("  flash_debug <bus> <id> <version|firmware.bin> [cycle]\n");
+        printf("      按 Bus/ID 调试烧录单台电机，必须显式指定固件版本或文件名。\n");
         printf("  motor_dbg <index00>\n");
         printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
         printf("  can_status [reset]\n");
@@ -49,7 +49,6 @@ static void console_print_help(bool chinese)
         printf("      显示或重载 YAML 配置；电机上电或使能时禁止重载。\n");
         printf("  quit | exit | q | qq\n");
         printf("      退出终端；电机电源开启时必须先执行 `power_off`。\n");
-        printf("\n兼容/调试命令仍可用但默认隐藏：flash_file、flash_debug、motor_all_dbg。\n");
         printf("安全限制：烧录固件名和 version 只能在 firmware_dir 内解析，不接受绝对路径、/ 或 ..。\n");
         return;
     }
@@ -84,10 +83,10 @@ static void console_print_help(bool chinese)
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
     printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
     printf("      Flash one motor. Without firmware, use the version from the default plan.\n");
-    printf("  flash_all [cycle]\n");
-    printf("      Preflight and flash every configured motor; failures are summarized.\n");
-    printf("  flash_plan <plan.yaml>\n");
-    printf("      Flash index/bus/id/version targets from an independent plan file; see config/flash_plan_default.yaml.\n");
+    printf("  flash_all [plan.yaml] [cycle]\n");
+    printf("      Flash multiple motors from a flash plan. Without plan, use config/flash_plan_default.yaml.\n");
+    printf("  flash_debug <bus> <id> <version|firmware.bin> [cycle]\n");
+    printf("      Debug-flash one Bus/ID. A firmware version or file name is required.\n");
     printf("  motor_dbg <index00>\n");
     printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
     printf("      is sent immediately; ` exits debug mode.\n");
@@ -101,7 +100,6 @@ static void console_print_help(bool chinese)
     printf("      motor power is on or motors are enabled.\n");
     printf("  quit | exit | q | qq\n");
     printf("      Exit. `power_off` is required first while motor power is on.\n");
-    printf("\nCompatibility/debug commands are still accepted but hidden by default: flash_file, flash_debug, motor_all_dbg.\n");
     printf("Safety: firmware names and versions are resolved only inside firmware_dir; absolute paths, / and .. are rejected.\n");
 }
 

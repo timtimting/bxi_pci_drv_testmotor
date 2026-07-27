@@ -341,7 +341,7 @@ flash_single 08 test.bin
 默认烧录全部电机可以直接使用：
 
 ```text
-flash_plan config/flash_plan_default.yaml
+flash_all
 ```
 
 如果需要反复烧录几个固定电机，可以复制默认配置后删改 `targets`：
@@ -377,7 +377,7 @@ targets:
 ```text
 power_on
 mit_disable_all
-flash_plan config/flash_plan_debug.yaml
+flash_all config/flash_plan_debug.yaml
 ```
 
 说明：
@@ -405,6 +405,7 @@ flash_all
 ```text
 flash_single 00 cycle
 flash_all cycle
+flash_all config/flash_plan_debug.yaml cycle
 ```
 
 `cycle` 会操作电机总电源，使用前应确认其他机构处于安全状态。
@@ -483,18 +484,20 @@ config_reload /path/to/config.yaml
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
-| `flash_plan` | `<plan.yaml>` | 按烧录配置烧录多个目标，推荐默认使用 |
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；可省略固件使用默认 version |
-| `flash_all` | `[cycle]` | 按默认拓扑/型号烧录全部电机 |
+| `flash_all` | `[plan.yaml] [cycle]` | 按烧录配置烧录多个目标；省略配置时使用默认配置 |
+| `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | 按 bus/id 调试烧录单台 |
 
-兼容/调试命令仍可用但默认不在程序 help 中展开：`flash_file`、`flash_debug`、`motor_all_dbg`。
+旧 `flash_plan <plan.yaml>` 合并为 `flash_all <plan.yaml>`。
+旧 `flash_file <index00> <version|firmware.bin>` 合并为
+`flash_single <index00> <version|firmware.bin>`。
 
 推荐默认烧录：
 
 ```text
 power_on
 mit_disable_all
-flash_plan config/flash_plan_default.yaml
+flash_all
 ```
 
 调试少量电机：
@@ -502,7 +505,7 @@ flash_plan config/flash_plan_default.yaml
 ```text
 cp config/flash_plan_default.yaml config/flash_plan_debug.yaml
 # 删除不需要烧录的 targets，或修改 version
-flash_plan config/flash_plan_debug.yaml
+flash_all config/flash_plan_debug.yaml
 ```
 
 ### 11.4 调试和配置

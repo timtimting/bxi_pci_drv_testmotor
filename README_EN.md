@@ -101,8 +101,8 @@ buses, and prints responding indexes and decoded feedback.
 | `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | Send one validated MIT command |
 | `stand_up` | none | Ramp KP and move every online/enabled motor to zero |
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | Flash one motor; omit firmware to use the default version |
-| `flash_all` | `[cycle]` | Preflight and flash all configured motors |
-| `flash_plan` | `<plan.yaml>` | Flash multiple targets from a standalone plan file |
+| `flash_all` | `[plan.yaml] [cycle]` | Flash multiple targets; omit plan to use the default one |
+| `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | Debug-flash one Bus/ID |
 | `can_status` | `[reset]` | Show or reset per-bus software statistics |
 | `can_monitor` | `on\|off` | Toggle live decoded CAN output |
 | `config_show` | none | Show the active configuration summary |
@@ -128,11 +128,11 @@ Examples:
 motor[POWER-ON]> flash_single 00
 motor[POWER-ON]> flash_single 08 50L
 motor[POWER-ON]> flash_all
-motor[POWER-ON]> flash_plan config/flash_plan_default.yaml
+motor[POWER-ON]> flash_all config/flash_plan_default.yaml
 ```
 
 For repeated bring-up work, copy `config/flash_plan_default.yaml`, edit
-`firmware_dir` and `targets`, then run `flash_plan <your-plan.yaml>`. The flash
+`firmware_dir` and `targets`, then run `flash_all <your-plan.yaml>`. The flash
 plan contains the firmware directory plus selected motors: `index`, `bus`, `id`,
 and firmware `version`.
 
