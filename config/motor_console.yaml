@@ -1,0 +1,95 @@
+# =============================================================================
+# motor_console 终端配置
+# =============================================================================
+# 本文件只放终端运行参数、电机状态识别和 MIT 型号参数。
+# 电机 index/bus/id/version 拓扑放在 config/flash_plan_default.yaml。
+
+# -----------------------------------------------------------------------------
+# motor_console 运行参数
+# -----------------------------------------------------------------------------
+# 全部电机回零时，KP 从 0 缓慢增加到 home_kp，KD 保持 home_kd。
+home_kp: 20.0
+home_kd: 1.0
+home_soft_start_ms: 2000
+
+# 上电后的电机扫描及软启动等待时间。
+scan_timeout_ms: 1000
+power_on_wait_ms: 2000
+
+# 电机输出状态识别关键字。后续如果固件输出变化，可只改这里。
+state_boot_pattern: boot...
+state_motor_pattern: stm run
+state_no_app_pattern: no useful app
+state_boot_menu_pattern: Boot menu:
+state_motor_menu_pattern: Motor main menu:
+
+# MIT 控制帧使用 CAN-FD；实时打印并解析收到的 CAN 帧。
+mit_canfd: on
+live_output: on
+
+# 终端默认语言：默认中文；zh=中文，en=英文；运行时可用 language 命令切换。
+language: zh
+
+# -----------------------------------------------------------------------------
+# MIT 协议默认参数范围
+# -----------------------------------------------------------------------------
+# p_des/v_des/Kp 对当前 50/50L/70/85 型号通用；Kd/t_ff 按型号覆盖。
+# 如果某个电机型号没有写在 motor_types 中，会回退使用这里的默认范围。
+mit_p_min: -12.5
+mit_p_max: 12.5
+mit_v_min: -45.0
+mit_v_max: 45.0
+mit_t_min: -40.0
+mit_t_max: 40.0
+mit_kp_max: 500.0
+mit_kd_max: 5.0
+
+# -----------------------------------------------------------------------------
+# 电机型号配置
+# 每个型号独立配置：
+#   mit_*    : 该型号的 MIT 打包/解包范围
+#
+# 目前主要使用 50、50L、70、85 四个型号：
+#   50/50L/70 的 Kd 范围 [0,5]
+#   85 的 Kd 范围 [0,20]
+#   50/50L 的 t_ff 范围 [-40,40]
+#   70 的 t_ff 范围 [-80,80]
+#   85 的 t_ff 范围 [-160,160]
+# -----------------------------------------------------------------------------
+motor_types:
+  - type: "50"
+    mit_p_min: -12.5
+    mit_p_max: 12.5
+    mit_v_min: -45.0
+    mit_v_max: 45.0
+    mit_t_min: -40.0
+    mit_t_max: 40.0
+    mit_kp_max: 500.0
+    mit_kd_max: 5.0
+  - type: "50L"
+    mit_p_min: -12.5
+    mit_p_max: 12.5
+    mit_v_min: -45.0
+    mit_v_max: 45.0
+    mit_t_min: -40.0
+    mit_t_max: 40.0
+    mit_kp_max: 500.0
+    mit_kd_max: 5.0
+  - type: "70"
+    mit_p_min: -12.5
+    mit_p_max: 12.5
+    mit_v_min: -45.0
+    mit_v_max: 45.0
+    mit_t_min: -80.0
+    mit_t_max: 80.0
+    mit_kp_max: 500.0
+    mit_kd_max: 5.0
+  - type: "85"
+    mit_p_min: -12.5
+    mit_p_max: 12.5
+    mit_v_min: -45.0
+    mit_v_max: 45.0
+    mit_t_min: -160.0
+    mit_t_max: 160.0
+    mit_kp_max: 500.0
+    mit_kd_max: 20.0

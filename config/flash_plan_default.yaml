@@ -1,0 +1,152 @@
+# =============================================================================
+# 默认电机烧录配置
+# =============================================================================
+# 这个文件只描述“默认要烧录哪些电机，以及烧录哪个程序版本”。
+# 终端语言、电机状态识别、MIT 参数、电机型号等配置放在：
+#   config/motor_console.yaml
+#
+# 使用方式：
+#   power_on
+#   mit_disable_all
+#   flash_plan config/flash_plan_default.yaml
+
+# 固件目录；version 会优先在该目录下查找。
+# 例如 version: 50L 会尝试 firmware/bxi_motor_50L.bin。
+firmware_dir: firmware
+
+targets:
+  # 腰部：bus0 / id1-id3，逻辑 index 00-02
+  - index: 0
+    bus: 0
+    id: 1
+    version: 70
+  - index: 1
+    bus: 0
+    id: 2
+    version: 70
+  - index: 2
+    bus: 0
+    id: 3
+    version: 85
+
+  # 左腿：bus1，逻辑 index 03-08
+  - index: 3
+    bus: 1
+    id: 1
+    version: 85
+  - index: 4
+    bus: 1
+    id: 2
+    version: 85
+  - index: 5
+    bus: 1
+    id: 3
+    version: 70
+  - index: 6
+    bus: 1
+    id: 4
+    version: 85
+  - index: 7
+    bus: 1
+    id: 5
+    version: 50L
+  - index: 8
+    bus: 1
+    id: 6
+    version: 50L
+
+  # 右腿：bus2，逻辑 index 09-14
+  - index: 9
+    bus: 2
+    id: 1
+    version: 85
+  - index: 10
+    bus: 2
+    id: 2
+    version: 85
+  - index: 11
+    bus: 2
+    id: 3
+    version: 70
+  - index: 12
+    bus: 2
+    id: 4
+    version: 85
+  - index: 13
+    bus: 2
+    id: 5
+    version: 50L
+  - index: 14
+    bus: 2
+    id: 6
+    version: 50L
+
+  # 左手：bus3，逻辑 index 15-21
+  - index: 15
+    bus: 3
+    id: 1
+    version: 70
+  - index: 16
+    bus: 3
+    id: 2
+    version: 70
+  - index: 17
+    bus: 3
+    id: 3
+    version: 50
+  - index: 18
+    bus: 3
+    id: 4
+    version: 70
+  - index: 19
+    bus: 3
+    id: 5
+    version: 50
+  - index: 20
+    bus: 3
+    id: 6
+    version: 50
+  - index: 21
+    bus: 3
+    id: 7
+    version: 50
+
+  # 右手：bus4，逻辑 index 22-28
+  - index: 22
+    bus: 4
+    id: 1
+    version: 70
+  - index: 23
+    bus: 4
+    id: 2
+    version: 70
+  - index: 24
+    bus: 4
+    id: 3
+    version: 50
+  - index: 25
+    bus: 4
+    id: 4
+    version: 70
+  - index: 26
+    bus: 4
+    id: 5
+    version: 50
+  - index: 27
+    bus: 4
+    id: 6
+    version: 50
+  - index: 28
+    bus: 4
+    id: 7
+    version: 50
+
+  # 头部：bus0 / id4-id5，逻辑 index 29-30
+  - index: 29
+    bus: 0
+    id: 4
+    version: 50
+  - index: 30
+    bus: 0
+    id: 5
+    version: 50

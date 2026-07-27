@@ -4,7 +4,8 @@
 #include "bxi_pci_drv.h"
 
 int can_rx_call_test(void *arg, canfd_packet *msg){
-    printf("can[%d] recv, id:%d, dlc:%d, data:", msg->bus, msg->frame.can_id, msg->frame.len);
+    printf("can[%u] recv, id:%u, dlc:%u, data:",
+           msg->bus, msg->frame.can_id, msg->frame.len);
 
     // for (size_t i = 0; i < msg->can_dlc; i++){
     //     printf("0x%x ", msg->data[i]);
@@ -53,7 +54,7 @@ int main(){
     //remote emergency stop test
     for (size_t i = 10; i > 0; i--)
     {
-        printf("Please press the remote emergency stop, wait %ld s.\n", i);
+        printf("Please press the remote emergency stop, wait %zu s.\n", i);
         if (0 == motor_pwr_get())
         {
             printf("successful\n");
@@ -71,13 +72,13 @@ int main(){
     {
         #define MSG_NUM 5
         canfd_packet msg[MSG_NUM];
-        for (size_t i = 0; i < MSG_NUM; i++){
-            msg[i].bus = 0;
-            msg[i].frame.can_id = i;
-            msg[i].frame.len = 8;
-            msg[i].frame.flags = CANFD_BRS|CANFD_FDF; //CANFD with BRS(1M+5M)
-            for (size_t j = 0; j < 8; j++){
-                msg[i].frame.data[j] = j;
+        for (size_t msg_i = 0; msg_i < MSG_NUM; msg_i++){
+            msg[msg_i].bus = 0;
+            msg[msg_i].frame.can_id = msg_i;
+            msg[msg_i].frame.len = 8;
+            msg[msg_i].frame.flags = CANFD_BRS|CANFD_FDF; //CANFD with BRS(1M+5M)
+            for (size_t byte_i = 0; byte_i < 8; byte_i++){
+                msg[msg_i].frame.data[byte_i] = byte_i;
             }
         }
         canfd_send_packet(msg, MSG_NUM);

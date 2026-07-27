@@ -58,7 +58,7 @@ sudo ./motor_console
 指定其他配置文件：
 
 ```bash
-sudo ./build/motor_console --config /path/to/motor_firmware.yaml
+sudo ./build/motor_console --config /path/to/motor_console.yaml
 ```
 
 启动时临时指定语言（优先于配置文件）：
@@ -111,8 +111,7 @@ lang zh            language 的简写
 lang en
 ```
 
-命令名称在中英文模式下保持一致，方便脚本和操作记录复用。Bootloader 和 YMODEM
-底层协议的原始回显保持固件端原文，便于定位升级问题。
+命令名称在中英文模式下保持一致，方便脚本和操作记录复用。
 
 涉及配置电机序号的命令统一使用两位十进制 `index00` 参数，例如 `00`、`08`、`30`。
 
@@ -297,16 +296,10 @@ can_status reset
 
 ### 9.1 准备固件
 
-默认目录和文件映射：
+默认固件目录是：
 
-```yaml
-firmware_dir: firmware
-
-firmware_files:
-  50: bxi_motor_50.bin
-  50L: bxi_motor_50L.bin
-  70: bxi_motor_70.bin
-  85: bxi_motor_85.bin
+```text
+firmware/
 ```
 
 对应文件应放在：
@@ -318,21 +311,85 @@ firmware/bxi_motor_70.bin
 firmware/bxi_motor_85.bin
 ```
 
+终端配置 `config/motor_console.yaml` 只负责电机型号和 MIT 打包/解包范围。
+默认烧录版本放在 `config/flash_plan_default.yaml`。
+`Kp` 通用范围为 `[0,500]`，`p_des` 通用范围为 `[-12.5,12.5]`，
+`v_des` 通用范围为 `[-45,45]`。
+
 ### 9.2 烧录单台电机
 
 ```text
 power_on
 mit_disable_all
-flash_single <index00>
+flash_single <index00> [version|firmware.bin] [cycle]
 ```
 
 示例：
 
 ```text
 flash_single 00
+flash_single 08 50L
+flash_single 08 test.bin
 ```
 
-### 9.3 烧录全部电机
+`flash_single` 不写固件参数时，使用 `config/flash_plan_default.yaml` 中该 index
+对应的 `version`。写了固件参数时，只会在 `firmware_dir` 内查找该文件或版本；
+`50L` 会自动解析为 `firmware/bxi_motor_50L.bin`。
+
+### 9.3 按烧录策略文件烧录多个电机
+
+默认烧录全部电机可以直接使用：
+
+```text
+flash_plan config/flash_plan_default.yaml
+```
+
+如果需要反复烧录几个固定电机，可以复制默认配置后删改 `targets`：
+
+```text
+cp config/flash_plan_default.yaml config/flash_plan_debug.yaml
+```
+
+然后修改 `config/flash_plan_debug.yaml`：
+
+```yaml
+firmware_dir: firmware
+
+targets:
+  - index: 0
+    bus: 0
+    id: 1
+    version: 70
+
+  - index: 8
+    bus: 1
+    id: 6
+    version: 50L
+
+  - index: 29
+    bus: 0
+    id: 4
+    version: bxi_motor_50.bin
+```
+
+执行：
+
+```text
+power_on
+mit_disable_all
+flash_plan config/flash_plan_debug.yaml
+```
+
+说明：
+
+- 烧录配置描述固件路径和烧录目标：`firmware_dir`、`index`、`bus`、`id`、`version`。
+- `version` 支持简写，例如 `50L` 会尝试 `${firmware_dir}/bxi_motor_50L.bin`。
+- `version` 也可以写完整文件名，例如 `bxi_motor_50.bin`、`test.bin`。
+- 安全限制：`firmware_dir` 必须是相对目录，不能包含绝对路径或 `..`；`version`
+  和手动固件参数不能包含 `/` 或 `..`，程序只会读取 `firmware_dir` 目录内的文件。
+- 终端语言、电机输出状态识别、MIT 参数和电机型号配置都放在 `config/motor_console.yaml`。
+
+### 9.4 烧录全部电机
 
 ```text
 power_on
@@ -343,48 +400,7 @@ flash_all
 烧录前程序会预检所有目标及固件文件。任何文件缺失时，整个批次会在操作第一台电机
 之前停止。
 
-### 9.4 进入 Boot 的流程
-
-默认流程：
-
-1. 向应用程序发送复位命令 `r`。
-2. 程序按默认延时在 0.5 秒 Boot 窗口内发送一次 `m` 进入 Boot 菜单。
-3. 收到 `Boot menu:` 后确认进入 Boot。
-4. 程序按默认延时发送 `u` 进入烧录功能。
-5. 通过 CAN/YMODEM 传输固件；数据包使用 128B YMODEM 包，降低连续 CAN 分片发送压力。
-6. 烧录成功后自动发送 `a`，让电机从 Boot 菜单跳转到电机程序。
-
-烧录流程不会自动发送 `v` 探测 Boot 状态，避免触发固件菜单里的其他调试功能。
-如果上电输出已经识别到目标电机处于 `boot_menu` 状态，烧录会直接跳过 `r/m`，等待
-默认延时后发送 `u`。
-
-如果需要手动调试 Boot 菜单，可以进入单电机调试模式：
-
-```text
-motor_dbg 00         # 按配置 index 调试
-motor_all_dbg 0 1    # 按 bus/id 调试，不依赖配置
-```
-
-进入后所有键盘输入都会立即发送给电机，包括回车、空格和退格；按反引号键 `` ` `` 返回主终端。
-
-状态识别关键字在配置文件中修改：
-
-```yaml
-state_boot_pattern: boot...
-state_motor_pattern: stm run
-state_no_app_pattern: no useful app
-state_boot_menu_pattern: Boot menu:
-state_motor_menu_pattern: Motor main menu:
-```
-
-CAN ID 约定：
-
-| 功能 | 主机发送 | 主机接收 |
-|---|---:|---:|
-| Boot/调试串口命令，如 `r`、`m`、`u` | `0x7e0 \| id` | `0x7f0 \| id` |
-| MIT 控制 | `0x00 \| id` | `0x10 \| id` |
-
-如果软复位无法进入 Boot，可以增加 `cycle`：
+如果普通烧录无法进入升级状态，可以增加 `cycle`：
 
 ```text
 flash_single 00 cycle
@@ -393,21 +409,12 @@ flash_all cycle
 
 `cycle` 会操作电机总电源，使用前应确认其他机构处于安全状态。
 
-如果看到 `Invalid state!get :6d`，说明 `m` 被应用程序收到，没有打进 Boot 窗口。
-此时优先尝试带 `cycle` 的烧录命令，或者确认电机上电后 Boot 窗口是否正常输出：
-
-```text
-flash_debug 0 1 50L cycle
-```
-
-烧录过程参数不放在配置文件中，程序内部使用默认时序和 CAN 发送重试策略。
-
 ## 10. 配置文件
 
 默认配置文件：
 
 ```text
-config/motor_firmware.yaml
+config/motor_console.yaml
 ```
 
 显示当前配置：
@@ -426,14 +433,13 @@ config_reload /path/to/config.yaml
 配置包含：
 
 - 界面语言。
-- 电机逻辑序号、CAN Bus、ID 和型号。
-- 固件目录和四种型号的固件文件名。
 - 上电等待及扫描超时。
 - 实时 CAN 输出和 CAN-FD 开关。
 - MIT 位置、速度、转矩、KP 和 KD 范围。
 - 全部电机软启动回零参数。
 
-当前电机拓扑：
+电机逻辑序号、CAN Bus、ID 和默认烧录版本放在 `config/flash_plan_default.yaml`。
+当前默认拓扑：
 
 | 位置 | CAN 范围 | Index 范围 |
 |---|---|---|
@@ -444,36 +450,87 @@ config_reload /path/to/config.yaml
 | 右手 | `bus4/id1-7` | `22-28` |
 | 头部 | `bus0/id4-5` | `29-30` |
 
-## 11. 命令速查
+## 11. 当前命令
+
+终端里可以执行 `help` / `-h` / `?` 查看推荐命令。实际测试时建议优先使用下面这些常用命令。
+
+### 11.1 常用操作
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `help` / `-h` / `?` | 无 | 显示终端帮助 |
-| `language` / `lang` | `zh\|en` | 切换中英文 |
-| `power_on` | 无 | 上电、等待并扫描全部电机 |
-| `power_off` | 无 | 失能并关闭总电源 |
-| `motor_scan` | `[timeout_ms]` | 扫描全部配置电机 |
-| `motor_list` | 无 | 显示电机状态和最后反馈 |
-| `mit_zero_set` | 无 | 全部电机校准零位 |
-| `mit_zero_set_single` | `<index00>` | 单电机校准零位 |
+| `power_on` | 无 | 电机上电、等待软启动、扫描全部电机 |
+| `power_off` | 无 | 失能已知使能电机并关闭总电源 |
+| `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态和最后反馈 |
+| `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
+| `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
+| `quit` / `exit` / `q` / `qq` | 无 | 退出终端；电源开启时会拒绝直接退出 |
+
+### 11.2 MIT 控制
+
+| 命令 | 参数 | 说明 |
+|---|---|---|
+| `mit_zero_set` | 无 | 给全部电机发送 MIT 零位校准帧 |
+| `mit_zero_set_single` | `<index00>` | 给单台电机发送 MIT 零位校准帧 |
 | `mit_enable_all` | 无 | 使能全部电机 |
 | `mit_disable_all` | 无 | 失能全部电机 |
 | `mit_enable_single` | `<index00>` | 使能单台电机 |
 | `mit_disable_single` | `<index00>` | 失能单台电机 |
-| `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 单次 MIT 控制 |
-| `stand_up` | 无 | 全部在线电机软启动回零 |
-| `flash_single` | `<index00> [cycle]` | 烧录单台电机 |
-| `flash_all` | `[cycle]` | 烧录全部电机 |
-| `flash_debug` | `<bus> <id> <firmware.bin\|path> [cycle]` | 调试烧录指定 Bus/ID，不依赖型号配置 |
-| `motor_dbg` | `<index00>` | 按配置序号进入单电机直通调试 |
-| `motor_all_dbg` | `<bus> <id>` | 按 Bus/ID 进入单电机直通调试 |
-| `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
+| `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 给单台电机发送一次 MIT 控制帧 |
+| `stand_up` | 无 | 全部在线且已使能电机软启动回零 |
+
+### 11.3 烧录
+
+| 命令 | 参数 | 说明 |
+|---|---|---|
+| `flash_plan` | `<plan.yaml>` | 按烧录配置烧录多个目标，推荐默认使用 |
+| `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；可省略固件使用默认 version |
+| `flash_all` | `[cycle]` | 按默认拓扑/型号烧录全部电机 |
+
+兼容/调试命令仍可用但默认不在程序 help 中展开：`flash_file`、`flash_debug`、`motor_all_dbg`。
+
+推荐默认烧录：
+
+```text
+power_on
+mit_disable_all
+flash_plan config/flash_plan_default.yaml
+```
+
+调试少量电机：
+
+```text
+cp config/flash_plan_default.yaml config/flash_plan_debug.yaml
+# 删除不需要烧录的 targets，或修改 version
+flash_plan config/flash_plan_debug.yaml
+```
+
+### 11.4 调试和配置
+
+| 命令 | 参数 | 说明 |
+|---|---|---|
+| `motor_dbg` | `<index00>` | 按 index 进入单电机直通调试；所有按键直接发给电机，反引号 `` ` `` 退出 |
+| `motor_all_dbg` | `<bus> <id>` | 按 bus/id 进入单电机直通调试 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
-| `config_show` | 无 | 显示当前配置 |
-| `config_reload` | `[path]` | 重新加载配置 |
-| `quit` / `exit` / `q` / `qq` | 无 | 退出终端 |
+| `config_show` | 无 | 显示当前终端配置和从默认烧录配置加载出的电机表 |
+| `config_reload` | `[path]` | 下电状态重新加载终端配置 |
+| `language` / `lang` | `zh\|en` | 切换中英文 |
 
 ## 12. 原有工具
+
+### 12.1 `motor_console` 源码结构
+
+`motor_console` 主入口在 `src/motor_console.c`。为了复用原有 Boot/YMODEM/MIT
+底层实现，它仍然在同一个编译单元内包含 `motor_flash.c`，但终端自身逻辑已经按功能拆分：
+
+| 文件 | 内容 |
+|---|---|
+| `src/motor_console_core.inc` | 通用工具、配置路径、电机查找和状态保护 |
+| `src/motor_console_display.inc` | help、配置、电机列表等输出 |
+| `src/motor_console_control.inc` | 上下电、扫描、MIT 控制、CAN 统计 |
+| `src/motor_console_flash.inc` | 单台/全部/计划烧录和烧录配置解析 |
+| `src/motor_console_debug.inc` | 单电机直通调试 |
+| `src/motor_console_terminal.inc` | 命令分发、配置重载、交互终端循环 |
 
 原有工具仍可单独使用：
 

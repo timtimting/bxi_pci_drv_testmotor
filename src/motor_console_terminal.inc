@@ -1,0 +1,234 @@
+/*
+ * Configuration reload, command dispatch and interactive terminal loop.
+ *
+ * Included by motor_console.c; not compiled directly.
+ */
+
+static int console_reload_config(flash_state *state, const char *path)
+{
+    motor_map_config new_config;
+
+    if (state->motor_power_on || console_any_enabled(state)) {
+        printf("%s\n", console_text(state,
+               "配置重载被拒绝：电机仍处于上电或使能状态",
+               "config reload refused while motor power is on or a motor is enabled"));
+        return -1;
+    }
+    if (load_motor_map_config(path, &new_config) != 0) {
+        return -1;
+    }
+    if (console_load_default_topology(&new_config) != 0) {
+        return -1;
+    }
+    if (state->language_override_active) {
+        new_config.chinese_ui = state->chinese_override;
+    }
+    state->config = new_config;
+    state->limits = new_config.mit_limits;
+    state->debug_use_canfd = new_config.mit_canfd;
+    state->show_can_output = new_config.live_output;
+    state->show_motor_input = new_config.live_output;
+    memset(state->motors, 0, sizeof(state->motors));
+    snprintf(state->config_path, sizeof(state->config_path), "%s", path);
+    state->config_loaded = true;
+    if (state->config.chinese_ui) {
+        printf("已从 %s 加载 %zu 台电机\n", path, state->config.entry_count);
+    } else {
+        printf("loaded %zu motors from %s\n", state->config.entry_count, path);
+    }
+    return 0;
+}
+
+static int console_run_command(flash_state *state, int argc, char **argv)
+{
+    const char *cmd;
+    unsigned int index;
+    unsigned int timeout_ms;
+    size_t slot;
+
+    if (argc == 0) {
+        return 0;
+    }
+    cmd = argv[0];
+    if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
+        console_print_help(state->config.chinese_ui);
+    } else if (strcmp(cmd, "language") == 0 || strcmp(cmd, "lang") == 0) {
+        if (argc != 2 ||
+            (strcmp(argv[1], "zh") != 0 && strcmp(argv[1], "en") != 0)) {
+            printf("%s\n", console_text(state,
+                   "用法：language zh|en",
+                   "usage: language zh|en"));
+            return -1;
+        }
+        state->config.chinese_ui = strcmp(argv[1], "zh") == 0;
+        state->language_override_active = true;
+        state->chinese_override = state->config.chinese_ui;
+        printf("%s\n", state->config.chinese_ui ?
+               "界面语言已切换为中文" :
+               "Console language switched to English");
+    } else if (strcmp(cmd, "power_on") == 0) {
+        if (argc != 1) {
+            printf("%s: power_on\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_power_on(state);
+    } else if (strcmp(cmd, "power_off") == 0) {
+        if (argc != 1) {
+            printf("%s: power_off\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_power_off(state);
+    } else if (strcmp(cmd, "motor_scan") == 0) {
+        timeout_ms = state->config.scan_timeout_ms;
+        if (argc > 2 || (argc == 2 && parse_uint_arg(argv[1], &timeout_ms) != 0)) {
+            printf("%s: motor_scan [timeout_ms]\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_probe_motors(state, timeout_ms);
+    } else if (strcmp(cmd, "motor_list") == 0) {
+        if (argc != 1) {
+            printf("%s: motor_list\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        console_print_motors(state);
+    } else if (strcmp(cmd, "mit_zero_set") == 0) {
+        if (argc != 1) {
+            printf("%s: mit_zero_set\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_send_special(state, -1, BXI_MOTOR_CMD_ZERO, cmd);
+    } else if (strcmp(cmd, "mit_zero_set_single") == 0 ||
+               strcmp(cmd, "mit_enable_single") == 0 ||
+               strcmp(cmd, "mit_disable_single") == 0) {
+        uint8_t special = strcmp(cmd, "mit_zero_set_single") == 0 ? BXI_MOTOR_CMD_ZERO :
+                          (strcmp(cmd, "mit_enable_single") == 0 ? BXI_MOTOR_CMD_ENABLE :
+                           BXI_MOTOR_CMD_DISABLE);
+        if (argc != 2 || console_parse_index_arg(argv[1], &index) != 0 ||
+            console_motor_by_index(state, index, &slot) == NULL) {
+            printf("%s: %s <index00>\n", console_text(state, "用法", "usage"), cmd);
+            return -1;
+        }
+        return console_send_special(state, (int)slot, special, cmd);
+    } else if (strcmp(cmd, "mit_enable_all") == 0) {
+        if (argc != 1) {
+            printf("%s: mit_enable_all\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_send_special(state, -1, BXI_MOTOR_CMD_ENABLE, cmd);
+    } else if (strcmp(cmd, "mit_disable_all") == 0) {
+        if (argc != 1) {
+            printf("%s: mit_disable_all\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
+    } else if (strcmp(cmd, "motor_set") == 0) {
+        return console_motor_set(state, argc, argv);
+    } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
+        if (argc != 1) {
+            printf("%s: stand_up\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_move_zero(state);
+    } else if (strcmp(cmd, "flash_single") == 0) {
+        return console_flash(state, argc, argv, false);
+    } else if (strcmp(cmd, "flash_all") == 0) {
+        return console_flash(state, argc, argv, true);
+    } else if (strcmp(cmd, "flash_file") == 0) {
+        return console_flash_file(state, argc, argv);
+    } else if (strcmp(cmd, "flash_plan") == 0) {
+        return console_flash_plan(state, argc, argv);
+    } else if (strcmp(cmd, "flash_debug") == 0) {
+        return console_flash_debug(state, argc, argv);
+    } else if (strcmp(cmd, "motor_dbg") == 0) {
+        return console_motor_dbg(state, argc, argv);
+    } else if (strcmp(cmd, "motor_all_dbg") == 0) {
+        return console_motor_all_dbg(state, argc, argv);
+    } else if (strcmp(cmd, "can_status") == 0) {
+        if (argc > 2 || (argc == 2 && strcmp(argv[1], "reset") != 0)) {
+            printf("%s: can_status [reset]\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        console_can_status(state, argc == 2);
+    } else if (strcmp(cmd, "can_monitor") == 0) {
+        bool enabled;
+        if (argc != 2 || parse_on_off(argv[1], &enabled) != 0) {
+            printf("%s: can_monitor on|off\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        state->show_can_output = enabled;
+        state->show_motor_input = enabled;
+        printf("%s %s\n", console_text(state, "CAN 实时输出", "CAN live output"),
+               enabled ? "ON" : "OFF");
+    } else if (strcmp(cmd, "config_show") == 0) {
+        if (argc != 1) {
+            printf("%s: config_show\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        console_print_config(state);
+    } else if (strcmp(cmd, "config_reload") == 0) {
+        if (argc > 2) {
+            printf("%s: config_reload [path]\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_reload_config(state, argc == 2 ? argv[1] : state->config_path);
+    } else if (strcmp(cmd, "q") == 0 ||
+               strcmp(cmd, "qq") == 0 ||
+               strcmp(cmd, "quit") == 0 ||
+               strcmp(cmd, "exit") == 0) {
+        if (state->motor_power_on) {
+            printf("%s\n", console_text(state,
+                   "退出被拒绝：电机仍处于上电状态，请先执行 `power_off`",
+                   "exit refused: motor power is ON; run `power_off` first"));
+            return -1;
+        }
+        return 1;
+    } else {
+        if (state->config.chinese_ui) {
+            printf("未知命令：%s（使用 `help` 或 `-h` 查看帮助）\n", cmd);
+        } else {
+            printf("unknown command: %s (use `help` or `-h`)\n", cmd);
+        }
+        return -1;
+    }
+    return 0;
+}
+
+static int console_terminal(flash_state *state)
+{
+    char line[LINE_LEN];
+    char *argv[16];
+
+    if (state->config.chinese_ui) {
+        printf("统一电机终端已就绪，尚未执行上电、控制或烧录操作。\n");
+        printf("配置文件：%s（%zu 台电机）。使用 `help` 或 `-h` 查看帮助。\n",
+               state->config_path, state->config.entry_count);
+    } else {
+        printf("Unified motor console ready. No power/control/flash action has been performed.\n");
+        printf("Configuration: %s (%zu motors). Use `help` or `-h`.\n",
+               state->config_path, state->config.entry_count);
+    }
+    while (!stop_requested) {
+        int argc;
+        int ret;
+        const char *prompt;
+
+        if (state->config.chinese_ui) {
+            prompt = state->motor_power_on ? "电机[已上电]> " : "电机[已下电]> ";
+        } else {
+            prompt = state->motor_power_on ? "motor[POWER-ON]> " : "motor[POWER-OFF]> ";
+        }
+
+        printf("%s", prompt);
+        fflush(stdout);
+        if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
+            printf("\n");
+            break;
+        }
+        argc = split_line(line, argv, (int)(sizeof(argv) / sizeof(argv[0])));
+        ret = console_run_command(state, argc, argv);
+        if (ret > 0) {
+            return 0;
+        }
+    }
+    return state->motor_power_on ? -1 : 0;
+}
