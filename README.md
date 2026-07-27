@@ -521,16 +521,17 @@ flash_plan config/flash_plan_debug.yaml
 ### 12.1 `motor_console` 源码结构
 
 `motor_console` 主入口在 `src/motor_console.c`。为了复用原有 Boot/YMODEM/MIT
-底层实现，它仍然在同一个编译单元内包含 `motor_flash.c`，但终端自身逻辑已经按功能拆分：
+底层实现，它仍然在同一个编译单元内包含 `motor_flash.c` 和下面这些功能模块。
+这些 `motor_console_*.c` 文件由 `motor_console.c` include，不要单独加入 CMake 编译：
 
 | 文件 | 内容 |
 |---|---|
-| `src/motor_console_core.inc` | 通用工具、配置路径、电机查找和状态保护 |
-| `src/motor_console_display.inc` | help、配置、电机列表等输出 |
-| `src/motor_console_control.inc` | 上下电、扫描、MIT 控制、CAN 统计 |
-| `src/motor_console_flash.inc` | 单台/全部/计划烧录和烧录配置解析 |
-| `src/motor_console_debug.inc` | 单电机直通调试 |
-| `src/motor_console_terminal.inc` | 命令分发、配置重载、交互终端循环 |
+| `src/motor_console_core.c` | 通用工具、配置路径、电机查找和状态保护 |
+| `src/motor_console_display.c` | help、配置、电机列表等输出 |
+| `src/motor_console_control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
+| `src/motor_console_flash.c` | 单台/全部/计划烧录和烧录配置解析 |
+| `src/motor_console_debug.c` | 单电机直通调试 |
+| `src/motor_console_terminal.c` | 命令分发、配置重载、交互终端循环 |
 
 原有工具仍可单独使用：
 

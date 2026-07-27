@@ -1,8 +1,8 @@
 /*
  * Core helpers for motor_console.c.
  *
- * This file is intentionally included by motor_console.c instead of being
- * compiled as a standalone translation unit, because motor_console reuses
+ * This module is intentionally included by motor_console.c instead of being
+ * added to CMake as a standalone source file, because motor_console reuses
  * static helpers from motor_flash.c.
  */
 

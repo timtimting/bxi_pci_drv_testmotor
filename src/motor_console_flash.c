@@ -1,7 +1,7 @@
 /*
  * Firmware flashing commands and flash-plan parsing for motor_console.c.
  *
- * Included by motor_console.c; not compiled directly.
+ * Included by motor_console.c; do not add as a standalone CMake source.
  */
 
 static int console_resolve_firmware_path(const flash_state *state,

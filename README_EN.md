@@ -167,18 +167,19 @@ command/response statistics rather than controller error-register values.
 
 ## Source layout
 
-`src/motor_console.c` is the entry point. It still includes `motor_flash.c` in
-the same translation unit to reuse the existing bootloader, YMODEM, CAN and MIT
-helpers, but the console-specific code is split by feature:
+`src/motor_console.c` is the entry point. It still includes `motor_flash.c` and
+the feature modules below in the same translation unit to reuse the existing
+bootloader, YMODEM, CAN and MIT helpers. Do not add these `motor_console_*.c`
+files as standalone CMake sources:
 
 | File | Area |
 |---|---|
-| `src/motor_console_core.inc` | Common helpers, config path resolution, motor lookup |
-| `src/motor_console_display.inc` | Help text, config summary, motor list output |
-| `src/motor_console_control.inc` | Power, scan, MIT control and CAN statistics |
-| `src/motor_console_flash.inc` | Flash commands and flash-plan parsing |
-| `src/motor_console_debug.inc` | Pass-through motor debug mode |
-| `src/motor_console_terminal.inc` | Command dispatch, config reload and terminal loop |
+| `src/motor_console_core.c` | Common helpers, config path resolution, motor lookup |
+| `src/motor_console_display.c` | Help text, config summary, motor list output |
+| `src/motor_console_control.c` | Power, scan, MIT control and CAN statistics |
+| `src/motor_console_flash.c` | Flash commands and flash-plan parsing |
+| `src/motor_console_debug.c` | Pass-through motor debug mode |
+| `src/motor_console_terminal.c` | Command dispatch, config reload and terminal loop |
 
 ## Troubleshooting
 

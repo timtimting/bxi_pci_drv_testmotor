@@ -45,12 +45,12 @@ static const char *const console_command_words[] = {
     "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",
 };
 
-#include "motor_console_core.inc"
-#include "motor_console_display.inc"
-#include "motor_console_control.inc"
-#include "motor_console_flash.inc"
-#include "motor_console_debug.inc"
-#include "motor_console_terminal.inc"
+#include "motor_console_core.c"
+#include "motor_console_display.c"
+#include "motor_console_control.c"
+#include "motor_console_flash.c"
+#include "motor_console_debug.c"
+#include "motor_console_terminal.c"
 
 int main(int argc, char **argv)
 {

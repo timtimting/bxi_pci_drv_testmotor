@@ -1,7 +1,7 @@
 /*
  * Power, MIT control, scanning and CAN statistics commands for motor_console.c.
  *
- * Included by motor_console.c; not compiled directly.
+ * Included by motor_console.c; do not add as a standalone CMake source.
  */
 
 static void console_record_timeouts(flash_state *state,

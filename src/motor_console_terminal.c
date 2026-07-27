@@ -1,7 +1,7 @@
 /*
  * Configuration reload, command dispatch and interactive terminal loop.
  *
- * Included by motor_console.c; not compiled directly.
+ * Included by motor_console.c; do not add as a standalone CMake source.
  */
 
 static int console_reload_config(flash_state *state, const char *path)
