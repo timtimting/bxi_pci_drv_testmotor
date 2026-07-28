@@ -1,9 +1,9 @@
 /*
- * Core helpers for motor_console.c.
+ * Core helpers for main.c.
  *
- * This module is intentionally included by motor_console.c instead of being
- * added to CMake as a standalone source file, because motor_console reuses
- * static helpers from motor_flash.c.
+ * This module is intentionally included by main.c instead of being
+ * added to CMake as a standalone source file, because main.c reuses
+ * static helpers from runtime.c in this directory.
  */
 
 static const char *console_text(const flash_state *state,

@@ -2,8 +2,8 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-This project provides Linux user-space tools for the BXI PCIe CAN/CAN-FD controller.
-`motor_console` is the recommended unified terminal for power control, discovery,
+This project provides one Linux user-space program for the BXI PCIe CAN/CAN-FD
+controller: `motor_console`, a unified terminal for power control, discovery,
 MIT commands, state monitoring, and firmware flashing.
 
 > Safety: these commands operate real motors. Keep the emergency stop available,
@@ -17,12 +17,9 @@ cd bxi_pci_drv
 make
 ```
 
-Built programs:
+Built program:
 
-- `build/motor_console` — unified interactive terminal;
-- `build/motor_flash` — legacy flashing/debug tool;
-- `build/motor_test` — legacy MIT/register/CAN test tool;
-- `build/drv_test` — legacy board test.
+- `build/motor_console` — unified interactive terminal.
 
 ## Configuration
 
@@ -167,19 +164,23 @@ command/response statistics rather than controller error-register values.
 
 ## Source layout
 
-`src/motor_console.c` is the entry point. It still includes `motor_flash.c` and
+`src/main.c` is the source entry point for the `motor_console` executable. It includes `src/motor/runtime.c` and
 the feature modules below in the same translation unit to reuse the existing
-bootloader, YMODEM, CAN and MIT helpers. Do not add these `motor_console_*.c`
-files as standalone CMake sources:
+bootloader, YMODEM, CAN and MIT helpers. `src/motor/runtime.c` is an internal
+implementation file and is not built as a standalone program. The `src/` root
+keeps only `main.c`; feature files live under `src/motor/` and are included by
+`main.c`, so do not add them as standalone CMake sources:
 
 | File | Area |
 |---|---|
-| `src/motor_console_core.c` | Common helpers, config path resolution, motor lookup |
-| `src/motor_console_display.c` | Help text, config summary, motor list output |
-| `src/motor_console_control.c` | Power, scan, MIT control and CAN statistics |
-| `src/motor_console_flash.c` | Flash commands and flash-plan parsing |
-| `src/motor_console_debug.c` | Pass-through motor debug mode |
-| `src/motor_console_terminal.c` | Command dispatch, config reload and terminal loop |
+| `src/main.c` | Program entry point and internal module includes |
+| `src/motor/core.c` | Common helpers, config path resolution, motor lookup |
+| `src/motor/display.c` | Help text, config summary, motor list output |
+| `src/motor/control.c` | Power, scan, MIT control and CAN statistics |
+| `src/motor/flash.c` | Flash commands and flash-plan parsing |
+| `src/motor/debug.c` | Pass-through motor debug mode |
+| `src/motor/terminal.c` | Command dispatch, config reload and terminal loop |
+| `src/motor/bxi_motor_comm.c` / `src/motor/bxi_motor_comm.h` | MIT frame packing, special command frames, reply decoding and default limits |
 
 ## Troubleshooting
 

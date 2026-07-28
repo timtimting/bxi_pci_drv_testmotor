@@ -1,7 +1,7 @@
 /*
- * Pass-through motor debug commands for motor_console.c.
+ * Pass-through motor debug commands for main.c.
  *
- * Included by motor_console.c; do not add as a standalone CMake source.
+ * Included by main.c; do not add as a standalone CMake source.
  */
 
 static int console_motor_debug_loop(flash_state *state, unsigned int bus, unsigned int id)

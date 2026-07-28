@@ -1,11 +1,11 @@
 /*
  * Unified interactive motor service console.
  *
- * Reuse the proven terminal editor, motor protocol, boot-menu and YMODEM
- * implementation from motor_flash without changing the legacy executable.
+ * Reuse the internal terminal editor, motor protocol, boot-menu and YMODEM
+ * implementation from motor/runtime.c.
  */
-#define main motor_flash_embedded_main
-#include "motor_flash.c"
+#define main runtime_embedded_main
+#include "motor/runtime.c"
 #undef main
 
 enum {
@@ -45,12 +45,12 @@ static const char *const console_command_words[] = {
     "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",
 };
 
-#include "motor_console_core.c"
-#include "motor_console_display.c"
-#include "motor_console_control.c"
-#include "motor_console_flash.c"
-#include "motor_console_debug.c"
-#include "motor_console_terminal.c"
+#include "motor/core.c"
+#include "motor/display.c"
+#include "motor/control.c"
+#include "motor/flash.c"
+#include "motor/debug.c"
+#include "motor/terminal.c"
 
 int main(int argc, char **argv)
 {

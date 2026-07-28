@@ -3889,7 +3889,7 @@ static int run_terminal(flash_state *state)
     char *argv[16];
     char prompt[64];
 
-    printf("Entering motor flash terminal. No motor power, reset, or flash action has been performed.\n");
+    printf("Entering motor console runtime terminal. No motor power, reset, or flash action has been performed.\n");
     printf("Type help for commands, Tab to complete, arrows to edit/history.\n");
     print_config(state);
     while (!stop_requested) {

@@ -1,10 +1,9 @@
 # BXI PCI 电机统一控制终端
 
-本项目提供 BXI PCIe CAN-FD 控制卡的用户态测试、调试和电机固件烧录工具。
+本项目提供 BXI PCIe CAN-FD 控制卡的电机统一控制终端。
 
-推荐使用 `motor_console`。它把电机上下电、在线扫描、MIT 控制、状态管理、CAN
-统计和固件烧录集成在同一个交互终端中。原有的 `motor_test`、`motor_flash` 和
-`drv_test` 仍然保留，方便单项调试和兼容已有脚本。
+唯一对外程序为 `motor_console`。它把电机上下电、在线扫描、MIT 控制、状态管理、
+CAN 统计和固件烧录集成在同一个交互终端中。
 
 ## 1. 安全说明
 
@@ -30,10 +29,7 @@ make
 生成以下程序：
 
 ```text
-build/motor_console   推荐使用的统一交互终端
-build/motor_test      原有电机调试工具
-build/motor_flash     原有电机烧录工具
-build/drv_test        原有板卡测试工具
+build/motor_console   统一交互终端
 ```
 
 仅检查统一配置文件，不初始化 PCI/CAN，也不操作电机：
@@ -519,29 +515,21 @@ flash_all config/flash_plan_debug.yaml
 | `config_reload` | `[path]` | 下电状态重新加载终端配置 |
 | `language` / `lang` | `zh\|en` | 切换中英文 |
 
-## 12. 原有工具
+## 12. 源码结构
 
-### 12.1 `motor_console` 源码结构
-
-`motor_console` 主入口在 `src/motor_console.c`。为了复用原有 Boot/YMODEM/MIT
-底层实现，它仍然在同一个编译单元内包含 `motor_flash.c` 和下面这些功能模块。
-这些 `motor_console_*.c` 文件由 `motor_console.c` include，不要单独加入 CMake 编译：
+`motor_console` 的源码主入口在 `src/main.c`。为了复用 Boot/YMODEM/MIT
+底层实现，它仍然在同一个编译单元内包含 `src/motor/runtime.c` 和下面这些功能模块。
+`src/motor/runtime.c` 是 `motor_console` 的内部实现文件，不作为独立程序构建。
+`src/` 根目录只保留入口文件 `main.c`，其他功能文件放在 `src/motor/` 下，由
+`main.c` include，不要单独加入 CMake 编译：
 
 | 文件 | 内容 |
 |---|---|
-| `src/motor_console_core.c` | 通用工具、配置路径、电机查找和状态保护 |
-| `src/motor_console_display.c` | help、配置、电机列表等输出 |
-| `src/motor_console_control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
-| `src/motor_console_flash.c` | 单台/全部/计划烧录和烧录配置解析 |
-| `src/motor_console_debug.c` | 单电机直通调试 |
-| `src/motor_console_terminal.c` | 命令分发、配置重载、交互终端循环 |
-
-原有工具仍可单独使用：
-
-```bash
-sudo ./build/motor_test --help
-sudo ./build/motor_flash --help
-sudo ./build/drv_test
-```
-
-涉及完整机器人操作时优先使用 `motor_console`，避免不同程序分别维护电源和使能状态。
+| `src/main.c` | 程序入口、统一 include 内部模块 |
+| `src/motor/core.c` | 通用工具、配置路径、电机查找和状态保护 |
+| `src/motor/display.c` | help、配置、电机列表等输出 |
+| `src/motor/control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
+| `src/motor/flash.c` | 单台/全部/计划烧录和烧录配置解析 |
+| `src/motor/debug.c` | 单电机直通调试 |
+| `src/motor/terminal.c` | 命令分发、配置重载、交互终端循环 |
+| `src/motor/bxi_motor_comm.c` / `src/motor/bxi_motor_comm.h` | MIT 帧打包、特殊命令帧、回复解析和默认参数范围 |

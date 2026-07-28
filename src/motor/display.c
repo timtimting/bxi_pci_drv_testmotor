@@ -1,7 +1,7 @@
 /*
- * User-facing display and status printers for motor_console.c.
+ * User-facing display and status printers for main.c.
  *
- * Included by motor_console.c; do not add as a standalone CMake source.
+ * Included by main.c; do not add as a standalone CMake source.
  */
 
 static void console_print_help(bool chinese)
