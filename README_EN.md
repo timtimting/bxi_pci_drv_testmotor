@@ -97,6 +97,9 @@ buses, and prints responding indexes and decoded feedback.
 | `mit_disable_single` | `<index00>` | Disable one motor |
 | `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | Send one validated MIT command |
 | `stand_up` | none | Ramp KP and move every online/enabled motor to zero |
+| `reg_read` | `<index00\|all> <reg_index> [wait_ms]` | Read registers; `all` sends to every target in the default flash plan |
+| `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | Write registers; `all` sends to every target in the default flash plan; refused while any motor is known enabled |
+| `reg_save` | `<index00\|all> [wait_ms]` | Save register configs; `all` sends to every target in the default flash plan; refused while any motor is known enabled |
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | Flash one motor; omit firmware to use the default version |
 | `flash_all` | `[plan.yaml] [cycle]` | Flash multiple targets; omit plan to use the default one |
 | `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | Debug-flash one Bus/ID |
@@ -106,6 +109,11 @@ buses, and prints responding indexes and decoded feedback.
 | `config_reload` | `[path]` | Reload while power is off and motors are disabled |
 | `help` / `-h` / `?` | none | Show built-in help |
 | `quit` / `exit` / `q` | none | Exit; motor power must be off |
+
+Register commands follow the motor firmware CAN config protocol:
+`reg_write` sends `CAN_CMD_SET_CONFIG=0x11`, `reg_read` sends
+`CAN_CMD_GET_CONFIG=0x12`, and `reg_save` sends `CAN_CMD_UPDATE_CONFIGS=0x13`.
+Read/write replies print the register address and raw/uint/int/float values.
 
 ## Firmware flashing
 
@@ -164,23 +172,23 @@ command/response statistics rather than controller error-register values.
 
 ## Source layout
 
-`src/main.c` is the source entry point for the `motor_console` executable. It includes `src/motor/runtime.c` and
+`src/main.c` is the source entry point for the `motor_console` executable. It includes `src/lib/runtime.c` and
 the feature modules below in the same translation unit to reuse the existing
-bootloader, YMODEM, CAN and MIT helpers. `src/motor/runtime.c` is an internal
+bootloader, YMODEM, CAN and MIT helpers. `src/lib/runtime.c` is an internal
 implementation file and is not built as a standalone program. The `src/` root
-keeps only `main.c`; feature files live under `src/motor/` and are included by
+keeps only `main.c`; feature files live under `src/lib/` and are included by
 `main.c`, so do not add them as standalone CMake sources:
 
 | File | Area |
 |---|---|
 | `src/main.c` | Program entry point and internal module includes |
-| `src/motor/core.c` | Common helpers, config path resolution, motor lookup |
-| `src/motor/display.c` | Help text, config summary, motor list output |
-| `src/motor/control.c` | Power, scan, MIT control and CAN statistics |
-| `src/motor/flash.c` | Flash commands and flash-plan parsing |
-| `src/motor/debug.c` | Pass-through motor debug mode |
-| `src/motor/terminal.c` | Command dispatch, config reload and terminal loop |
-| `src/motor/bxi_motor_comm.c` / `src/motor/bxi_motor_comm.h` | MIT frame packing, special command frames, reply decoding and default limits |
+| `src/lib/core.c` | Common helpers, config path resolution, motor lookup |
+| `src/lib/display.c` | Help text, config summary, motor list output |
+| `src/lib/control.c` | Power, scan, MIT control and CAN statistics |
+| `src/lib/flash.c` | Flash commands and flash-plan parsing |
+| `src/lib/debug.c` | Pass-through motor debug mode |
+| `src/lib/terminal.c` | Command dispatch, config reload and terminal loop |
+| `src/lib/bxi_motor_comm.c` / `src/lib/bxi_motor_comm.h` | MIT frame packing, special command frames, reply decoding and default limits |
 
 ## Troubleshooting
 

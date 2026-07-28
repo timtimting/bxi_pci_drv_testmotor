@@ -105,17 +105,3 @@ static int console_motor_dbg(flash_state *state, int argc, char **argv)
     (void)slot;
     return console_motor_debug_loop(state, motor->bus, motor->id);
 }
-
-static int console_motor_all_dbg(flash_state *state, int argc, char **argv)
-{
-    unsigned int bus;
-    unsigned int id;
-
-    if (argc != 3 ||
-        parse_uint_arg(argv[1], &bus) != 0 ||
-        parse_uint_arg(argv[2], &id) != 0) {
-        printf("%s: motor_all_dbg <bus> <id>\n", console_text(state, "用法", "usage"));
-        return -1;
-    }
-    return console_motor_debug_loop(state, bus, id);
-}

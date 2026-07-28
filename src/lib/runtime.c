@@ -31,10 +31,11 @@
 #define DEFAULT_BOOT_TX_RETRY_DELAY_MS 2u
 
 enum {
-    CAN_CMD_REG_READ = 23,
-    CAN_CMD_REG_WRITE = 24,
-    CAN_CMD_REG_SAVE = 25,
-    CAN_CMD_REG_INFO = 26,
+    CAN_CMD_REG_WRITE = 0x11,
+    CAN_CMD_REG_READ = 0x12,
+    CAN_CMD_REG_SAVE = 0x13,
+    CAN_CMD_REG_RESET_ALL = 0x14,
+    CAN_CMD_REG_FW_VERSION = 0x15,
 };
 
 enum {
@@ -326,6 +327,15 @@ static uint32_t data_to_u32(const uint8_t *data)
            ((uint32_t)data[1] << 8) |
            ((uint32_t)data[2] << 16) |
            ((uint32_t)data[3] << 24);
+}
+
+static float data_to_float(const uint8_t *data)
+{
+    uint32_t raw = data_to_u32(data);
+    float value;
+
+    memcpy(&value, &raw, sizeof(value));
+    return value;
 }
 
 static void rx_ring_init(rx_ring *ring)
@@ -977,7 +987,8 @@ static int is_reg_cmd_id(unsigned int can_id)
     return cmd == CAN_CMD_REG_READ ||
            cmd == CAN_CMD_REG_WRITE ||
            cmd == CAN_CMD_REG_SAVE ||
-           cmd == CAN_CMD_REG_INFO;
+           cmd == CAN_CMD_REG_RESET_ALL ||
+           cmd == CAN_CMD_REG_FW_VERSION;
 }
 
 static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
@@ -997,20 +1008,36 @@ static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
            frame->flags);
     print_data(frame->data, frame->len);
 
-    if (is_reg_cmd_id(frame->can_id) && frame->len >= 8u) {
-        int32_t status = (int32_t)data_to_u32(&frame->data[0]);
-        uint32_t value = data_to_u32(&frame->data[4]);
+    if (is_reg_cmd_id(frame->can_id)) {
+        unsigned int cmd = frame->can_id >> 4;
 
-        if ((frame->can_id >> 4) == CAN_CMD_REG_INFO) {
-            printf("\nregister: count=%u writable=%u",
+        if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) &&
+            frame->len >= 8u) {
+            uint32_t reg = data_to_u32(&frame->data[0]);
+            uint32_t value = data_to_u32(&frame->data[4]);
+
+            printf("\nregister: addr=0x%08x value_raw=0x%08x uint=%u int=%d float=% .6g",
+                   reg,
+                   value,
+                   value,
+                   (int32_t)value,
+                   data_to_float(&frame->data[4]));
+        } else if (cmd == CAN_CMD_REG_SAVE && frame->len >= 4u) {
+            int32_t status = (int32_t)data_to_u32(&frame->data[0]);
+
+            printf("\nregister save: status=%d%s",
+                   status,
+                   status == 0 ? " OK" : "");
+        } else if (cmd == CAN_CMD_REG_RESET_ALL && frame->len >= 4u) {
+            int32_t status = (int32_t)data_to_u32(&frame->data[0]);
+
+            printf("\nregister reset-all: status=%d%s",
+                   status,
+                   status == 0 ? " OK" : "");
+        } else if (cmd == CAN_CMD_REG_FW_VERSION && frame->len >= 8u) {
+            printf("\nfirmware version: major=%u minor=%u",
                    data_to_u32(&frame->data[0]),
                    data_to_u32(&frame->data[4]));
-        } else {
-            printf("\nregister: status=%d raw=0x%08x uint=%u int=%d",
-                   status,
-                   value,
-                   value,
-                   (int32_t)value);
         }
     } else if (frame->len >= BXI_MOTOR_MIT_LEN && frame->data[0] == state->boot_id) {
         bxi_motor_reply reply;

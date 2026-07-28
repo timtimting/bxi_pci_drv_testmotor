@@ -129,6 +129,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_move_zero(state);
+    } else if (strcmp(cmd, "reg_read") == 0) {
+        return console_reg_command(state, argc, argv, CAN_CMD_REG_READ);
+    } else if (strcmp(cmd, "reg_write") == 0) {
+        return console_reg_command(state, argc, argv, CAN_CMD_REG_WRITE);
+    } else if (strcmp(cmd, "reg_save") == 0) {
+        return console_reg_command(state, argc, argv, CAN_CMD_REG_SAVE);
     } else if (strcmp(cmd, "flash_single") == 0) {
         return console_flash(state, argc, argv, false);
     } else if (strcmp(cmd, "flash_all") == 0) {
@@ -137,8 +143,6 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_flash_debug(state, argc, argv);
     } else if (strcmp(cmd, "motor_dbg") == 0) {
         return console_motor_dbg(state, argc, argv);
-    } else if (strcmp(cmd, "motor_all_dbg") == 0) {
-        return console_motor_all_dbg(state, argc, argv);
     } else if (strcmp(cmd, "can_status") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "reset") != 0)) {
             printf("%s: can_status [reset]\n", console_text(state, "用法", "usage"));

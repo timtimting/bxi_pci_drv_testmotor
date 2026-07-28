@@ -26,6 +26,12 @@ static void console_record_timeouts(flash_state *state,
     }
 }
 
+static int load_flash_plan_config(const char *path, flash_plan_config *plan);
+static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
+                                                       unsigned int bus,
+                                                       unsigned int id,
+                                                       size_t *slot);
+
 static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
 {
     unsigned int before[MOTOR_MAP_MAX];
@@ -564,4 +570,180 @@ static bool console_any_enabled(const flash_state *state)
         }
     }
     return false;
+}
+
+static int console_reg_send_one(flash_state *state,
+                                const motor_map_entry *motor,
+                                unsigned int cmd,
+                                unsigned int reg,
+                                unsigned int value,
+                                unsigned int wait_ms)
+{
+    unsigned int frame_id;
+    uint8_t data[8] = {0u};
+    int ret;
+
+    console_use_motor(state, motor);
+    frame_id = (unsigned int)reg_frame_id(state, cmd);
+    if (cmd == CAN_CMD_REG_READ) {
+        u32_to_data(reg, data);
+        printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
+               console_text(state, "读取寄存器", "reading register"),
+               motor->index, motor->bus, motor->id, reg);
+        ret = send_debug_packet(state, frame_id, data, 4u);
+    } else if (cmd == CAN_CMD_REG_WRITE) {
+        u32_to_data(reg, &data[0]);
+        u32_to_data(value, &data[4]);
+        printf("%s index=%02u bus=%u id=%u reg=0x%08x value=0x%08x\n",
+               console_text(state, "写入寄存器", "writing register"),
+               motor->index, motor->bus, motor->id, reg, value);
+        ret = send_debug_packet(state, frame_id, data, 8u);
+    } else {
+        printf("%s index=%02u bus=%u id=%u\n",
+               console_text(state, "保存寄存器配置", "saving register config"),
+               motor->index, motor->bus, motor->id);
+        ret = send_debug_packet(state, frame_id, data, 4u);
+    }
+
+    if (ret == 0) {
+        ret = wait_debug_reply(state, frame_id, wait_ms);
+    }
+    return ret;
+}
+
+static int console_reg_command_all(flash_state *state,
+                                   unsigned int cmd,
+                                   unsigned int reg,
+                                   unsigned int value,
+                                   unsigned int wait_ms)
+{
+    flash_plan_config plan;
+    unsigned int old_bus = state->bus;
+    unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
+    size_t i;
+    size_t succeeded = 0u;
+    size_t failed = 0u;
+
+    if (load_flash_plan_config(DEFAULT_FLASH_PLAN, &plan) != 0) {
+        return -1;
+    }
+
+    state->show_can_output = false;
+    printf("%s plan=%s total=%zu start\n",
+           console_text(state, "批量寄存器命令", "register batch"),
+           DEFAULT_FLASH_PLAN, plan.target_count);
+    for (i = 0u; i < plan.target_count && !stop_requested; i++) {
+        const flash_plan_target *target = &plan.targets[i];
+        const motor_map_entry *motor;
+        motor_map_entry temporary_motor;
+
+        motor = console_motor_by_bus_id(state, target->bus, target->id, NULL);
+        if (motor == NULL) {
+            memset(&temporary_motor, 0, sizeof(temporary_motor));
+            temporary_motor.index = target->index;
+            temporary_motor.bus = target->bus;
+            temporary_motor.id = target->id;
+            temporary_motor.line_no = target->line_no;
+            strncpy(temporary_motor.type, target->version,
+                    sizeof(temporary_motor.type) - 1u);
+            motor = &temporary_motor;
+        }
+
+        if (console_reg_send_one(state, motor, cmd, reg, value, wait_ms) == 0) {
+            succeeded++;
+        } else {
+            failed++;
+        }
+    }
+    state->show_can_output = old_monitor;
+    state->bus = old_bus;
+    set_target_id(state, old_id);
+
+    printf("%s total=%zu success=%zu failed=%zu%s\n",
+           console_text(state, "批量寄存器完成", "register batch done"),
+           plan.target_count, succeeded, failed,
+           stop_requested ? console_text(state, " interrupted", " interrupted") : "");
+    return failed == 0u && succeeded == plan.target_count ? 0 : -1;
+}
+
+static int console_reg_command(flash_state *state, int argc, char **argv, unsigned int cmd)
+{
+    unsigned int index;
+    unsigned int reg = 0u;
+    unsigned int value = 0u;
+    unsigned int wait_ms = 1000u;
+    unsigned int old_bus;
+    unsigned int old_id;
+    size_t slot;
+    const motor_map_entry *motor;
+    int ret;
+    bool all_targets = false;
+
+    if (cmd == CAN_CMD_REG_READ) {
+        if (argc < 3 || argc > 4 ||
+            parse_uint_arg(argv[2], &reg) != 0 ||
+            (argc == 4 && parse_uint_arg(argv[3], &wait_ms) != 0)) {
+            printf("%s: reg_read <index00|all> <reg_index> [wait_ms]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+    } else if (cmd == CAN_CMD_REG_WRITE) {
+        if (argc < 4 || argc > 5 ||
+            parse_uint_arg(argv[2], &reg) != 0 ||
+            parse_uint_arg(argv[3], &value) != 0 ||
+            (argc == 5 && parse_uint_arg(argv[4], &wait_ms) != 0)) {
+            printf("%s: reg_write <index00|all> <reg_index> <value> [wait_ms]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+    } else if (cmd == CAN_CMD_REG_SAVE) {
+        if (argc < 2 || argc > 3 ||
+            (argc == 3 && parse_uint_arg(argv[2], &wait_ms) != 0)) {
+            printf("%s: reg_save <index00|all> [wait_ms]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+    } else {
+        return -1;
+    }
+    if (strcmp(argv[1], "all") == 0) {
+        all_targets = true;
+    } else if (console_parse_index_arg(argv[1], &index) != 0) {
+        printf("%s: %s\n",
+               console_text(state, "无效的电机序号，使用 00..99 或 all",
+                            "invalid motor index, use 00..99 or all"),
+               argv[1]);
+        return -1;
+    }
+
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+    if ((cmd == CAN_CMD_REG_WRITE || cmd == CAN_CMD_REG_SAVE) &&
+        console_any_enabled(state)) {
+        printf("%s\n", console_text(state,
+               "寄存器写入/保存被拒绝：存在已知使能电机，请先失能",
+               "register write/save refused: disable known enabled motors first"));
+        return -1;
+    }
+    if (all_targets) {
+        return console_reg_command_all(state, cmd, reg, value, wait_ms);
+    }
+
+    motor = console_motor_by_index(state, index, &slot);
+    if (motor == NULL) {
+        printf("%s: %02u\n",
+               console_text(state, "未知的电机序号", "unknown motor index"),
+               index);
+        return -1;
+    }
+
+    old_bus = state->bus;
+    old_id = state->boot_id;
+    ret = console_reg_send_one(state, motor, cmd, reg, value, wait_ms);
+    state->bus = old_bus;
+    set_target_id(state, old_id);
+    (void)slot;
+    return ret;
 }

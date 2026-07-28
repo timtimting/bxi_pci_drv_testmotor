@@ -3,11 +3,11 @@ project(bxi_pci_drv_motor_console)
 
 add_compile_options(-Wall -fdiagnostics-color=auto -fPIC -Wno-unused-function)
 
-include_directories(./src ./src/motor ./lib)
+include_directories(./src ./src/lib ./lib)
 
 set(BXI_PCI_CTL_LIB "${CMAKE_SOURCE_DIR}/lib/libbxi_pci_drv.a")
 
-add_executable(motor_console ./src/main.c ./src/motor/bxi_motor_comm.c)
+add_executable(motor_console ./src/main.c ./src/lib/bxi_motor_comm.c)
 
 target_link_libraries(motor_console
   PRIVATE

@@ -475,6 +475,14 @@ config_reload /path/to/config.yaml
 | `mit_disable_single` | `<index00>` | 失能单台电机 |
 | `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 给单台电机发送一次 MIT 控制帧 |
 | `stand_up` | 无 | 全部在线且已使能电机软启动回零 |
+| `reg_read` | `<index00\|all> <reg_index> [wait_ms]` | 读取寄存器；`all` 按默认烧录配置逐台发送 |
+| `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | 写入寄存器；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
+| `reg_save` | `<index00\|all> [wait_ms]` | 保存寄存器配置；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
+
+寄存器命令按底层电机程序的 CAN 配置协议发送：
+`reg_write` 使用 `CAN_CMD_SET_CONFIG=0x11`，`reg_read` 使用
+`CAN_CMD_GET_CONFIG=0x12`，`reg_save` 使用 `CAN_CMD_UPDATE_CONFIGS=0x13`。
+读写回复会打印寄存器地址和 raw/uint/int/float 四种值。
 
 ### 11.3 烧录
 
@@ -509,7 +517,6 @@ flash_all config/flash_plan_debug.yaml
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `motor_dbg` | `<index00>` | 按 index 进入单电机直通调试；所有按键直接发给电机，反引号 `` ` `` 退出 |
-| `motor_all_dbg` | `<bus> <id>` | 按 bus/id 进入单电机直通调试 |
 | `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
 | `config_show` | 无 | 显示当前终端配置和从默认烧录配置加载出的电机表 |
 | `config_reload` | `[path]` | 下电状态重新加载终端配置 |
@@ -518,18 +525,18 @@ flash_all config/flash_plan_debug.yaml
 ## 12. 源码结构
 
 `motor_console` 的源码主入口在 `src/main.c`。为了复用 Boot/YMODEM/MIT
-底层实现，它仍然在同一个编译单元内包含 `src/motor/runtime.c` 和下面这些功能模块。
-`src/motor/runtime.c` 是 `motor_console` 的内部实现文件，不作为独立程序构建。
-`src/` 根目录只保留入口文件 `main.c`，其他功能文件放在 `src/motor/` 下，由
+底层实现，它仍然在同一个编译单元内包含 `src/lib/runtime.c` 和下面这些功能模块。
+`src/lib/runtime.c` 是 `motor_console` 的内部实现文件，不作为独立程序构建。
+`src/` 根目录只保留入口文件 `main.c`，其他功能文件放在 `src/lib/` 下，由
 `main.c` include，不要单独加入 CMake 编译：
 
 | 文件 | 内容 |
 |---|---|
 | `src/main.c` | 程序入口、统一 include 内部模块 |
-| `src/motor/core.c` | 通用工具、配置路径、电机查找和状态保护 |
-| `src/motor/display.c` | help、配置、电机列表等输出 |
-| `src/motor/control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
-| `src/motor/flash.c` | 单台/全部/计划烧录和烧录配置解析 |
-| `src/motor/debug.c` | 单电机直通调试 |
-| `src/motor/terminal.c` | 命令分发、配置重载、交互终端循环 |
-| `src/motor/bxi_motor_comm.c` / `src/motor/bxi_motor_comm.h` | MIT 帧打包、特殊命令帧、回复解析和默认参数范围 |
+| `src/lib/core.c` | 通用工具、配置路径、电机查找和状态保护 |
+| `src/lib/display.c` | help、配置、电机列表等输出 |
+| `src/lib/control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
+| `src/lib/flash.c` | 单台/全部/计划烧录和烧录配置解析 |
+| `src/lib/debug.c` | 单电机直通调试 |
+| `src/lib/terminal.c` | 命令分发、配置重载、交互终端循环 |
+| `src/lib/bxi_motor_comm.c` / `src/lib/bxi_motor_comm.h` | MIT 帧打包、特殊命令帧、回复解析和默认参数范围 |

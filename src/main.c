@@ -2,10 +2,10 @@
  * Unified interactive motor service console.
  *
  * Reuse the internal terminal editor, motor protocol, boot-menu and YMODEM
- * implementation from motor/runtime.c.
+ * implementation from lib/runtime.c.
  */
 #define main runtime_embedded_main
-#include "motor/runtime.c"
+#include "lib/runtime.c"
 #undef main
 
 enum {
@@ -39,18 +39,19 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
+    "reg_read", "reg_write", "reg_save",
     "flash_single", "flash_all", "flash_debug",
-    "motor_dbg", "motor_all_dbg",
+    "motor_dbg",
     "can_status", "can_monitor",
     "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",
 };
 
-#include "motor/core.c"
-#include "motor/display.c"
-#include "motor/control.c"
-#include "motor/flash.c"
-#include "motor/debug.c"
-#include "motor/terminal.c"
+#include "lib/core.c"
+#include "lib/display.c"
+#include "lib/control.c"
+#include "lib/flash.c"
+#include "lib/debug.c"
+#include "lib/terminal.c"
 
 int main(int argc, char **argv)
 {

@@ -32,6 +32,12 @@ static void console_print_help(bool chinese)
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
+        printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
+        printf("      读取寄存器；all 按默认烧录配置逐台发送。\n");
+        printf("  reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+        printf("      写入寄存器；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
+        printf("  reg_save <index00|all> [wait_ms]\n");
+        printf("      保存寄存器配置；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
         printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
         printf("      烧录单台电机；不写固件时使用默认烧录配置里的 version。\n");
         printf("  flash_all [plan.yaml] [cycle]\n");
@@ -81,6 +87,12 @@ static void console_print_help(bool chinese)
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
+    printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
+    printf("      Read registers. all sends to every target in the default flash plan.\n");
+    printf("  reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+    printf("      Write registers. all uses the default flash plan. Refused while any motor is enabled.\n");
+    printf("  reg_save <index00|all> [wait_ms]\n");
+    printf("      Save register configs. all uses the default flash plan. Refused while any motor is enabled.\n");
     printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
     printf("      Flash one motor. Without firmware, use the version from the default plan.\n");
     printf("  flash_all [plan.yaml] [cycle]\n");
