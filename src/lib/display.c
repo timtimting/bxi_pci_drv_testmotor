@@ -19,7 +19,7 @@ static void console_print_help(bool chinese)
         printf("  motor_scan [timeout_ms]\n");
         printf("      扫描所有 CAN 总线上的配置电机，不改变使能状态。\n");
         printf("  motor_list\n");
-        printf("      显示序号、Bus、CAN ID、型号、在线/使能状态和最后一次反馈。\n");
+        printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
         printf("  mit_zero_set\n");
         printf("      给全部电机发送 MIT 零位校准帧；要求电机已上电并处于失能状态。\n");
         printf("  mit_zero_set_single <index00>\n");
@@ -72,7 +72,7 @@ static void console_print_help(bool chinese)
     printf("  motor_scan [timeout_ms]\n");
     printf("      Probe every configured motor on all CAN buses without changing enable state.\n");
     printf("  motor_list\n");
-    printf("      Show index, bus, CAN id, type, online/enabled state and last feedback.\n");
+    printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
     printf("  mit_zero_set\n");
     printf("      Send the MIT zero-calibration frame to every configured motor. Motors must\n");
     printf("      be powered and disabled.\n");
@@ -169,6 +169,7 @@ static void console_print_config(const flash_state *state)
 
 static void console_print_motors(const flash_state *state)
 {
+    uint64_t now = time_us();
     size_t i;
 
     printf("%s=%s  %s=%zu\n",
@@ -178,26 +179,35 @@ static void console_print_motors(const flash_state *state)
                console_text(state, "已下电", "OFF"),
            console_text(state, "配置电机数", "configured motors"),
            state->config.entry_count);
+    if (state->config.chinese_ui) {
+        printf("index bus id  type state      在线 使能 rx     age_ms   位置        速度        力矩        MOS温度 电机温度\n");
+    } else {
+        printf("index bus id  type state      online enabled rx     age_ms   position    velocity    torque      mos_C  motor_C\n");
+    }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
         const motor_runtime *r = &state->motors[i];
 
-        printf("  index=%02u bus=%u id=%-2u type=%-4s state=%-10s %s=%-3s %s=%-3s rx=%u",
+        if (r->last_reply_us == 0u) {
+            printf("%02u    %u   %-2u  %-4s %-10s %-6s %-7s %-6u --       --          --          --          --     --\n",
+                   m->index, m->bus, m->id, m->type,
+                   motor_runtime_state(r),
+                   r->online ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
+                   r->enabled ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
+                   r->rx_count);
+            continue;
+        }
+        printf("%02u    %u   %-2u  %-4s %-10s %-6s %-7s %-6u %-8llu % .5f  % .5f  % .5f  % .1f  % .1f\n",
                m->index, m->bus, m->id, m->type,
                motor_runtime_state(r),
-               console_text(state, "在线", "online"),
                r->online ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-               console_text(state, "使能", "enabled"),
                r->enabled ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-               r->rx_count);
-        if (r->last_reply_us != 0u) {
-            printf(" pos=% .4f vel=% .4f torque=% .4f temp=% .1f/% .1fC",
-                   r->last_reply.position,
-                   r->last_reply.velocity,
-                   r->last_reply.torque,
-                   r->last_reply.mos_temperature,
-                   r->last_reply.motor_temperature);
-        }
-        printf("\n");
+               r->rx_count,
+               (unsigned long long)((now - r->last_reply_us) / 1000ULL),
+               r->last_reply.position,
+               r->last_reply.velocity,
+               r->last_reply.torque,
+               r->last_reply.mos_temperature,
+               r->last_reply.motor_temperature);
     }
 }
