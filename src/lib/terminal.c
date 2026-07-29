@@ -153,28 +153,6 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_can_status(state, argc == 2);
-    } else if (strcmp(cmd, "can_monitor") == 0) {
-        bool enabled;
-        if (argc != 2 || parse_on_off(argv[1], &enabled) != 0) {
-            printf("%s: can_monitor on|off\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        state->show_can_output = enabled;
-        state->show_motor_input = enabled;
-        printf("%s %s\n", console_text(state, "CAN 实时输出", "CAN live output"),
-               enabled ? "ON" : "OFF");
-    } else if (strcmp(cmd, "config_show") == 0) {
-        if (argc != 1) {
-            printf("%s: config_show\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        console_print_config(state);
-    } else if (strcmp(cmd, "config_reload") == 0) {
-        if (argc > 2) {
-            printf("%s: config_reload [path]\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_reload_config(state, argc == 2 ? argv[1] : state->config_path);
     } else if (strcmp(cmd, "q") == 0 ||
                strcmp(cmd, "qq") == 0 ||
                strcmp(cmd, "quit") == 0 ||

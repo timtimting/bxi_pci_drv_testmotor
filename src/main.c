@@ -40,8 +40,8 @@ static const char *const console_command_words[] = {
     "reg_read", "reg_write", "reg_save",
     "flash_single", "flash_all", "flash_debug",
     "motor_dbg",
-    "can_status", "can_monitor",
-    "config_show", "config_reload", "language", "lang", "quit", "exit", "q", "qq",
+    "can_status",
+    "language", "lang", "quit", "exit", "q", "qq",
 };
 
 #include "lib/core.c"

@@ -104,9 +104,6 @@ buses, and prints responding indexes and decoded feedback.
 | `flash_all` | `[plan.yaml] [cycle]` | Flash multiple targets; omit plan to use the default one |
 | `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | Debug-flash one Bus/ID |
 | `can_status` | `[reset]` | Show or reset per-bus software statistics |
-| `can_monitor` | `on\|off` | Toggle live decoded CAN output |
-| `config_show` | none | Show the active configuration summary |
-| `config_reload` | `[path]` | Reload while power is off and motors are disabled |
 | `help` / `-h` / `?` | none | Show built-in help |
 | `quit` / `exit` / `q` | none | Exit; motor power must be off |
 
@@ -162,7 +159,6 @@ All selected targets and files are checked before the first motor is modified.
 ```text
 motor[POWER-ON]> can_status
 motor[POWER-ON]> can_status reset
-motor[POWER-ON]> can_monitor on
 ```
 
 Statistics include TX/RX counts, send failures, expected and matched replies,

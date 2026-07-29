@@ -49,10 +49,6 @@ static void console_print_help(bool chinese)
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
-        printf("  can_monitor on|off\n");
-        printf("      开启或关闭实时 CAN 输出和电机反馈解析。\n");
-        printf("  config_show | config_reload [path]\n");
-        printf("      显示或重载 YAML 配置；电机上电或使能时禁止重载。\n");
         printf("  quit | exit | q | qq\n");
         printf("      退出终端；电机电源开启时必须先执行 `power_off`。\n");
         printf("安全限制：烧录固件名和 version 只能在 firmware_dir 内解析，不接受绝对路径、/ 或 ..。\n");
@@ -105,11 +101,6 @@ static void console_print_help(bool chinese)
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
-    printf("  can_monitor on|off\n");
-    printf("      Enable/disable immediate decoded motor/CAN output while at the prompt.\n");
-    printf("  config_show | config_reload [path]\n");
-    printf("      Show or reload the unified YAML configuration. Reload is refused while\n");
-    printf("      motor power is on or motors are enabled.\n");
     printf("  quit | exit | q | qq\n");
     printf("      Exit. `power_off` is required first while motor power is on.\n");
     printf("Safety: firmware names and versions are resolved only inside firmware_dir; absolute paths, / and .. are rejected.\n");
@@ -170,6 +161,7 @@ static void console_print_config(const flash_state *state)
 static void console_print_motors(const flash_state *state)
 {
     uint64_t now = time_us();
+    unsigned int last_bus = CANFD_DEVICE_NUM;
     size_t i;
 
     printf("%s=%s  %s=%zu\n",
@@ -180,29 +172,36 @@ static void console_print_motors(const flash_state *state)
            console_text(state, "配置电机数", "configured motors"),
            state->config.entry_count);
     if (state->config.chinese_ui) {
-        printf("index bus id  type state      在线 使能 rx     age_ms   位置        速度        力矩        MOS温度 电机温度\n");
+        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     mos(C) motor(C)\n");
     } else {
-        printf("index bus id  type state      online enabled rx     age_ms   position    velocity    torque      mos_C  motor_C\n");
+        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     mos(C) motor(C)\n");
     }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
         const motor_runtime *r = &state->motors[i];
+        const char *state_label = strcmp(motor_runtime_state(r), "unknown") == 0 ?
+                                  "--" : motor_runtime_state(r);
+        const char *online = r->online ? "Y" : "N";
+        const char *enabled = r->enabled ? "Y" : "N";
+
+        if (i != 0u && m->bus != last_bus) {
+            printf("\n");
+        }
+        last_bus = m->bus;
 
         if (r->last_reply_us == 0u) {
-            printf("%02u    %u   %-2u  %-4s %-10s %-6s %-7s %-6u --       --          --          --          --     --\n",
+            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s --      --         --         --         --     --\n",
                    m->index, m->bus, m->id, m->type,
-                   motor_runtime_state(r),
-                   r->online ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-                   r->enabled ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-                   r->rx_count);
+                   state_label,
+                   online,
+                   enabled);
             continue;
         }
-        printf("%02u    %u   %-2u  %-4s %-10s %-6s %-7s %-6u %-8llu % .5f  % .5f  % .5f  % .1f  % .1f\n",
+        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-7llu % .5f  % .5f  % .5f  % .1f  % .1f\n",
                m->index, m->bus, m->id, m->type,
-               motor_runtime_state(r),
-               r->online ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-               r->enabled ? console_text(state, "是", "yes") : console_text(state, "否", "no"),
-               r->rx_count,
+               state_label,
+               online,
+               enabled,
                (unsigned long long)((now - r->last_reply_us) / 1000ULL),
                r->last_reply.position,
                r->last_reply.velocity,

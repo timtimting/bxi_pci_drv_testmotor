@@ -3432,11 +3432,6 @@ static const char *const *completion_words_for_line(const char *line, size_t len
         return power_words;
     }
     if (custom_command_words != NULL &&
-        strcmp(first, "can_monitor") == 0 && tokens_before == 1u) {
-        *count = sizeof(on_off_words) / sizeof(on_off_words[0]);
-        return on_off_words;
-    }
-    if (custom_command_words != NULL &&
         strcmp(first, "can_status") == 0 && tokens_before == 1u) {
         *count = sizeof(reset_words) / sizeof(reset_words[0]);
         return reset_words;

@@ -242,17 +242,10 @@ quit
 
 ## 8. CAN 输出和统计
 
-实时输出默认由配置控制：
+实时输出由配置文件控制：
 
 ```yaml
 live_output: on
-```
-
-终端内切换：
-
-```text
-can_monitor on
-can_monitor off
 ```
 
 MIT 回复会解析并显示：
@@ -414,19 +407,6 @@ flash_all config/flash_plan_debug.yaml cycle
 config/motor_console.yaml
 ```
 
-显示当前配置：
-
-```text
-config_show
-```
-
-下电状态下重新加载：
-
-```text
-config_reload
-config_reload /path/to/config.yaml
-```
-
 配置包含：
 
 - 界面语言。
@@ -517,9 +497,6 @@ flash_all config/flash_plan_debug.yaml
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `motor_dbg` | `<index00>` | 按 index 进入单电机直通调试；所有按键直接发给电机，反引号 `` ` `` 退出 |
-| `can_monitor` | `on\|off` | 开关实时 CAN 输出 |
-| `config_show` | 无 | 显示当前终端配置和从默认烧录配置加载出的电机表 |
-| `config_reload` | `[path]` | 下电状态重新加载终端配置 |
 | `language` / `lang` | `zh\|en` | 切换中英文 |
 
 ## 12. 源码结构
