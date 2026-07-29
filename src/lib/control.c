@@ -358,8 +358,8 @@ static int console_power_on(flash_state *state)
     passive_found = console_print_passive_power_on_scan(state, before);
     if (passive_found != 0u) {
         console_can_warmup(state,
-                           CONSOLE_CAN_WARMUP_DEFAULT_COUNT,
-                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS,
+                           state->config.can_warmup_count,
+                           state->config.can_warmup_period_ms,
                            true);
         state->show_can_output = old_monitor;
         state->show_motor_input = old_input;
@@ -372,8 +372,8 @@ static int console_power_on(flash_state *state)
     ret = console_probe_motors(state, state->config.scan_timeout_ms);
     if (ret == 0) {
         console_can_warmup(state,
-                           CONSOLE_CAN_WARMUP_DEFAULT_COUNT,
-                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS,
+                           state->config.can_warmup_count,
+                           state->config.can_warmup_period_ms,
                            true);
     }
     state->show_can_output = old_monitor;

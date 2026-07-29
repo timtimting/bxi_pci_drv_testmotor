@@ -121,6 +121,7 @@ static void console_print_config(const flash_state *state)
 
     printf("%s=%s  %s=%s  %s=%zu  home_kp=%g home_kd=%g "
            "soft_start_ms=%u scan_timeout_ms=%u power_on_wait_ms=%u "
+           "can_warmup_count=%u can_warmup_period_ms=%u "
            "mit_canfd=%s live_output=%s language=%s\n",
            console_text(state, "配置文件", "config"),
            state->config_path,
@@ -133,6 +134,8 @@ static void console_print_config(const flash_state *state)
            state->config.home_soft_start_ms,
            state->config.scan_timeout_ms,
            state->config.power_on_wait_ms,
+           state->config.can_warmup_count,
+           state->config.can_warmup_period_ms,
            state->config.mit_canfd ? "on" : "off",
            state->config.live_output ? "on" : "off",
            state->config.chinese_ui ? "zh" : "en");

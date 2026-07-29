@@ -132,6 +132,8 @@ typedef struct
     unsigned int home_soft_start_ms;
     unsigned int scan_timeout_ms;
     unsigned int power_on_wait_ms;
+    unsigned int can_warmup_count;
+    unsigned int can_warmup_period_ms;
     char state_boot_pattern[STATE_PATTERN_LEN];
     char state_motor_pattern[STATE_PATTERN_LEN];
     char state_no_app_pattern[STATE_PATTERN_LEN];
@@ -861,7 +863,8 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
             }
         }
     }
-    if (state->show_can_output && !decoded_motor && !decoded_boot) {
+    if (state->show_can_output && !decoded_motor && !decoded_boot &&
+        !is_reg_cmd_id(frame.can_id)) {
         unsigned int i;
 
         flockfile(stdout);
@@ -999,9 +1002,184 @@ static int is_reg_cmd_id(unsigned int can_id)
            cmd == CAN_CMD_REG_FW_VERSION;
 }
 
+typedef enum
+{
+    REG_VALUE_INT = 0,
+    REG_VALUE_UINT,
+    REG_VALUE_FLOAT,
+    REG_VALUE_BOOL,
+    REG_VALUE_UNKNOWN,
+} reg_value_type;
+
+typedef struct
+{
+    uint32_t addr;
+    const char *name;
+    reg_value_type type;
+} reg_config_meta;
+
+static const reg_config_meta reg_config_table[] = {
+    {0x01u, "motor_pole_pairs", REG_VALUE_INT},
+    {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
+    {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
+    {0x04u, "inertia", REG_VALUE_FLOAT},
+    {0x05u, "encoder_dir_rev", REG_VALUE_INT},
+    {0x06u, "encoder_offset", REG_VALUE_INT},
+    {0x07u, "calib_valid", REG_VALUE_INT},
+    {0x08u, "calib_current", REG_VALUE_FLOAT},
+    {0x09u, "calib_max_voltage", REG_VALUE_FLOAT},
+    {0x0au, "control_mode", REG_VALUE_INT},
+    {0x0bu, "current_ramp_rate", REG_VALUE_FLOAT},
+    {0x0cu, "vel_ramp_rate", REG_VALUE_FLOAT},
+    {0x0du, "traj_vel", REG_VALUE_FLOAT},
+    {0x0eu, "traj_accel", REG_VALUE_FLOAT},
+    {0x0fu, "traj_decel", REG_VALUE_FLOAT},
+    {0x10u, "pos_gain", REG_VALUE_FLOAT},
+    {0x11u, "vel_gain", REG_VALUE_FLOAT},
+    {0x12u, "vel_integrator_gain", REG_VALUE_FLOAT},
+    {0x13u, "vel_limit", REG_VALUE_FLOAT},
+    {0x14u, "current_limit", REG_VALUE_FLOAT},
+    {0x15u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
+    {0x16u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
+    {0x17u, "current_ctrl_bandwidth", REG_VALUE_INT},
+    {0x18u, "protect_under_voltage", REG_VALUE_FLOAT},
+    {0x19u, "protect_over_voltage", REG_VALUE_FLOAT},
+    {0x1au, "protect_over_speed", REG_VALUE_FLOAT},
+    {0x1bu, "can_id", REG_VALUE_INT},
+    {0x1cu, "can_timeout_ms", REG_VALUE_INT},
+    {0x1du, "can_sync_target_enable", REG_VALUE_BOOL},
+    {0x1eu, "torquet_limit", REG_VALUE_FLOAT},
+    {0x1fu, "protect_temperature_low", REG_VALUE_FLOAT},
+    {0x20u, "protect_temperature_high", REG_VALUE_FLOAT},
+    {0x21u, "protect_i_abc_error", REG_VALUE_FLOAT},
+    {0x22u, "can_mode_switch", REG_VALUE_BOOL},
+    {0x23u, "master_id", REG_VALUE_INT},
+    {0x24u, "field_weaken_mode", REG_VALUE_BOOL},
+    {0x25u, "sync_boot_id_flag", REG_VALUE_BOOL},
+    {0x26u, "current_test_enable", REG_VALUE_BOOL},
+    {0x27u, "mit_mode", REG_VALUE_BOOL},
+    {0x28u, "max_pos", REG_VALUE_FLOAT},
+    {0x29u, "max_vel", REG_VALUE_FLOAT},
+    {0x2au, "max_tor", REG_VALUE_FLOAT},
+    {0x2bu, "kp_max", REG_VALUE_FLOAT},
+    {0x2cu, "kd_max", REG_VALUE_FLOAT},
+    {0x2du, "usr_enc1_offset", REG_VALUE_INT},
+    {0x2eu, "usr_enc2_offset", REG_VALUE_FLOAT},
+    {0x2fu, "enco_calib_valid", REG_VALUE_INT},
+    {0x30u, "config_version", REG_VALUE_UINT},
+    {0x31u, "reduction_ratio", REG_VALUE_FLOAT},
+    {0xf0u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
+};
+
+static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
+{
+    size_t i;
+
+    for (i = 0u; i < sizeof(reg_config_table) / sizeof(reg_config_table[0]); i++) {
+        if (reg_config_table[i].addr == addr) {
+            return &reg_config_table[i];
+        }
+    }
+    return NULL;
+}
+
+static const char *reg_cmd_name(unsigned int cmd)
+{
+    if (cmd == CAN_CMD_REG_WRITE) {
+        return "write";
+    }
+    if (cmd == CAN_CMD_REG_READ) {
+        return "read";
+    }
+    if (cmd == CAN_CMD_REG_SAVE) {
+        return "save";
+    }
+    if (cmd == CAN_CMD_REG_RESET_ALL) {
+        return "reset_all";
+    }
+    if (cmd == CAN_CMD_REG_FW_VERSION) {
+        return "fw_version";
+    }
+    return "unknown";
+}
+
+static void print_register_value(uint32_t value, reg_value_type type)
+{
+    if (type == REG_VALUE_FLOAT) {
+        printf("% .6g", data_to_float((const uint8_t *)&value));
+    } else if (type == REG_VALUE_UINT) {
+        printf("%u", value);
+    } else if (type == REG_VALUE_BOOL) {
+        printf("%u", value != 0u ? 1u : 0u);
+    } else if (type == REG_VALUE_INT) {
+        printf("%d", (int32_t)value);
+    } else {
+        printf("raw=0x%08x", value);
+    }
+}
+
+static int print_register_debug_frame(flash_state *state, const rx_can_frame *frame)
+{
+    unsigned int cmd = frame->can_id >> 4;
+    unsigned int node_id = frame->can_id & 0x0fu;
+    const motor_map_entry *entry = find_motor_by_bus_id(state, frame->bus, node_id);
+
+    if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) && frame->len >= 8u) {
+        uint32_t reg = data_to_u32(&frame->data[0]);
+        uint32_t value = data_to_u32(&frame->data[4]);
+        const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+
+        if (entry != NULL) {
+            printf("\n%s index=%02u reg=0x%02x",
+                   state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]",
+                   entry->index,
+                   reg);
+        } else {
+            printf("\n%s index=?? reg=0x%02x",
+                   state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]",
+                   reg);
+        }
+        if (meta != NULL) {
+            printf(" %s", meta->name);
+        }
+        printf(" value=");
+        print_register_value(value, meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
+        printf("\n  bus=%u id=%u can_id=0x%03x cmd=%s\n",
+               frame->bus, node_id, frame->can_id, reg_cmd_name(cmd));
+        fflush(stdout);
+        return 1;
+    }
+    if (cmd == CAN_CMD_REG_SAVE && frame->len >= 4u) {
+        int32_t status = (int32_t)data_to_u32(&frame->data[0]);
+
+        if (entry != NULL) {
+            printf("\n%s index=%02u status=%d%s\n",
+                   state->config.chinese_ui ? "[寄存器保存]" : "[REGISTER SAVE]",
+                   entry->index,
+                   status,
+                   status == 0 ? " OK" : "");
+        } else {
+            printf("\n%s index=?? status=%d%s\n",
+                   state->config.chinese_ui ? "[寄存器保存]" : "[REGISTER SAVE]",
+                   status,
+                   status == 0 ? " OK" : "");
+        }
+        printf("  bus=%u id=%u can_id=0x%03x cmd=%s\n",
+               frame->bus, node_id, frame->can_id, reg_cmd_name(cmd));
+        fflush(stdout);
+        return 1;
+    }
+    return 0;
+}
+
 static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
 {
     const char *label = "CAN REPLY";
+
+    if (is_reg_cmd_id(frame->can_id) &&
+        print_register_debug_frame(state, frame)) {
+        return;
+    }
 
     if (is_reg_cmd_id(frame->can_id)) {
         label = "REGISTER REPLY";
@@ -2119,6 +2297,18 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+        } else if (strcmp(key, "can_warmup_count") == 0) {
+            if (parse_uint_arg(value, &config->can_warmup_count) != 0) {
+                fprintf(stderr, "%s:%u: invalid can_warmup_count\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
+        } else if (strcmp(key, "can_warmup_period_ms") == 0) {
+            if (parse_uint_arg(value, &config->can_warmup_period_ms) != 0) {
+                fprintf(stderr, "%s:%u: invalid can_warmup_period_ms\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
         } else if (strcmp(key, "state_boot_pattern") == 0) {
             snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "%s", value);
         } else if (strcmp(key, "state_motor_pattern") == 0) {
@@ -2281,6 +2471,8 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->home_soft_start_ms = 2000u;
     config->scan_timeout_ms = 1000u;
     config->power_on_wait_ms = 2000u;
+    config->can_warmup_count = 260u;
+    config->can_warmup_period_ms = 10u;
     snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "boot...");
     snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "stm run");
     snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "no useful app");
@@ -2343,7 +2535,8 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     if (ret == 0 && (config->scan_timeout_ms == 0u ||
                      config->scan_timeout_ms > 60000u ||
                      config->home_soft_start_ms > 60000u ||
-                     config->power_on_wait_ms > 60000u)) {
+                     config->power_on_wait_ms > 60000u ||
+                     config->can_warmup_period_ms > 60000u)) {
         fprintf(stderr, "%s: timing values must be in the supported 0..60000 ms range\n",
                 map_path);
         return -1;

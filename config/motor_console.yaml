@@ -16,6 +16,11 @@ home_soft_start_ms: 2000
 scan_timeout_ms: 1000
 power_on_wait_ms: 2000
 
+# 上电后只向已确认在线电机发送零 MIT 帧，用成功 ACK 让 CAN TX error 逐步恢复。
+# 如果上下电后仍残留少量 can[x] tx error cnt，可适当增大 can_warmup_count。
+can_warmup_count: 260
+can_warmup_period_ms: 10
+
 # 电机输出状态识别关键字。后续如果固件输出变化，可只改这里。
 state_boot_pattern: boot...
 state_motor_pattern: stm run
