@@ -486,10 +486,20 @@ static bool boot_output_id_matches(unsigned int can_id, unsigned int motor_id)
            can_id == (0x7f0u | (motor_id & 0x0fu));
 }
 
-static bool mit_reply_id_matches(unsigned int can_id, unsigned int motor_id)
+static int is_reg_cmd_id(unsigned int can_id);
+
+static bool mit_reply_frame_matches(const rx_can_frame *frame, unsigned int motor_id)
 {
-    return motor_id > 0u && motor_id <= 0x0fu &&
-           can_id == (0x10u | (motor_id & 0x0fu));
+    unsigned int master_id = 0x10u | (motor_id & 0x0fu);
+
+    if (frame == NULL || motor_id == 0u || motor_id > 0x0fu ||
+        frame->len < BXI_MOTOR_MIT_LEN) {
+        return false;
+    }
+    if (is_reg_cmd_id(frame->can_id) || boot_output_id_matches(frame->can_id, motor_id)) {
+        return false;
+    }
+    return frame->can_id == master_id && frame->data[0] == master_id;
 }
 
 static char boot_log_lines[MOTOR_MAP_MAX][LINE_LEN];
@@ -810,10 +820,8 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                 }
                 break;
             }
-            if (frame.len >= BXI_MOTOR_MIT_LEN &&
-                entry->bus == msg->bus &&
-                (frame.data[0] == entry->id ||
-                 mit_reply_id_matches(frame.can_id, entry->id))) {
+            if (entry->bus == msg->bus &&
+                mit_reply_frame_matches(&frame, entry->id)) {
                 bxi_motor_reply reply;
 
                 const bxi_motor_limits *limits = limits_for_entry(state, entry);
@@ -1039,7 +1047,7 @@ static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
                    data_to_u32(&frame->data[0]),
                    data_to_u32(&frame->data[4]));
         }
-    } else if (frame->len >= BXI_MOTOR_MIT_LEN && frame->data[0] == state->boot_id) {
+    } else if (mit_reply_frame_matches(frame, state->boot_id)) {
         bxi_motor_reply reply;
 
         if (bxi_motor_unpack_reply(frame->data, frame->len, &state->limits, &reply) == 0) {
@@ -1067,16 +1075,19 @@ static int debug_frame_matches(flash_state *state,
     if (all) {
         return 1;
     }
-    if (expected_id != 0u && frame->can_id == expected_id) {
-        return 1;
+    if (is_reg_cmd_id(expected_id)) {
+        return frame->can_id == expected_id && node_id == state->boot_id;
     }
-    if (frame->can_id == state->master_id) {
+    if (expected_id != 0u && frame->can_id == expected_id) {
         return 1;
     }
     if (is_reg_cmd_id(frame->can_id) && node_id == state->boot_id) {
         return 1;
     }
-    if (frame->len >= BXI_MOTOR_MIT_LEN && frame->data[0] == state->boot_id) {
+    if (frame->can_id == state->master_id) {
+        return 1;
+    }
+    if (mit_reply_frame_matches(frame, state->boot_id)) {
         return 1;
     }
     return 0;

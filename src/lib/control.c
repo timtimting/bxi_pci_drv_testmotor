@@ -191,7 +191,10 @@ static int console_send_special(flash_state *state,
     return sent == 0u ? -1 : 0;
 }
 
-static int console_can_warmup(flash_state *state, unsigned int count, unsigned int period_ms)
+static int console_can_warmup(flash_state *state,
+                              unsigned int count,
+                              unsigned int period_ms,
+                              bool online_only)
 {
     unsigned int old_bus;
     unsigned int old_id;
@@ -202,6 +205,8 @@ static int console_can_warmup(flash_state *state, unsigned int count, unsigned i
     bool output_silenced = false;
     unsigned int sent = 0u;
     unsigned int before_rx = 0u;
+    size_t candidate_count = 0u;
+    size_t cursor = 0u;
     size_t i;
 
     if (state == NULL || state->config.entry_count == 0u || count == 0u) {
@@ -217,10 +222,19 @@ static int console_can_warmup(flash_state *state, unsigned int count, unsigned i
 
     for (i = 0u; i < state->config.entry_count; i++) {
         before_rx += state->motors[i].rx_count;
+        if (!online_only || state->motors[i].online) {
+            candidate_count++;
+        }
     }
-    printf("%s\n", console_text(state,
-           "CAN warmup：上电后静默发送零 MIT 帧，让 CAN 错误计数自然恢复",
-           "CAN warmup: silently sending zero MIT frames so CAN error counters recover"));
+    if (candidate_count == 0u) {
+        return 0;
+    }
+    printf("%s%zu%s\n", console_text(state,
+           "CAN warmup：只向 ", "CAN warmup: sending only to "),
+           candidate_count,
+           console_text(state,
+           " 台已在线电机静默发送零 MIT 帧，让 CAN 错误计数自然恢复",
+           " online motor(s), so CAN error counters recover"));
 
     state->show_can_output = false;
     state->show_motor_input = false;
@@ -229,7 +243,21 @@ static int console_can_warmup(flash_state *state, unsigned int count, unsigned i
     }
 
     while (!stop_requested && sent < count) {
-        const motor_map_entry *m = &state->config.entries[sent % state->config.entry_count];
+        const motor_map_entry *m = NULL;
+        size_t tries;
+
+        for (tries = 0u; tries < state->config.entry_count; tries++) {
+            size_t slot = (cursor + tries) % state->config.entry_count;
+
+            if (!online_only || state->motors[slot].online) {
+                m = &state->config.entries[slot];
+                cursor = (slot + 1u) % state->config.entry_count;
+                break;
+            }
+        }
+        if (m == NULL) {
+            break;
+        }
 
         console_use_motor(state, m);
         if (send_debug_mit(state, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f) != 0) {
@@ -264,9 +292,40 @@ static int console_can_warmup(flash_state *state, unsigned int count, unsigned i
     return sent == count ? 0 : -1;
 }
 
+static size_t console_print_passive_power_on_scan(flash_state *state,
+                                                  const unsigned int *before)
+{
+    size_t i;
+    size_t found = 0u;
+
+    printf("%s:", console_text(state,
+                               "上电被动监听到回复的电机序号",
+                               "motor indexes seen during passive power-on listen"));
+    for (i = 0u; i < state->config.entry_count; i++) {
+        if (state->motors[i].rx_count != before[i]) {
+            state->motors[i].online = true;
+            printf(" %02u", state->config.entries[i].index);
+            found++;
+        } else {
+            state->motors[i].online = false;
+        }
+    }
+    if (state->config.chinese_ui) {
+        printf("\n被动扫描结果：%zu/%zu 台电机在线\n", found, state->config.entry_count);
+    } else {
+        printf("\npassive scan result: %zu/%zu motors online\n",
+               found, state->config.entry_count);
+    }
+    return found;
+}
+
 static int console_power_on(flash_state *state)
 {
     bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    unsigned int before[MOTOR_MAP_MAX];
+    size_t i;
+    size_t passive_found;
     int ret;
 
     if (state->motor_power_on) {
@@ -283,6 +342,11 @@ static int console_power_on(flash_state *state)
     }
     state->motor_power_on = true;
     state->show_can_output = false;
+    state->show_motor_input = false;
+    for (i = 0u; i < state->config.entry_count; i++) {
+        before[i] = state->motors[i].rx_count;
+        state->motors[i].online = false;
+    }
     if (state->config.chinese_ui) {
         printf("电机电源已开启，等待 %u ms 完成软启动\n",
                state->config.power_on_wait_ms);
@@ -290,16 +354,30 @@ static int console_power_on(flash_state *state)
         printf("motor power ON; waiting %u ms for soft start\n",
                state->config.power_on_wait_ms);
     }
-    sleep_ms(state->config.power_on_wait_ms);
-    if (console_can_warmup(state,
+    console_quiet_sleep_ms(state->config.power_on_wait_ms);
+    passive_found = console_print_passive_power_on_scan(state, before);
+    if (passive_found != 0u) {
+        console_can_warmup(state,
                            CONSOLE_CAN_WARMUP_DEFAULT_COUNT,
-                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS) != 0) {
-        printf("%s\n", console_text(state,
-               "CAN warmup 未完全完成，继续执行扫描",
-               "CAN warmup did not complete; continuing to scan"));
+                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS,
+                           true);
+        state->show_can_output = old_monitor;
+        state->show_motor_input = old_input;
+        return 0;
     }
+
+    printf("%s\n", console_text(state,
+           "被动监听没有收到电机输出，开始主动扫描；如果总线未接电机，可能产生 CAN TX error",
+           "passive listen saw no motor output; starting active scan; empty buses may produce CAN TX errors"));
     ret = console_probe_motors(state, state->config.scan_timeout_ms);
+    if (ret == 0) {
+        console_can_warmup(state,
+                           CONSOLE_CAN_WARMUP_DEFAULT_COUNT,
+                           CONSOLE_CAN_WARMUP_DEFAULT_PERIOD_MS,
+                           true);
+    }
     state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
     return ret;
 }
 
@@ -328,6 +406,7 @@ static int console_power_off(flash_state *state)
                 "motor_pwr_set(0) failed"));
         return -1;
     }
+    console_quiet_sleep_ms(300u);
     state->motor_power_on = false;
     for (i = 0u; i < state->config.entry_count; i++) {
         state->motors[i].online = false;
@@ -585,6 +664,7 @@ static int console_reg_send_one(flash_state *state,
 
     console_use_motor(state, motor);
     frame_id = (unsigned int)reg_frame_id(state, cmd);
+    frame_ring_clear(&state->frames);
     if (cmd == CAN_CMD_REG_READ) {
         u32_to_data(reg, data);
         printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
@@ -607,6 +687,14 @@ static int console_reg_send_one(flash_state *state,
 
     if (ret == 0) {
         ret = wait_debug_reply(state, frame_id, wait_ms);
+        if (ret != 0) {
+            printf("%s\n", console_text(state,
+                   "提示：底层电机固件在 mit_mode=1 时会把 CAN 帧交给 MIT 回调，"
+                   "不会处理 0x11/0x12/0x13 配置寄存器命令；需要固件支持或切换 mit_mode 后才会回复。",
+                   "hint: motor firmware routes CAN frames to the MIT callback when mit_mode=1, "
+                   "so 0x11/0x12/0x13 config register commands are not handled; firmware support "
+                   "or switching mit_mode is required."));
+        }
     }
     return ret;
 }

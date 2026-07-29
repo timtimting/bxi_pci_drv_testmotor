@@ -4,6 +4,10 @@
  * Included by main.c; do not add as a standalone CMake source.
  */
 
+enum {
+    CONSOLE_COMMAND_EXIT = 100,
+};
+
 static int console_reload_config(flash_state *state, const char *path)
 {
     motor_map_config new_config;
@@ -181,7 +185,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    "exit refused: motor power is ON; run `power_off` first"));
             return -1;
         }
-        return 1;
+        return CONSOLE_COMMAND_EXIT;
     } else {
         if (state->config.chinese_ui) {
             printf("未知命令：%s（使用 `help` 或 `-h` 查看帮助）\n", cmd);
@@ -226,7 +230,7 @@ static int console_terminal(flash_state *state)
         }
         argc = split_line(line, argv, (int)(sizeof(argv) / sizeof(argv[0])));
         ret = console_run_command(state, argc, argv);
-        if (ret > 0) {
+        if (ret == CONSOLE_COMMAND_EXIT) {
             return 0;
         }
     }

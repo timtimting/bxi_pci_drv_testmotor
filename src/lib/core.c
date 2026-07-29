@@ -88,6 +88,19 @@ static int console_silence_process_output(int *saved_stdout, int *saved_stderr)
     return 0;
 }
 
+static void console_quiet_sleep_ms(unsigned int ms)
+{
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool silenced;
+
+    silenced = console_silence_process_output(&saved_stdout, &saved_stderr) == 0;
+    sleep_ms(ms);
+    if (silenced) {
+        console_restore_process_output(saved_stdout, saved_stderr);
+    }
+}
+
 static const char *console_default_config_path(const char *argv0,
                                                char *resolved,
                                                size_t resolved_size)
