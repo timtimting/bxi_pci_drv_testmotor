@@ -660,11 +660,14 @@ static int console_reg_send_one(flash_state *state,
 {
     unsigned int frame_id;
     uint8_t data[8] = {0u};
+    bool old_canfd;
     int ret;
 
     console_use_motor(state, motor);
     frame_id = (unsigned int)reg_frame_id(state, cmd);
     frame_ring_clear(&state->frames);
+    old_canfd = state->debug_use_canfd;
+    state->debug_use_canfd = false;
     if (cmd == CAN_CMD_REG_READ) {
         u32_to_data(reg, data);
         printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
@@ -684,6 +687,7 @@ static int console_reg_send_one(flash_state *state,
                motor->index, motor->bus, motor->id);
         ret = send_debug_packet(state, frame_id, data, 4u);
     }
+    state->debug_use_canfd = old_canfd;
 
     if (ret == 0) {
         ret = wait_debug_reply(state, frame_id, wait_ms);
