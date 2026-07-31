@@ -14,6 +14,27 @@ static int console_configured_firmware_path(const flash_state *state,
                                             size_t path_len);
 static int console_prefetch_firmware(flash_state *state);
 
+static bool flash_debug_arg_is_one_digit_range(const char *text,
+                                               unsigned int min_value,
+                                               unsigned int max_value,
+                                               unsigned int *value)
+{
+    unsigned int parsed;
+
+    if (text == NULL || strlen(text) != 1u ||
+        !isdigit((unsigned char)text[0])) {
+        return false;
+    }
+    parsed = (unsigned int)(text[0] - '0');
+    if (parsed < min_value || parsed > max_value) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = parsed;
+    }
+    return true;
+}
+
 static int console_flash(flash_state *state, int argc, char **argv, bool all)
 {
     bool cycle = false;
@@ -594,6 +615,7 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     unsigned int old_id;
     bool cycle = false;
     bool old_monitor;
+    const char *firmware_arg = NULL;
     int ret;
     int argi;
 
@@ -606,33 +628,57 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
                "debug flash refused: disable all motors before entering bootloader"));
         return -1;
     }
-    if (argc < 4 || argc > 5 ||
-        parse_uint_arg(argv[1], &bus) != 0 ||
-        parse_uint_arg(argv[2], &id) != 0 ||
-        bus >= CANFD_DEVICE_NUM ||
-        id == 0u || id > 8u) {
-        printf("%s: flash_debug <bus> <id> <version|firmware.bin> [cycle]\n",
-               console_text(state, "用法", "usage"));
-        return -1;
-    }
-    for (argi = 4; argi < argc; argi++) {
-        if (strcmp(argv[argi], "cycle") == 0) {
-            cycle = true;
-            continue;
+    if (argc == 3 || (argc == 4 && strcmp(argv[3], "cycle") == 0)) {
+        unsigned int index;
+        size_t slot;
+        const motor_map_entry *motor;
+
+        if (console_parse_index_arg(argv[1], &index) != 0 ||
+            (motor = console_motor_by_index(state, index, &slot)) == NULL) {
+            printf("%s: flash_debug <index00> <version|firmware.bin> [cycle]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
         }
-        printf("%s: flash_debug <bus> <id> <version|firmware.bin> [cycle]\n",
+        (void)slot;
+        bus = motor->bus;
+        id = motor->id;
+        firmware_arg = argv[2];
+        if (argc == 4) {
+            cycle = true;
+        }
+    } else if (argc >= 4 && argc <= 5) {
+        if (!flash_debug_arg_is_one_digit_range(argv[1], 0u, CANFD_DEVICE_NUM - 1u, &bus) ||
+            !flash_debug_arg_is_one_digit_range(argv[2], 0u, 7u, &id)) {
+            printf("%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        firmware_arg = argv[3];
+        for (argi = 4; argi < argc; argi++) {
+            if (strcmp(argv[argi], "cycle") == 0) {
+                cycle = true;
+                continue;
+            }
+            printf("%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+    } else {
+        printf("%s: flash_debug <index00> <version|firmware.bin> [cycle]\n"
+               "%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+               console_text(state, "用法", "usage"),
                console_text(state, "用法", "usage"));
         return -1;
     }
-    if (console_resolve_firmware_path(state, argv[3], path, sizeof(path)) != 0) {
+    if (console_resolve_firmware_path(state, firmware_arg, path, sizeof(path)) != 0) {
         printf("%s: %s  %s: %s/%s\n",
                console_text(state,
                             "找不到调试固件文件",
                             "cannot read debug firmware file"),
-               argv[3],
+               firmware_arg,
                console_text(state, "也尝试过固件目录", "also tried firmware_dir"),
                state->config.firmware_dir,
-               argv[3]);
+               firmware_arg);
         return -1;
     }
 
@@ -967,6 +1013,9 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
                     i + 1u, plan.target_count, target->index);
         }
     }
+    collect_text(state, 800u, 3000u);
+    rx_ring_clear(&state->rx);
+    frame_ring_clear(&state->frames);
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
     state->suppress_boot_text = old_suppress_boot_text;

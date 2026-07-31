@@ -687,21 +687,27 @@ static int console_reg_send_one(flash_state *state,
     state->debug_use_canfd = false;
     if (cmd == CAN_CMD_REG_READ) {
         u32_to_data(reg, data);
-        printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
-               console_text(state, "读取寄存器", "reading register"),
-               motor->index, motor->bus, motor->id, reg);
+        if (!state->brief_register_output) {
+            printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
+                   console_text(state, "读取寄存器", "reading register"),
+                   motor->index, motor->bus, motor->id, reg);
+        }
         ret = send_debug_packet(state, frame_id, data, 4u);
     } else if (cmd == CAN_CMD_REG_WRITE) {
         u32_to_data(reg, &data[0]);
         u32_to_data(value, &data[4]);
-        printf("%s index=%02u bus=%u id=%u reg=0x%08x value=0x%08x\n",
-               console_text(state, "写入寄存器", "writing register"),
-               motor->index, motor->bus, motor->id, reg, value);
+        if (!state->brief_register_output) {
+            printf("%s index=%02u bus=%u id=%u reg=0x%08x value=0x%08x\n",
+                   console_text(state, "写入寄存器", "writing register"),
+                   motor->index, motor->bus, motor->id, reg, value);
+        }
         ret = send_debug_packet(state, frame_id, data, 8u);
     } else {
-        printf("%s index=%02u bus=%u id=%u\n",
-               console_text(state, "保存寄存器配置", "saving register config"),
-               motor->index, motor->bus, motor->id);
+        if (!state->brief_register_output) {
+            printf("%s index=%02u bus=%u id=%u\n",
+                   console_text(state, "保存寄存器配置", "saving register config"),
+                   motor->index, motor->bus, motor->id);
+        }
         ret = send_debug_packet(state, frame_id, data, 4u);
     }
     state->debug_use_canfd = old_canfd;
@@ -730,6 +736,8 @@ static int console_reg_command_all(flash_state *state,
     unsigned int old_bus = state->bus;
     unsigned int old_id = state->boot_id;
     bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    bool old_brief_register_output = state->brief_register_output;
     size_t i;
     size_t succeeded = 0u;
     size_t failed = 0u;
@@ -739,6 +747,8 @@ static int console_reg_command_all(flash_state *state,
     }
 
     state->show_can_output = false;
+    state->show_motor_input = false;
+    state->brief_register_output = true;
     printf("%s plan=%s total=%zu start\n",
            console_text(state, "批量寄存器命令", "register batch"),
            DEFAULT_FLASH_PLAN, plan.target_count);
@@ -766,6 +776,8 @@ static int console_reg_command_all(flash_state *state,
         }
     }
     state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    state->brief_register_output = old_brief_register_output;
     state->bus = old_bus;
     set_target_id(state, old_id);
 

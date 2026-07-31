@@ -219,6 +219,7 @@ typedef struct
     bool show_motor_input;
     bool suppress_boot_text;
     bool brief_flash_output;
+    bool brief_register_output;
     bool firmware_prefetch_ready;
     char active_firmware_dir[PATH_LEN];
     unsigned int brief_flash_index;
@@ -563,6 +564,11 @@ static void update_motor_state_from_boot_line(flash_state *state,
     if (config->state_motor_menu_pattern[0] != '\0' &&
         strstr(line, config->state_motor_menu_pattern) != NULL) {
         motor_runtime_set_state(runtime, "motor_menu");
+    }
+    if (strstr(line, "Commands:") != NULL &&
+        strcmp(motor_runtime_state(runtime), "motor") != 0 &&
+        strcmp(motor_runtime_state(runtime), "motor_menu") != 0) {
+        motor_runtime_set_state(runtime, "boot_menu");
     }
     if (config->state_menu_pattern[0] != '\0' &&
         strstr(line, config->state_menu_pattern) != NULL) {
@@ -1139,6 +1145,23 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
         uint32_t value = data_to_u32(&frame->data[4]);
         const reg_config_meta *meta = reg_config_meta_for_addr(reg);
 
+        if (state->brief_register_output) {
+            if (entry != NULL) {
+                printf("[motor%02u]: bus=%u id=%u reg=0x%02x",
+                       entry->index, frame->bus, node_id, reg);
+            } else {
+                printf("[motor??]: bus=%u id=%u reg=0x%02x",
+                       frame->bus, node_id, reg);
+            }
+            if (meta != NULL) {
+                printf(" %s", meta->name);
+            }
+            printf(" value=");
+            print_register_value(value, meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
+            printf("\n");
+            fflush(stdout);
+            return 1;
+        }
         if (entry != NULL) {
             printf("\n%s index=%02u reg=0x%02x",
                    state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]",
@@ -1162,6 +1185,19 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
     if (cmd == CAN_CMD_REG_SAVE && frame->len >= 4u) {
         int32_t status = (int32_t)data_to_u32(&frame->data[0]);
 
+        if (state->brief_register_output) {
+            if (entry != NULL) {
+                printf("[motor%02u]: bus=%u id=%u reg_save status=%d%s\n",
+                       entry->index, frame->bus, node_id, status,
+                       status == 0 ? " OK" : "");
+            } else {
+                printf("[motor??]: bus=%u id=%u reg_save status=%d%s\n",
+                       frame->bus, node_id, status,
+                       status == 0 ? " OK" : "");
+            }
+            fflush(stdout);
+            return 1;
+        }
         if (entry != NULL) {
             printf("\n%s index=%02u status=%d%s\n",
                    state->config.chinese_ui ? "[寄存器保存]" : "[REGISTER SAVE]",
@@ -3145,7 +3181,7 @@ static int run_flash_auto(flash_state *state, int argc, char **argv)
 
 static int set_target_id(flash_state *state, unsigned int id)
 {
-    if (id < 1u || id > 8u) {
+    if (id > 8u) {
         return -1;
     }
 

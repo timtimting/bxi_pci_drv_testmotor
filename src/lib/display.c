@@ -42,8 +42,8 @@ static void console_print_help(bool chinese)
         printf("      烧录单台电机；不写固件时使用默认烧录配置里的 version。\n");
         printf("  flash_all [plan.yaml] [cycle]\n");
         printf("      按烧录配置依次烧录多个电机；不写 plan 时使用 config/flash_plan_default.yaml。\n");
-        printf("  flash_debug <bus> <id> <version|firmware.bin> [cycle]\n");
-        printf("      按 Bus/ID 调试烧录单台电机，必须显式指定固件版本或文件名。\n");
+        printf("  flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n");
+        printf("      两位数按 index，一位 bus+一位 id 按 Bus/ID；必须显式指定固件。\n");
         printf("  motor_dbg <index00>\n");
         printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
         printf("  can_status [reset]\n");
@@ -93,8 +93,8 @@ static void console_print_help(bool chinese)
     printf("      Flash one motor. Without firmware, use the version from the default plan.\n");
     printf("  flash_all [plan.yaml] [cycle]\n");
     printf("      Flash multiple motors from a flash plan. Without plan, use config/flash_plan_default.yaml.\n");
-    printf("  flash_debug <bus> <id> <version|firmware.bin> [cycle]\n");
-    printf("      Debug-flash one Bus/ID. A firmware version or file name is required.\n");
+    printf("  flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n");
+    printf("      Two digits select index; one-digit bus + one-digit id select Bus/ID. Firmware is required.\n");
     printf("  motor_dbg <index00>\n");
     printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
     printf("      is sent immediately; ` exits debug mode.\n");

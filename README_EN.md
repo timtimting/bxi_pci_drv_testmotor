@@ -102,7 +102,7 @@ buses, and prints responding indexes and decoded feedback.
 | `reg_save` | `<index00\|all> [wait_ms]` | Save register configs; `all` sends to every target in the default flash plan; refused while any motor is known enabled |
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | Flash one motor; omit firmware to use the default version |
 | `flash_all` | `[plan.yaml] [cycle]` | Flash multiple targets; omit plan to use the default one |
-| `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | Debug-flash one Bus/ID |
+| `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | Two digits select index; one-digit bus + one-digit id select Bus/ID |
 | `can_status` | `[reset]` | Show or reset per-bus software statistics |
 | `help` / `-h` / `?` | none | Show built-in help |
 | `quit` / `exit` / `q` | none | Exit; motor power must be off |

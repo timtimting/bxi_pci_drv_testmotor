@@ -518,7 +518,7 @@ config/motor_console.yaml
 |---|---|---|
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；可省略固件使用默认 version |
 | `flash_all` | `[plan.yaml] [cycle]` | 按烧录配置烧录多个目标；省略配置时使用默认配置 |
-| `flash_debug` | `<bus> <id> <version\|firmware.bin> [cycle]` | 按 bus/id 调试烧录单台 |
+| `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | 两位数按 index；一位 bus+一位 id 按 bus/id 调试烧录 |
 
 旧 `flash_plan <plan.yaml>` 合并为 `flash_all <plan.yaml>`。
 旧 `flash_file <index00> <version|firmware.bin>` 合并为
