@@ -7,9 +7,21 @@
 # -----------------------------------------------------------------------------
 # motor_console 运行参数
 # -----------------------------------------------------------------------------
-# 全部电机回零时，KP 从 0 缓慢增加到 home_kp，KD 保持 home_kd。
+# 可选远程固件下载站。留空时只使用本地 firmware_dir。
+# firmware_sync_on_start 暂时关闭网页同步；需要恢复时改为 on。
+# 程序启动时会尝试从下载站拉取默认烧录计划所需固件到 firmware_cache_dir。
+# 全部拉取成功：本次运行烧录优先使用 firmware_cache_dir；任意失败：回退 firmware_dir。
+firmware_sync_on_start: off
+firmware_base_url: ""
+firmware_cache_dir: firmware_cache
+
+# 全部电机回零时，KP 从 0 缓慢增加到目标 KP，KD 保持目标 KD。
+# 默认使用 home_kp/home_kd；如果 home_kp_list/home_kd_list 中存在对应 index，
+# stand_up 会优先使用数组值。数组顺序与电机 index 一一对应，从 00 开始。
 home_kp: 20.0
 home_kd: 1.0
+home_kp_list: [500, 500, 300, 300, 100, 100, 300, 50, 50, 300, 100, 100, 300, 50, 50, 100, 80, 80, 100, 20, 20, 20, 100, 80, 80, 100, 20, 20, 20]
+home_kd_list: [3, 3, 3, 2.5, 2, 2, 2.5, 2, 2, 2.5, 2, 2, 2.5, 2, 2, 2.5, 2, 2, 2.5, 1, 1, 1, 2.5, 2, 2, 2.5, 1, 1, 1]
 home_soft_start_ms: 2000
 
 # 上电后的电机扫描及软启动等待时间。
@@ -52,6 +64,7 @@ mit_kd_max: 5.0
 # -----------------------------------------------------------------------------
 # 电机型号配置
 # 每个型号独立配置：
+#   firmware : 该型号对应的固件文件名；启动预拉取和烧录都会使用这个名字
 #   mit_*    : 该型号的 MIT 打包/解包范围
 #
 # 目前主要使用 50、50L、70、85 四个型号：
@@ -63,6 +76,7 @@ mit_kd_max: 5.0
 # -----------------------------------------------------------------------------
 motor_types:
   - type: "50"
+    firmware: bxi_motor_50.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -72,6 +86,7 @@ motor_types:
     mit_kp_max: 500.0
     mit_kd_max: 5.0
   - type: "50L"
+    firmware: bxi_motor_50L.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -81,6 +96,7 @@ motor_types:
     mit_kp_max: 500.0
     mit_kd_max: 5.0
   - type: "70"
+    firmware: bxi_motor_70.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -90,6 +106,7 @@ motor_types:
     mit_kp_max: 500.0
     mit_kd_max: 5.0
   - type: "85"
+    firmware: bxi_motor_85.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0

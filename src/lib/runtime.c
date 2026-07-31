@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -127,8 +128,15 @@ typedef struct
 typedef struct
 {
     char firmware_dir[PATH_LEN];
+    char firmware_base_url[PATH_LEN];
+    char firmware_cache_dir[PATH_LEN];
+    bool firmware_sync_on_start;
     float home_kp;
     float home_kd;
+    float home_kp_by_index[MOTOR_MAP_MAX];
+    float home_kd_by_index[MOTOR_MAP_MAX];
+    bool home_kp_by_index_set[MOTOR_MAP_MAX];
+    bool home_kd_by_index_set[MOTOR_MAP_MAX];
     unsigned int home_soft_start_ms;
     unsigned int scan_timeout_ms;
     unsigned int power_on_wait_ms;
@@ -211,6 +219,8 @@ typedef struct
     bool show_motor_input;
     bool suppress_boot_text;
     bool brief_flash_output;
+    bool firmware_prefetch_ready;
+    char active_firmware_dir[PATH_LEN];
     unsigned int brief_flash_index;
     size_t brief_flash_ordinal;
     size_t brief_flash_total;
@@ -1623,6 +1633,71 @@ static char *trim_space(char *text)
     return text;
 }
 
+static int parse_float_list_arg(const char *text,
+                                float *values,
+                                bool *value_set,
+                                size_t max_count,
+                                size_t *parsed_count)
+{
+    char buffer[LINE_LEN * 4u];
+    char *p;
+    char *end;
+    size_t count = 0u;
+
+    if (text == NULL || values == NULL || value_set == NULL || parsed_count == NULL ||
+        strlen(text) >= sizeof(buffer)) {
+        return -1;
+    }
+    snprintf(buffer, sizeof(buffer), "%s", text);
+    p = trim_space(buffer);
+    if (*p == '[') {
+        p++;
+    }
+    p = trim_space(p);
+    end = p + strlen(p);
+    while (end > p && isspace((unsigned char)end[-1])) {
+        *--end = '\0';
+    }
+    if (end > p && end[-1] == ']') {
+        *--end = '\0';
+    }
+
+    while (*p != '\0') {
+        char *next;
+        float value;
+
+        while (*p != '\0' &&
+               (isspace((unsigned char)*p) || *p == ',')) {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+        if (count >= max_count) {
+            return -1;
+        }
+        errno = 0;
+        value = strtof(p, &next);
+        if (errno != 0 || next == p || !isfinite(value)) {
+            return -1;
+        }
+        values[count] = value;
+        value_set[count] = true;
+        count++;
+        p = next;
+        while (*p != '\0' && isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (*p == ',') {
+            p++;
+        } else if (*p != '\0') {
+            return -1;
+        }
+    }
+    *parsed_count = count;
+    return count == 0u ? -1 : 0;
+}
+
 static int firmware_type_is_safe(const char *type)
 {
     size_t i;
@@ -1734,6 +1809,27 @@ static int firmware_dir_is_safe(const char *dir)
     component_len = i - component_start;
     return component_len != 0u &&
            !(component_len == 1u && dir[component_start] == '.');
+}
+
+static int firmware_url_is_safe(const char *url)
+{
+    size_t i;
+
+    if (url == NULL || url[0] == '\0') {
+        return 1;
+    }
+    if (strncmp(url, "http://", 7u) != 0 &&
+        strncmp(url, "https://", 8u) != 0) {
+        return 0;
+    }
+    for (i = 0u; url[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char)url[i];
+
+        if (isspace(ch) || ch == '"' || ch == '\'' || ch == '\\') {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static const motor_type_config *find_type_config(const motor_map_config *config,
@@ -1879,44 +1975,71 @@ static int add_firmware_mapping(motor_map_config *config,
     return 0;
 }
 
+static int configured_firmware_name(const motor_map_config *config,
+                                    const char *type,
+                                    char *filename,
+                                    size_t filename_len);
+
 static int configured_firmware_path(const motor_map_config *config,
                                     const char *type,
                                     char *path,
                                     size_t path_len)
 {
+    int written;
+    char filename[FIRMWARE_NAME_MAX];
+
+    if (configured_firmware_name(config, type, filename, sizeof(filename)) != 0) {
+        return -1;
+    }
+    written = snprintf(path, path_len, "%s/%s", config->firmware_dir, filename);
+    if (written < 0 || (size_t)written >= path_len) {
+        fprintf(stderr, "firmware path is too long: %s/%s\n", config->firmware_dir, filename);
+        return -1;
+    }
+    return 0;
+}
+
+static int configured_firmware_name(const motor_map_config *config,
+                                    const char *type,
+                                    char *filename,
+                                    size_t filename_len)
+{
     char normalized[MOTOR_TYPE_LEN];
-    const char *filename = NULL;
+    const char *configured = NULL;
     size_t i;
     int written;
 
-    if (normalize_firmware_type(type, normalized, sizeof(normalized)) != 0) {
+    if (normalize_firmware_type(type, normalized, sizeof(normalized)) != 0 ||
+        filename == NULL || filename_len == 0u) {
         return -1;
     }
     {
         const motor_type_config *type_config = find_type_config(config, normalized);
 
         if (type_config != NULL && type_config->firmware[0] != '\0') {
-            filename = type_config->firmware;
+            configured = type_config->firmware;
         }
     }
-    if (filename == NULL) {
+    if (configured == NULL) {
         for (i = 0u; i < config->firmware_mapping_count; i++) {
             if (strcmp(config->firmware_mappings[i].type, normalized) == 0) {
-                filename = config->firmware_mappings[i].filename;
+                configured = config->firmware_mappings[i].filename;
                 break;
             }
         }
     }
-    if (filename == NULL) {
+    if (configured == NULL) {
         if (config->firmware_mapping_count != 0u) {
             fprintf(stderr, "no firmware_files mapping for motor type %s\n", normalized);
             return -1;
         }
-        return type_to_firmware_path(config->firmware_dir, normalized, path, path_len);
+        written = snprintf(filename, filename_len, "bxi_motor_%s.bin", normalized);
+    } else {
+        written = snprintf(filename, filename_len, "%s", configured);
     }
-    written = snprintf(path, path_len, "%s/%s", config->firmware_dir, filename);
-    if (written < 0 || (size_t)written >= path_len) {
-        fprintf(stderr, "firmware path is too long: %s/%s\n", config->firmware_dir, filename);
+    if (written < 0 || (size_t)written >= filename_len ||
+        !firmware_filename_is_safe(filename)) {
+        fprintf(stderr, "invalid firmware filename for type %s\n", normalized);
         return -1;
     }
     return 0;
@@ -2267,6 +2390,35 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 return -1;
             }
             snprintf(config->firmware_dir, sizeof(config->firmware_dir), "%s", value);
+        } else if (strcmp(key, "firmware_base_url") == 0) {
+            if (!firmware_url_is_safe(value) ||
+                strlen(value) >= sizeof(config->firmware_base_url)) {
+                fprintf(stderr,
+                        "%s:%u: invalid firmware_base_url: %s "
+                        "(use http:// or https:// without spaces)\n",
+                        map_path, line_no, value);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(config->firmware_base_url, sizeof(config->firmware_base_url), "%s", value);
+        } else if (strcmp(key, "firmware_cache_dir") == 0) {
+            if (!firmware_dir_is_safe(value) ||
+                strlen(value) >= sizeof(config->firmware_cache_dir)) {
+                fprintf(stderr,
+                        "%s:%u: invalid firmware_cache_dir: %s "
+                        "(use a relative directory without absolute paths or ..)\n",
+                        map_path, line_no, value);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(config->firmware_cache_dir, sizeof(config->firmware_cache_dir), "%s", value);
+        } else if (strcmp(key, "firmware_sync_on_start") == 0) {
+            if (parse_on_off(value, &config->firmware_sync_on_start) != 0) {
+                fprintf(stderr, "%s:%u: firmware_sync_on_start must be on/off\n",
+                        map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
         } else if (strcmp(key, "home_kp") == 0) {
             if (parse_float_arg(value, &config->home_kp) != 0) {
                 fprintf(stderr, "%s:%u: invalid home_kp\n", map_path, line_no);
@@ -2276,6 +2428,32 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (strcmp(key, "home_kd") == 0) {
             if (parse_float_arg(value, &config->home_kd) != 0) {
                 fprintf(stderr, "%s:%u: invalid home_kd\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
+        } else if (strcmp(key, "home_kp_list") == 0) {
+            size_t count = 0u;
+
+            memset(config->home_kp_by_index_set, 0, sizeof(config->home_kp_by_index_set));
+            if (parse_float_list_arg(value,
+                                     config->home_kp_by_index,
+                                     config->home_kp_by_index_set,
+                                     MOTOR_MAP_MAX,
+                                     &count) != 0) {
+                fprintf(stderr, "%s:%u: invalid home_kp_list\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
+        } else if (strcmp(key, "home_kd_list") == 0) {
+            size_t count = 0u;
+
+            memset(config->home_kd_by_index_set, 0, sizeof(config->home_kd_by_index_set));
+            if (parse_float_list_arg(value,
+                                     config->home_kd_by_index,
+                                     config->home_kd_by_index_set,
+                                     MOTOR_MAP_MAX,
+                                     &count) != 0) {
+                fprintf(stderr, "%s:%u: invalid home_kd_list\n", map_path, line_no);
                 fclose(fp);
                 return -1;
             }
@@ -2466,6 +2644,7 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
 
     memset(config, 0, sizeof(*config));
     snprintf(config->firmware_dir, sizeof(config->firmware_dir), "%s", DEFAULT_FIRMWARE_DIR);
+    snprintf(config->firmware_cache_dir, sizeof(config->firmware_cache_dir), "%s", "firmware_cache");
     config->home_kp = 20.0f;
     config->home_kd = 1.0f;
     config->home_soft_start_ms = 2000u;
@@ -2523,11 +2702,30 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
         }
         for (i = 0u; i < config->entry_count; i++) {
             const motor_map_entry *entry = &config->entries[i];
+            const motor_type_config *type_config = NULL;
+            const bxi_motor_limits *limits = &config->mit_limits;
+            float home_kp = entry->index < MOTOR_MAP_MAX &&
+                            config->home_kp_by_index_set[entry->index] ?
+                            config->home_kp_by_index[entry->index] : config->home_kp;
+            float home_kd = entry->index < MOTOR_MAP_MAX &&
+                            config->home_kd_by_index_set[entry->index] ?
+                            config->home_kd_by_index[entry->index] : config->home_kd;
 
-            if (config->type_config_count != 0u &&
-                find_type_config(config, entry->type) == NULL) {
-                fprintf(stderr, "%s: motor index %02u uses undefined motor type %s\n",
-                        map_path, entry->index, entry->type);
+            if (config->type_config_count != 0u) {
+                type_config = find_type_config(config, entry->type);
+                if (type_config == NULL) {
+                    fprintf(stderr, "%s: motor index %02u uses undefined motor type %s\n",
+                            map_path, entry->index, entry->type);
+                    return -1;
+                }
+                limits = &type_config->limits;
+            }
+            if (!isfinite(home_kp) || !isfinite(home_kd) ||
+                home_kp < limits->kp_min || home_kp > limits->kp_max ||
+                home_kd < limits->kd_min || home_kd > limits->kd_max) {
+                fprintf(stderr,
+                        "%s: stand_up kp/kd for motor index %02u are outside MIT limits\n",
+                        map_path, entry->index);
                 return -1;
             }
         }

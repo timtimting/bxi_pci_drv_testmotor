@@ -124,6 +124,29 @@ firmware/bxi_motor_70.bin
 firmware/bxi_motor_85.bin
 ```
 
+If firmware is updated frequently, keep it on an internal download server and
+configure the startup download URL:
+
+```yaml
+firmware_dir: firmware
+firmware_sync_on_start: off
+firmware_base_url: "http://your-download-server/motor"
+firmware_cache_dir: firmware_cache
+```
+
+Set `firmware_sync_on_start: on` to enable startup sync. With the default `off`,
+the console uses bundled `firmware_dir` and does not contact the download
+server. When enabled, the console fetches the firmware versions required by the
+default flash plan `config/flash_plan_default.yaml`. If every required firmware
+file is downloaded successfully, flashing in this run prefers
+`firmware_cache_dir`. If any download fails, the run falls back to bundled
+`firmware_dir`. Leaving `firmware_base_url` empty also keeps the old local-only
+behavior. The download filename comes from
+`config/motor_console.yaml -> motor_types -> firmware`; for example,
+`version: 50L` downloads the configured `bxi_motor_50L.bin` from
+`http://your-download-server/motor/` into the cache. The target machine needs
+either `curl` or `wget`.
+
 Examples:
 
 ```text
@@ -138,9 +161,10 @@ For repeated bring-up work, copy `config/flash_plan_default.yaml`, edit
 plan contains the firmware directory plus selected motors: `index`, `bus`, `id`,
 and firmware `version`.
 
-Safety note: `firmware_dir` must be a relative directory without absolute paths
-or `..`. `version` and manual firmware arguments cannot contain `/` or `..`;
-firmware files are resolved only inside `firmware_dir`.
+Safety note: `firmware_dir` and `firmware_cache_dir` must be relative
+directories without absolute paths or `..`. `firmware_base_url` must start with
+`http://` or `https://`. `version` and manual firmware arguments cannot contain
+`/` or `..`.
 
 The normal path probes the bootloader, sends application reset `r`, catches the
 boot window with `m`, waits for `Commands:`, sends `u`, and transfers the file

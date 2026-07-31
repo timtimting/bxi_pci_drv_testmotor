@@ -32,6 +32,8 @@ static int console_reload_config(flash_state *state, const char *path)
     state->debug_use_canfd = new_config.mit_canfd;
     state->show_can_output = new_config.live_output;
     state->show_motor_input = new_config.live_output;
+    state->firmware_prefetch_ready = false;
+    state->active_firmware_dir[0] = '\0';
     memset(state->motors, 0, sizeof(state->motors));
     snprintf(state->config_path, sizeof(state->config_path), "%s", path);
     state->config_loaded = true;

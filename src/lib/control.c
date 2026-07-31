@@ -32,6 +32,23 @@ static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
                                                        unsigned int id,
                                                        size_t *slot);
 
+static void console_home_gains_for_motor(const flash_state *state,
+                                         const motor_map_entry *motor,
+                                         float *kp,
+                                         float *kd)
+{
+    unsigned int index = motor->index;
+
+    *kp = state->config.home_kp;
+    *kd = state->config.home_kd;
+    if (index < MOTOR_MAP_MAX && state->config.home_kp_by_index_set[index]) {
+        *kp = state->config.home_kp_by_index[index];
+    }
+    if (index < MOTOR_MAP_MAX && state->config.home_kd_by_index_set[index]) {
+        *kd = state->config.home_kd_by_index[index];
+    }
+}
+
 static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
 {
     unsigned int before[MOTOR_MAP_MAX];
@@ -522,12 +539,10 @@ static int console_move_zero(flash_state *state)
         steps = 1u;
     }
     if (state->config.chinese_ui) {
-        printf("全部电机软启动回零：kp 0 -> %g，kd=%g，持续 %u ms\n",
-               state->config.home_kp, state->config.home_kd,
+        printf("全部电机软启动回零：按 index 使用配置的 kp/kd，持续 %u ms\n",
                state->config.home_soft_start_ms);
     } else {
-        printf("moving all motors to zero: kp 0 -> %g, kd=%g, duration=%u ms\n",
-               state->config.home_kp, state->config.home_kd,
+        printf("moving all motors to zero: per-index kp/kd from config, duration=%u ms\n",
                state->config.home_soft_start_ms);
     }
     if (old_monitor) {
@@ -540,15 +555,17 @@ static int console_move_zero(flash_state *state)
         pending_before[bus] = state->can_stats[bus].outstanding_replies;
     }
     for (step = 1u; step <= steps && !stop_requested; step++) {
-        float kp = state->config.home_kp * (float)step / (float)steps;
-
         for (i = 0u; i < state->config.entry_count; i++) {
             const motor_map_entry *m = &state->config.entries[i];
+            float target_kp;
+            float kd;
+            float kp;
 
+            console_home_gains_for_motor(state, m, &target_kp, &kd);
+            kp = target_kp * (float)step / (float)steps;
             console_use_motor(state, m);
             console_expect_reply(state, m->bus);
-            if (send_debug_mit(state, 0.0f, 0.0f, kp,
-                               state->config.home_kd, 0.0f) != 0) {
+            if (send_debug_mit(state, 0.0f, 0.0f, kp, kd, 0.0f) != 0) {
                 printf("%s index %02u\n", console_text(state,
                        "stand_up 发送失败：", "stand_up send failed at"), m->index);
             }

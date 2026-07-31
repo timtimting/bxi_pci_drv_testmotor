@@ -8,6 +8,11 @@ static int console_resolve_firmware_path(const flash_state *state,
                                          const char *input,
                                          char *path,
                                          size_t path_len);
+static int console_configured_firmware_path(const flash_state *state,
+                                            const char *type,
+                                            char *path,
+                                            size_t path_len);
+static int console_prefetch_firmware(flash_state *state);
 
 static int console_flash(flash_state *state, int argc, char **argv, bool all)
 {
@@ -83,9 +88,8 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
                        explicit_firmware);
                 return -1;
             }
-        } else if (configured_firmware_path(&state->config, motor->type,
-                                            paths[0], sizeof(paths[0])) != 0 ||
-                   access(paths[0], R_OK) != 0) {
+        } else if (console_configured_firmware_path(state, motor->type,
+                                                    paths[0], sizeof(paths[0])) != 0) {
             fprintf(stderr, "cannot read firmware for index=%02u bus=%u id=%u version=%s: %s\n",
                     motor->index, motor->bus, motor->id, motor->type, paths[0]);
             return -1;
@@ -96,9 +100,8 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         for (i = 0u; i < state->config.entry_count; i++) {
             const motor_map_entry *motor = &state->config.entries[i];
 
-            if (configured_firmware_path(&state->config, motor->type,
-                                         paths[selected], sizeof(paths[selected])) != 0 ||
-                access(paths[selected], R_OK) != 0) {
+            if (console_configured_firmware_path(state, motor->type,
+                                                 paths[selected], sizeof(paths[selected])) != 0) {
                 fprintf(stderr,
                         "cannot read firmware for index=%02u bus=%u id=%u version=%s: %s\n",
                         motor->index, motor->bus, motor->id, motor->type, paths[selected]);
@@ -234,13 +237,352 @@ static int console_resolve_firmware_path_in_dir(const char *firmware_dir,
     return -1;
 }
 
+static int ensure_relative_dir(const char *dir)
+{
+    char buffer[PATH_LEN];
+    char *p;
+
+    if (!firmware_dir_is_safe(dir) || strlen(dir) >= sizeof(buffer)) {
+        return -1;
+    }
+    snprintf(buffer, sizeof(buffer), "%s", dir);
+    for (p = buffer + 1; *p != '\0'; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(buffer, 0755) != 0 && errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+    if (mkdir(buffer, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    return 0;
+}
+
+static int build_firmware_url(const char *base_url,
+                              const char *filename,
+                              char *url,
+                              size_t url_len)
+{
+    int written;
+    const char *slash;
+
+    if (!firmware_url_is_safe(base_url) ||
+        !firmware_filename_is_safe(filename) ||
+        base_url == NULL || base_url[0] == '\0') {
+        return -1;
+    }
+    slash = base_url[strlen(base_url) - 1u] == '/' ? "" : "/";
+    written = snprintf(url, url_len, "%s%s%s", base_url, slash, filename);
+    return written < 0 || (size_t)written >= url_len ? -1 : 0;
+}
+
+static int run_download_tool(const char *url, const char *tmp_path)
+{
+    pid_t pid;
+    int status;
+
+    pid = fork();
+    if (pid == 0) {
+        execlp("curl", "curl", "-sS", "-fL", "--retry", "2", "--connect-timeout", "10",
+               "-o", tmp_path, url, (char *)NULL);
+        _exit(127);
+    }
+    if (pid < 0 || waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        return 0;
+    }
+
+    pid = fork();
+    if (pid == 0) {
+        execlp("wget", "wget", "-q", "-O", tmp_path, url, (char *)NULL);
+        _exit(127);
+    }
+    if (pid < 0 || waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
+
+static int download_firmware_to_cache(const char *base_url,
+                                      const char *cache_dir,
+                                      const char *filename,
+                                      bool force,
+                                      char *path,
+                                      size_t path_len)
+{
+    char url[PATH_LEN * 2u];
+    char tmp_path[PATH_LEN];
+    int written;
+
+    if (base_url == NULL || base_url[0] == '\0') {
+        return -1;
+    }
+    if (cache_dir == NULL || cache_dir[0] == '\0') {
+        cache_dir = DEFAULT_FIRMWARE_DIR;
+    }
+    if (ensure_relative_dir(cache_dir) != 0 ||
+        build_firmware_url(base_url, filename, url, sizeof(url)) != 0) {
+        return -1;
+    }
+    written = snprintf(path, path_len, "%s/%s", cache_dir, filename);
+    if (written < 0 || (size_t)written >= path_len) {
+        return -1;
+    }
+    if (!force && access(path, R_OK) == 0) {
+        return 0;
+    }
+    written = snprintf(tmp_path, sizeof(tmp_path), "%s/.%s.%ld.download",
+                       cache_dir, filename, (long)getpid());
+    if (written < 0 || (size_t)written >= sizeof(tmp_path)) {
+        return -1;
+    }
+    printf("固件本地不存在，正在下载：%s -> %s\n", url, path);
+    unlink(tmp_path);
+    if (run_download_tool(url, tmp_path) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+    if (rename(tmp_path, path) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+    return access(path, R_OK) == 0 ? 0 : -1;
+}
+
+static int flash_plan_version_to_filename(const motor_map_config *config,
+                                          const char *version,
+                                          char *filename,
+                                          size_t filename_len)
+{
+    if (!firmware_type_is_safe(version) || strlen(version) >= FIRMWARE_NAME_MAX) {
+        return -1;
+    }
+    if (has_suffix(version, ".bin")) {
+        if (!firmware_filename_is_safe(version) || strlen(version) >= filename_len) {
+            return -1;
+        }
+        snprintf(filename, filename_len, "%s", version);
+        return 0;
+    }
+    return configured_firmware_name(config, version, filename, filename_len);
+}
+
+static size_t firmware_candidate_names(const char *input,
+                                       char names[][FIRMWARE_NAME_MAX],
+                                       size_t max_names)
+{
+    bool has_bin_suffix = has_suffix(input, ".bin");
+    size_t count = 0u;
+    int written;
+
+    if (!firmware_type_is_safe(input) || strlen(input) >= FIRMWARE_NAME_MAX) {
+        return 0u;
+    }
+    written = snprintf(names[count], FIRMWARE_NAME_MAX, "%s", input);
+    if (written >= 0 && (size_t)written < FIRMWARE_NAME_MAX) {
+        count++;
+    }
+    if (!has_bin_suffix && count < max_names) {
+        written = snprintf(names[count], FIRMWARE_NAME_MAX, "%s.bin", input);
+        if (written >= 0 && (size_t)written < FIRMWARE_NAME_MAX) {
+            count++;
+        }
+    }
+    if (count < max_names) {
+        written = snprintf(names[count], FIRMWARE_NAME_MAX, "bxi_motor_%s", input);
+        if (written >= 0 && (size_t)written < FIRMWARE_NAME_MAX) {
+            count++;
+        }
+    }
+    if (!has_bin_suffix && count < max_names) {
+        written = snprintf(names[count], FIRMWARE_NAME_MAX, "bxi_motor_%s.bin", input);
+        if (written >= 0 && (size_t)written < FIRMWARE_NAME_MAX) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int console_resolve_firmware_path_local(const char *firmware_dir,
+                                               const char *fallback_dir,
+                                               const char *input,
+                                               char *path,
+                                               size_t path_len)
+{
+    if (console_resolve_firmware_path_in_dir(firmware_dir, input, path, path_len) == 0) {
+        return 0;
+    }
+    if (fallback_dir != NULL && fallback_dir[0] != '\0' &&
+        strcmp(fallback_dir, firmware_dir) != 0 &&
+        console_resolve_firmware_path_in_dir(fallback_dir, input, path, path_len) == 0) {
+        return 0;
+    }
+    return -1;
+}
+
 static int console_resolve_firmware_path(const flash_state *state,
                                          const char *input,
                                          char *path,
                                          size_t path_len)
 {
-    return console_resolve_firmware_path_in_dir(state->config.firmware_dir,
-                                                input, path, path_len);
+    const char *primary = state->firmware_prefetch_ready ?
+                          state->active_firmware_dir : state->config.firmware_dir;
+    const char *fallback = state->firmware_prefetch_ready ?
+                           state->config.firmware_dir : NULL;
+    char filename[FIRMWARE_NAME_MAX];
+
+    if (!has_suffix(input, ".bin") &&
+        configured_firmware_name(&state->config, input, filename, sizeof(filename)) == 0) {
+        return console_resolve_firmware_path_local(primary, fallback, filename, path, path_len);
+    }
+    return console_resolve_firmware_path_local(primary, fallback, input, path, path_len);
+}
+
+static int console_configured_firmware_path(const flash_state *state,
+                                            const char *type,
+                                            char *path,
+                                            size_t path_len)
+{
+    motor_map_config lookup_config = state->config;
+
+    if (state->firmware_prefetch_ready) {
+        snprintf(lookup_config.firmware_dir, sizeof(lookup_config.firmware_dir),
+                 "%s", state->active_firmware_dir);
+    }
+    if (configured_firmware_path(&lookup_config, type, path, path_len) != 0) {
+        return -1;
+    }
+    if (access(path, R_OK) == 0) {
+        return 0;
+    }
+    if (state->firmware_prefetch_ready &&
+        configured_firmware_path(&state->config, type, path, path_len) == 0 &&
+        access(path, R_OK) == 0) {
+        return 0;
+    }
+    return -1;
+}
+
+static int prefetch_one_firmware(const char *base_url,
+                                 const char *cache_dir,
+                                 const char *filename,
+                                 char *path,
+                                 size_t path_len)
+{
+    return download_firmware_to_cache(base_url, cache_dir, filename, true,
+                                      path, path_len);
+}
+
+static bool flash_plan_filename_seen(const char filenames[][FIRMWARE_NAME_MAX],
+                                    size_t count,
+                                    const char *filename)
+{
+    size_t i;
+
+    for (i = 0u; i < count; i++) {
+        if (strcmp(filenames[i], filename) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int console_prefetch_firmware(flash_state *state)
+{
+    flash_plan_config plan;
+    const char *base_url;
+    const char *cache_dir;
+    char filenames[FLASH_PLAN_MAX_TARGETS][FIRMWARE_NAME_MAX];
+    size_t filename_count = 0u;
+    size_t i;
+    size_t ok = 0u;
+    size_t name_failed = 0u;
+    char path[PATH_LEN];
+
+    state->firmware_prefetch_ready = false;
+    state->active_firmware_dir[0] = '\0';
+
+    if (load_flash_plan_config(DEFAULT_FLASH_PLAN, &plan) != 0) {
+        printf("%s\n", console_text(state,
+               "固件预拉取跳过：默认烧录配置不可用，将使用项目自带固件",
+               "firmware prefetch skipped: default flash plan unavailable; using bundled firmware"));
+        return -1;
+    }
+    if (!state->config.firmware_sync_on_start) {
+        snprintf(state->active_firmware_dir, sizeof(state->active_firmware_dir),
+                 "%s", state->config.firmware_dir);
+        printf("%s\n", console_text(state,
+               "启动固件同步已关闭，使用项目自带固件",
+               "startup firmware sync is disabled; using bundled firmware"));
+        return 0;
+    }
+
+    base_url = state->config.firmware_base_url[0] != '\0' ?
+               state->config.firmware_base_url : plan.firmware_base_url;
+    cache_dir = state->config.firmware_cache_dir[0] != '\0' ?
+                state->config.firmware_cache_dir : plan.firmware_cache_dir;
+    if (base_url == NULL || base_url[0] == '\0') {
+        snprintf(state->active_firmware_dir, sizeof(state->active_firmware_dir),
+                 "%s", state->config.firmware_dir);
+        printf("%s\n", console_text(state,
+               "未配置固件下载站，使用项目自带固件",
+               "firmware download URL is not configured; using bundled firmware"));
+        return 0;
+    }
+
+    for (i = 0u; i < plan.target_count; i++) {
+        const char *version = plan.targets[i].version;
+        char filename[FIRMWARE_NAME_MAX];
+
+        if (flash_plan_version_to_filename(&state->config, version,
+                                           filename, sizeof(filename)) != 0) {
+            printf("  FAIL version=%s config-name\n", version);
+            name_failed++;
+            continue;
+        }
+        if (!flash_plan_filename_seen(filenames, filename_count, filename)) {
+            snprintf(filenames[filename_count], sizeof(filenames[filename_count]), "%s", filename);
+            filename_count++;
+        }
+    }
+    printf("%s %s -> %s (%zu %s)\n",
+           console_text(state, "启动时拉取固件：", "prefetching firmware at startup:"),
+           base_url,
+           cache_dir,
+           filename_count,
+           console_text(state, "个文件", "file(s)"));
+    for (i = 0u; i < filename_count; i++) {
+        if (prefetch_one_firmware(base_url, cache_dir, filenames[i],
+                                  path, sizeof(path)) == 0) {
+            ok++;
+            printf("  OK   file=%s\n", path);
+        } else {
+            printf("  FAIL file=%s\n", filenames[i]);
+        }
+    }
+    if (name_failed == 0u && filename_count != 0u && ok == filename_count) {
+        state->firmware_prefetch_ready = true;
+        snprintf(state->active_firmware_dir, sizeof(state->active_firmware_dir),
+                 "%s", cache_dir);
+        printf("%s: %s\n", console_text(state,
+               "固件预拉取成功，本次运行使用下载固件",
+               "firmware prefetch succeeded; using downloaded firmware for this run"),
+               state->active_firmware_dir);
+        return 0;
+    }
+
+    snprintf(state->active_firmware_dir, sizeof(state->active_firmware_dir),
+             "%s", state->config.firmware_dir);
+    printf("%s: %s\n", console_text(state,
+           "固件预拉取失败，本次运行回退项目自带固件",
+           "firmware prefetch failed; falling back to bundled firmware for this run"),
+           state->active_firmware_dir);
+    return -1;
 }
 
 static int console_flash_debug(flash_state *state, int argc, char **argv)
@@ -356,7 +698,7 @@ static int flash_plan_finalize_target(const char *path,
 static int load_flash_plan_config(const char *path, flash_plan_config *plan)
 {
     FILE *fp;
-    char line[256];
+    char line[LINE_LEN];
     unsigned int line_no = 0u;
     bool in_targets = false;
     flash_plan_target target;
@@ -364,6 +706,7 @@ static int load_flash_plan_config(const char *path, flash_plan_config *plan)
     memset(plan, 0, sizeof(*plan));
     memset(&target, 0, sizeof(target));
     snprintf(plan->firmware_dir, sizeof(plan->firmware_dir), "%s", DEFAULT_FIRMWARE_DIR);
+    snprintf(plan->firmware_cache_dir, sizeof(plan->firmware_cache_dir), "%s", "firmware_cache");
 
     fp = fopen(path, "r");
     if (fp == NULL) {
@@ -418,6 +761,28 @@ static int load_flash_plan_config(const char *path, flash_plan_config *plan)
                 return -1;
             }
             snprintf(plan->firmware_dir, sizeof(plan->firmware_dir), "%s", value);
+        } else if (!in_targets && strcmp(key, "firmware_base_url") == 0) {
+            if (!firmware_url_is_safe(value) ||
+                strlen(value) >= sizeof(plan->firmware_base_url)) {
+                fprintf(stderr,
+                        "%s:%u: invalid firmware_base_url: %s "
+                        "(use http:// or https:// without spaces)\n",
+                        path, line_no, value);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(plan->firmware_base_url, sizeof(plan->firmware_base_url), "%s", value);
+        } else if (!in_targets && strcmp(key, "firmware_cache_dir") == 0) {
+            if (!firmware_dir_is_safe(value) ||
+                strlen(value) >= sizeof(plan->firmware_cache_dir)) {
+                fprintf(stderr,
+                        "%s:%u: invalid firmware_cache_dir: %s "
+                        "(use a relative directory without absolute paths or ..)\n",
+                        path, line_no, value);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(plan->firmware_cache_dir, sizeof(plan->firmware_cache_dir), "%s", value);
         } else if (in_targets && strcmp(key, "index") == 0) {
             if (parse_uint_arg(value, &target.index) != 0) {
                 fprintf(stderr, "%s:%u: invalid target index\n", path, line_no);
@@ -538,13 +903,23 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
                     target->bus, target->id);
         }
         slots[i] = configured_motor != NULL ? slot : (size_t)-1;
-        if (console_resolve_firmware_path_in_dir(plan.firmware_dir, target->version,
-                                                 resolved_paths[i],
-                                                 sizeof(resolved_paths[i])) != 0) {
-            fprintf(stderr, "%s:%u: cannot read firmware version: %s (firmware_dir=%s)\n",
-                    plan_path, target->line_no, target->version, plan.firmware_dir);
-            failed++;
-            continue;
+        {
+            char filename[FIRMWARE_NAME_MAX];
+
+            if (flash_plan_version_to_filename(&state->config, target->version,
+                                               filename, sizeof(filename)) != 0 ||
+                console_resolve_firmware_path_local(state->firmware_prefetch_ready ?
+                                                    state->active_firmware_dir : plan.firmware_dir,
+                                                    state->firmware_prefetch_ready ?
+                                                    plan.firmware_dir : NULL,
+                                                    filename,
+                                                    resolved_paths[i],
+                                                    sizeof(resolved_paths[i])) != 0) {
+                fprintf(stderr, "%s:%u: cannot read firmware version: %s (firmware_dir=%s)\n",
+                        plan_path, target->line_no, target->version, plan.firmware_dir);
+                failed++;
+                continue;
+            }
         }
     }
     if (failed != 0u) {

@@ -14,6 +14,14 @@
 # 例如 version: 50L 会尝试 firmware/bxi_motor_50L.bin。
 firmware_dir: firmware
 
+# 可选远程固件下载站。留空时只使用本地固件。
+# 程序启动时会尝试从下载站拉取默认烧录计划所需固件到 firmware_cache_dir。
+# 全部拉取成功：本次运行烧录优先使用 firmware_cache_dir；任意失败：回退 firmware_dir。
+# 例如 version: 50L 会根据 config/motor_console.yaml 中 motor_types.firmware 下载：
+#   ${firmware_base_url}/<firmware>
+firmware_base_url: ""
+firmware_cache_dir: firmware_cache
+
 targets:
   # 腰部：bus0 / id1-id3，逻辑 index 00-02
   - index: 0

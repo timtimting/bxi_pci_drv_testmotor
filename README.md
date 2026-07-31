@@ -300,6 +300,47 @@ firmware/bxi_motor_70.bin
 firmware/bxi_motor_85.bin
 ```
 
+如果固件经常更新，也可以把固件放在内网下载站中，不必提交到项目里。
+在 `config/motor_console.yaml` 中配置下载站地址：
+
+```yaml
+firmware_dir: firmware
+firmware_sync_on_start: off
+firmware_base_url: "http://your-download-server/motor"
+firmware_cache_dir: firmware_cache
+```
+
+程序正常启动时会先根据默认烧录计划 `config/flash_plan_default.yaml` 拉取一次所需固件：
+
+- `firmware_sync_on_start: off`：关闭启动同步，直接使用项目自带 `firmware_dir`
+- `firmware_sync_on_start: on`：启用启动同步
+- 全部固件拉取成功：本次运行烧录优先使用 `firmware_cache_dir`
+- 任意固件拉取失败：本次运行自动回退项目自带 `firmware_dir`
+- `firmware_base_url` 留空：不联网，直接使用项目自带 `firmware_dir`
+
+下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` 决定。
+例如：
+
+```yaml
+motor_types:
+  - type: "50L"
+    firmware: bxi_motor_50L.bin
+```
+
+当烧录配置里写 `version: 50L` 时，会下载：
+
+```text
+http://your-download-server/motor/bxi_motor_50L.bin
+```
+
+下载成功后缓存为：
+
+```text
+firmware_cache/bxi_motor_50L.bin
+```
+
+下载依赖设备上安装 `curl` 或 `wget`；两者有一个即可。
+
 终端配置 `config/motor_console.yaml` 只负责电机型号和 MIT 打包/解包范围。
 默认烧录版本放在 `config/flash_plan_default.yaml`。
 `Kp` 通用范围为 `[0,500]`，`p_des` 通用范围为 `[-12.5,12.5]`，
@@ -322,8 +363,9 @@ flash_single 08 test.bin
 ```
 
 `flash_single` 不写固件参数时，使用 `config/flash_plan_default.yaml` 中该 index
-对应的 `version`。写了固件参数时，只会在 `firmware_dir` 内查找该文件或版本；
-`50L` 会自动解析为 `firmware/bxi_motor_50L.bin`。
+对应的 `version`。如果程序启动时远程固件全部拉取成功，会优先使用
+`firmware_cache_dir`；否则使用 `firmware_dir`。`50L` 会自动解析为
+`motor_types.firmware` 中配置的文件名。
 
 ### 9.3 按烧录策略文件烧录多个电机
 
@@ -343,6 +385,8 @@ cp config/flash_plan_default.yaml config/flash_plan_debug.yaml
 
 ```yaml
 firmware_dir: firmware
+firmware_base_url: "http://your-download-server/motor"
+firmware_cache_dir: firmware_cache
 
 targets:
   - index: 0
@@ -372,10 +416,14 @@ flash_all config/flash_plan_debug.yaml
 说明：
 
 - 烧录配置描述固件路径和烧录目标：`firmware_dir`、`index`、`bus`、`id`、`version`。
-- `version` 支持简写，例如 `50L` 会尝试 `${firmware_dir}/bxi_motor_50L.bin`。
+- `firmware_base_url` 可选；配置后，程序启动时会尝试把默认烧录计划所需固件下载到
+  `firmware_cache_dir`。
+- `version` 支持型号简写，例如 `50L` 会下载/查找 `motor_types.firmware`
+  中配置的文件名。
 - `version` 也可以写完整文件名，例如 `bxi_motor_50.bin`、`test.bin`。
-- 安全限制：`firmware_dir` 必须是相对目录，不能包含绝对路径或 `..`；`version`
-  和手动固件参数不能包含 `/` 或 `..`，程序只会读取 `firmware_dir` 目录内的文件。
+- 安全限制：`firmware_dir` / `firmware_cache_dir` 必须是相对目录，不能包含绝对路径或
+  `..`；`firmware_base_url` 必须是 `http://` 或 `https://`；`version`
+  和手动固件参数不能包含 `/` 或 `..`。
 - 终端语言、电机输出状态识别、MIT 参数和电机型号配置都放在 `config/motor_console.yaml`。
 
 ### 9.4 烧录全部电机

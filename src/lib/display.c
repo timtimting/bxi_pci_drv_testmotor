@@ -110,7 +110,7 @@ static void console_print_config(const flash_state *state)
 {
     size_t i;
 
-    printf("%s=%s  %s=%s  %s=%zu  home_kp=%g home_kd=%g "
+    printf("%s=%s  %s=%s  firmware_sync_on_start=%s firmware_cache_dir=%s firmware_base_url=%s  %s=%zu  home_kp=%g home_kd=%g "
            "soft_start_ms=%u scan_timeout_ms=%u power_on_wait_ms=%u "
            "can_warmup_count=%u can_warmup_period_ms=%u "
            "mit_canfd=%s live_output=%s language=%s\n",
@@ -118,6 +118,10 @@ static void console_print_config(const flash_state *state)
            state->config_path,
            console_text(state, "固件目录", "firmware_dir"),
            state->config.firmware_dir,
+           state->config.firmware_sync_on_start ? "on" : "off",
+           state->config.firmware_cache_dir,
+           state->config.firmware_base_url[0] != '\0' ?
+           state->config.firmware_base_url : "--",
            console_text(state, "电机数量", "motors"),
            state->config.entry_count,
            state->config.home_kp,

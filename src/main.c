@@ -29,6 +29,8 @@ typedef struct
 typedef struct
 {
     char firmware_dir[PATH_LEN];
+    char firmware_base_url[PATH_LEN];
+    char firmware_cache_dir[PATH_LEN];
     flash_plan_target targets[FLASH_PLAN_MAX_TARGETS];
     size_t target_count;
 } flash_plan_config;
@@ -133,6 +135,7 @@ int main(int argc, char **argv)
                "configuration check passed; no PCI/CAN initialization performed"));
         return 0;
     }
+    console_prefetch_firmware(&state);
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
