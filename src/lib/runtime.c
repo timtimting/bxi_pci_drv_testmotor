@@ -57,6 +57,7 @@ enum {
     HISTORY_DEPTH = 32,
     LINE_LEN = 512,
     MOTOR_TYPE_LEN = 32,
+    MOTOR_NAME_LEN = 64,
     MOTOR_STATE_LEN = 32,
     STATE_PATTERN_LEN = 128,
     PATH_LEN = 512,
@@ -110,6 +111,7 @@ typedef struct
     unsigned int id;
     unsigned int line_no;
     char type[MOTOR_TYPE_LEN];
+    char name[MOTOR_NAME_LEN];
 } motor_map_entry;
 
 typedef struct
@@ -1346,7 +1348,9 @@ static int wait_debug_reply(flash_state *state, unsigned int expected_id, unsign
         return 0;
     }
 
-    printf("no debug reply received in %u ms\n", timeout_ms);
+    if (!state->brief_register_output) {
+        printf("no debug reply received in %u ms\n", timeout_ms);
+    }
     return 1;
 }
 
@@ -2162,6 +2166,7 @@ static int motor_map_add_entry(motor_map_config *config,
                                unsigned int bus,
                                unsigned int id,
                                const char *type,
+                               const char *name,
                                unsigned int line_no)
 {
     motor_map_entry *entry;
@@ -2195,6 +2200,9 @@ static int motor_map_add_entry(motor_map_config *config,
     entry->id = id;
     entry->line_no = line_no;
     snprintf(entry->type, sizeof(entry->type), "%s", normalized);
+    if (name != NULL) {
+        snprintf(entry->name, sizeof(entry->name), "%s", name);
+    }
     return 0;
 }
 
@@ -2251,7 +2259,7 @@ static int parse_csv_motor_map(const char *map_path, motor_map_config *config)
             return -1;
         }
         if (motor_map_add_entry(config, (unsigned int)config->entry_count + 1u,
-                                parsed_bus, parsed_id, type_text, line_no) != 0) {
+                                parsed_bus, parsed_id, type_text, "", line_no) != 0) {
             fclose(fp);
             return -1;
         }
@@ -2300,7 +2308,8 @@ static int yaml_finalize_entry(const char *map_path,
                                unsigned int index,
                                unsigned int bus,
                                unsigned int id,
-                               const char *type)
+                               const char *type,
+                               const char *name)
 {
     if (fields == 0) {
         return 0;
@@ -2312,7 +2321,7 @@ static int yaml_finalize_entry(const char *map_path,
     if ((fields & 0x08) == 0) {
         index = (unsigned int)config->entry_count + 1u;
     }
-    return motor_map_add_entry(config, index, bus, id, type, line_no);
+    return motor_map_add_entry(config, index, bus, id, type, name, line_no);
 }
 
 static int yaml_finalize_type_config(const char *map_path,
@@ -2352,6 +2361,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     unsigned int id = 0u;
     unsigned int index = 0u;
     char type[MOTOR_TYPE_LEN] = "";
+    char name[MOTOR_NAME_LEN] = "";
     int fields = 0;
     unsigned int type_entry_line = 0u;
     char type_entry[MOTOR_TYPE_LEN] = "";
@@ -2384,7 +2394,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
 
         if (strncmp(p, "- ", 2u) == 0) {
             if (section == YAML_SECTION_MOTORS &&
-                yaml_finalize_entry(map_path, config, entry_line, fields, index, bus, id, type) != 0) {
+                yaml_finalize_entry(map_path, config, entry_line, fields, index, bus, id,
+                                    type, name) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -2400,6 +2411,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 id = 0u;
                 index = 0u;
                 type[0] = '\0';
+                name[0] = '\0';
                 fields = 0;
             } else if (section == YAML_SECTION_MOTOR_TYPES) {
                 type_entry_line = line_no;
@@ -2655,6 +2667,13 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             } else {
                 fields |= 0x04;
             }
+        } else if (section == YAML_SECTION_MOTORS && strcmp(key, "name") == 0) {
+            if (strlen(value) >= sizeof(name)) {
+                fprintf(stderr, "%s:%u: motor name is too long\n", map_path, line_no);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(name, sizeof(name), "%s", value);
         }
     }
 
@@ -2665,7 +2684,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         return -1;
     }
     if (section == YAML_SECTION_MOTORS &&
-        yaml_finalize_entry(map_path, config, entry_line, fields, index, bus, id, type) != 0) {
+        yaml_finalize_entry(map_path, config, entry_line, fields, index, bus, id,
+                            type, name) != 0) {
         fclose(fp);
         return -1;
     }

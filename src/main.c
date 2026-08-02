@@ -24,6 +24,7 @@ typedef struct
     unsigned int id;
     unsigned int line_no;
     char version[PATH_LEN];
+    char name[MOTOR_NAME_LEN];
 } flash_plan_target;
 
 typedef struct

@@ -78,8 +78,15 @@ motor[POWER-ON]> power_off
 motor[POWER-OFF]> quit
 ```
 
-`power_on` waits for soft start, probes every configured motor across all five
-buses, and prints responding indexes and decoded feedback.
+`power_on` waits for soft start, listens/probes all configured motors, and only
+prints motor rows for motors that did not reply.
+
+Example:
+
+```text
+power_on: start power=on wait=2s
+power_on: done total=31 success=31 failed=0
+```
 
 ## Command reference
 

@@ -28,133 +28,164 @@ targets:
     bus: 0
     id: 1
     version: 70
+    name: 腰部左边
   - index: 1
     bus: 0
     id: 2
     version: 70
+    name: 腰部右边
   - index: 2
     bus: 0
     id: 3
     version: 85
+    name: 腰部yaw、z轴
 
   # 左腿：bus1，逻辑 index 03-08
   - index: 3
     bus: 1
     id: 1
     version: 85
+    name: 左腿髋部pitch、y轴
   - index: 4
     bus: 1
     id: 2
     version: 85
+    name: 左腿髋部roll、x轴
   - index: 5
     bus: 1
     id: 3
     version: 70
+    name: 左腿大腿yaw、z轴
   - index: 6
     bus: 1
     id: 4
     version: 85
+    name: 左腿膝盖pitch、y轴
   - index: 7
     bus: 1
     id: 5
     version: 50L
+    name: 左腿脚踝上方电机
   - index: 8
     bus: 1
     id: 6
     version: 50L
+    name: 左腿脚踝下方电机
 
   # 右腿：bus2，逻辑 index 09-14
   - index: 9
     bus: 2
     id: 1
     version: 85
+    name: 右腿髋部pitch、y轴
   - index: 10
     bus: 2
     id: 2
     version: 85
+    name: 右腿髋部roll、x轴
   - index: 11
     bus: 2
     id: 3
     version: 70
+    name: 右腿大腿yaw、z轴
   - index: 12
     bus: 2
     id: 4
     version: 85
+    name: 右腿膝盖pitch、y轴
   - index: 13
     bus: 2
     id: 5
     version: 50L
+    name: 右腿脚踝上方电机
   - index: 14
     bus: 2
     id: 6
     version: 50L
+    name: 右腿脚踝下方电机
 
   # 左手：bus3，逻辑 index 15-21
   - index: 15
     bus: 3
     id: 1
     version: 70
+    name: 左手肩部pitch、y轴
   - index: 16
     bus: 3
     id: 2
     version: 70
+    name: 左手肩部roll、x轴
   - index: 17
     bus: 3
     id: 3
     version: 50
+    name: 左手大臂yaw、z轴
   - index: 18
     bus: 3
     id: 4
     version: 70
+    name: 左手手肘pitch、y轴
   - index: 19
     bus: 3
     id: 5
     version: 50
+    name: 左手小臂roll、x轴
   - index: 20
     bus: 3
     id: 6
     version: 50
+    name: 左手手腕pitch、y轴
   - index: 21
     bus: 3
     id: 7
     version: 50
+    name: 左手手腕yaw、z轴
 
   # 右手：bus4，逻辑 index 22-28
   - index: 22
     bus: 4
     id: 1
     version: 70
+    name: 右手肩部pitch、y轴
   - index: 23
     bus: 4
     id: 2
     version: 70
+    name: 右手肩部roll、x轴
   - index: 24
     bus: 4
     id: 3
     version: 50
+    name: 右手大臂yaw、z轴
   - index: 25
     bus: 4
     id: 4
     version: 70
+    name: 右手手肘pitch、y轴
   - index: 26
     bus: 4
     id: 5
     version: 50
+    name: 右手小臂roll、x轴
   - index: 27
     bus: 4
     id: 6
     version: 50
+    name: 右手手腕pitch、y轴
   - index: 28
     bus: 4
     id: 7
     version: 50
+    name: 右手手腕yaw、z轴
 
   # 头部：bus0 / id4-id5，逻辑 index 29-30
   - index: 29
     bus: 0
     id: 4
     version: 50
+    name: 头部yaw、z轴
   - index: 30
     bus: 0
     id: 5
     version: 50
+    name: 头部pitch、y轴

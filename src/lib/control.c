@@ -31,6 +31,9 @@ static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
                                                        unsigned int bus,
                                                        unsigned int id,
                                                        size_t *slot);
+static size_t console_print_motor_offline_rows(const flash_state *state);
+static size_t console_update_online_from_rx_delta(flash_state *state,
+                                                  const unsigned int *before);
 
 static void console_home_gains_for_motor(const flash_state *state,
                                          const motor_map_entry *motor,
@@ -78,13 +81,8 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
         before[i] = state->motors[i].rx_count;
         state->motors[i].online = false;
     }
-    if (state->config.chinese_ui) {
-        printf("正在通过 %u 路 CAN 总线探测 %zu 台配置电机……\n",
-               (unsigned int)CANFD_DEVICE_NUM, state->config.entry_count);
-    } else {
-        printf("probing %zu configured motors across %u CAN buses...\n",
-               state->config.entry_count, (unsigned int)CANFD_DEVICE_NUM);
-    }
+    printf("motor_scan: start total=%zu buses=%u\n",
+           state->config.entry_count, (unsigned int)CANFD_DEVICE_NUM);
     if (console_silence_process_output(&saved_stdout, &saved_stderr) == 0) {
         output_silenced = true;
     }
@@ -108,19 +106,8 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
         sleep_ms(10u);
     }
     console_record_timeouts(state, before, -1);
-    printf("%s:", console_text(state, "收到回复的电机序号", "responding motor indexes"));
-    for (i = 0u; i < state->config.entry_count; i++) {
-        if (state->motors[i].rx_count != before[i]) {
-            state->motors[i].online = true;
-            printf(" %02u", state->config.entries[i].index);
-            found++;
-        }
-    }
-    if (state->config.chinese_ui) {
-        printf("\n扫描结果：%zu/%zu 台电机在线\n", found, state->config.entry_count);
-    } else {
-        printf("\nscan result: %zu/%zu motors online\n", found, state->config.entry_count);
-    }
+    found = console_update_online_from_rx_delta(state, before);
+    console_print_motor_offline_rows(state);
     for (bus = 0u; bus < CANFD_DEVICE_NUM; bus++) {
         uint64_t new_timeouts = state->can_stats[bus].reply_timeouts - timeout_before[bus];
 
@@ -134,6 +121,8 @@ static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
                    (unsigned long long)state->can_stats[bus].tx_failed);
         }
     }
+    printf("motor_scan: done total=%zu success=%zu failed=%zu\n",
+           state->config.entry_count, found, state->config.entry_count - found);
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
     return found == 0u ? -1 : 0;
@@ -145,13 +134,30 @@ static int console_send_special(flash_state *state,
                                 const char *name)
 {
     unsigned int before[MOTOR_MAP_MAX];
+    bool sent_ok[MOTOR_MAP_MAX];
     unsigned int old_bus = state->bus;
     unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool output_silenced = false;
+    bool quiet_all_enable_disable = selected_slot < 0 &&
+                                    (command == BXI_MOTOR_CMD_ENABLE ||
+                                     command == BXI_MOTOR_CMD_DISABLE);
     size_t i;
+    size_t total = 0u;
     size_t sent = 0u;
+    size_t failed = 0u;
 
     if (console_require_power(state) != 0) {
         return -1;
+    }
+    memset(sent_ok, 0, sizeof(sent_ok));
+    for (i = 0u; i < state->config.entry_count; i++) {
+        if (selected_slot < 0 || i == (size_t)selected_slot) {
+            total++;
+        }
     }
     for (i = 0u; i < state->config.entry_count; i++) {
         before[i] = state->motors[i].rx_count;
@@ -159,17 +165,23 @@ static int console_send_special(flash_state *state,
             continue;
         }
         if (command == BXI_MOTOR_CMD_ZERO && state->motors[i].enabled) {
-            if (state->config.chinese_ui) {
-                printf("%s 被拒绝：电机 index %02u 仍处于使能状态，请先失能\n",
-                       name, state->config.entries[i].index);
-            } else {
-                printf("%s refused: motor index %02u is enabled; disable it first\n",
-                       name, state->config.entries[i].index);
-            }
+            printf("%s: start total=%zu\n", name, total);
+            printf("[motor%02u]: failed reason=enabled bus=%u id=%u\n",
+                   state->config.entries[i].index,
+                   state->config.entries[i].bus,
+                   state->config.entries[i].id);
+            printf("%s: done total=%zu success=%zu failed=1\n",
+                   name, total, total - 1u);
             return -1;
         }
     }
+    printf("%s: start total=%zu\n", name, total);
     frame_ring_clear(&state->frames);
+    if (quiet_all_enable_disable) {
+        state->show_can_output = false;
+        state->show_motor_input = false;
+        output_silenced = console_silence_process_output(&saved_stdout, &saved_stderr) == 0;
+    }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
 
@@ -179,6 +191,7 @@ static int console_send_special(flash_state *state,
         console_use_motor(state, m);
         console_expect_reply(state, m->bus);
         if (send_debug_special(state, command) == 0) {
+            sent_ok[i] = true;
             sent++;
         }
     }
@@ -186,6 +199,11 @@ static int console_send_special(flash_state *state,
     state->boot_id = old_id;
     update_boot_ids(state);
     sleep_ms(state->config.scan_timeout_ms);
+    if (output_silenced) {
+        console_restore_process_output(saved_stdout, saved_stderr);
+    }
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
     console_record_timeouts(state, before, selected_slot);
 
     for (i = 0u; i < state->config.entry_count; i++) {
@@ -200,11 +218,26 @@ static int console_send_special(flash_state *state,
             }
         }
     }
-    if (state->config.chinese_ui) {
-        printf("已向 %zu 台电机发送 %s\n", sent, name);
-    } else {
-        printf("%s sent to %zu motor(s)\n", name, sent);
+    failed = total - sent;
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *m = &state->config.entries[i];
+        const char *status;
+
+        if (selected_slot >= 0 && i != (size_t)selected_slot) {
+            continue;
+        }
+        if (sent_ok[i]) {
+            if (selected_slot < 0) {
+                continue;
+            }
+            status = "success";
+        } else {
+            status = "failed";
+        }
+        printf("[motor%02u]: %s bus=%u id=%u\n", m->index, status, m->bus, m->id);
     }
+    printf("%s: done total=%zu success=%zu failed=%zu\n",
+           name, total, sent, failed);
     return sent == 0u ? -1 : 0;
 }
 
@@ -221,7 +254,6 @@ static int console_can_warmup(flash_state *state,
     int saved_stderr = -1;
     bool output_silenced = false;
     unsigned int sent = 0u;
-    unsigned int before_rx = 0u;
     size_t candidate_count = 0u;
     size_t cursor = 0u;
     size_t i;
@@ -238,7 +270,6 @@ static int console_can_warmup(flash_state *state,
     }
 
     for (i = 0u; i < state->config.entry_count; i++) {
-        before_rx += state->motors[i].rx_count;
         if (!online_only || state->motors[i].online) {
             candidate_count++;
         }
@@ -246,13 +277,6 @@ static int console_can_warmup(flash_state *state,
     if (candidate_count == 0u) {
         return 0;
     }
-    printf("%s%zu%s\n", console_text(state,
-           "CAN warmup：只向 ", "CAN warmup: sending only to "),
-           candidate_count,
-           console_text(state,
-           " 台已在线电机静默发送零 MIT 帧，让 CAN 错误计数自然恢复",
-           " online motor(s), so CAN error counters recover"));
-
     state->show_can_output = false;
     state->show_motor_input = false;
     if (console_silence_process_output(&saved_stdout, &saved_stderr) == 0) {
@@ -293,45 +317,42 @@ static int console_can_warmup(flash_state *state,
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
 
-    {
-        unsigned int after_rx = 0u;
-
-        for (i = 0u; i < state->config.entry_count; i++) {
-            after_rx += state->motors[i].rx_count;
-        }
-        printf("%s %u/%u%s%u\n",
-               console_text(state, "CAN warmup 完成，发送", "CAN warmup finished, sent"),
-               sent,
-               count,
-               console_text(state, "，期间接收回复=", ", replies="),
-               after_rx - before_rx);
-    }
+    (void)candidate_count;
     return sent == count ? 0 : -1;
 }
 
-static size_t console_print_passive_power_on_scan(flash_state *state,
+static size_t console_print_motor_offline_rows(const flash_state *state)
+{
+    size_t i;
+    size_t success = 0u;
+
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *m = &state->config.entries[i];
+        const char *name = m->name[0] != '\0' ? m->name : "-";
+
+        if (state->motors[i].online) {
+            success++;
+            continue;
+        }
+        printf("[motor%02u]: offline name=%s bus=%u id=%u\n",
+               m->index, name, m->bus, m->id);
+    }
+    return success;
+}
+
+static size_t console_update_online_from_rx_delta(flash_state *state,
                                                   const unsigned int *before)
 {
     size_t i;
     size_t found = 0u;
 
-    printf("%s:", console_text(state,
-                               "上电被动监听到回复的电机序号",
-                               "motor indexes seen during passive power-on listen"));
     for (i = 0u; i < state->config.entry_count; i++) {
         if (state->motors[i].rx_count != before[i]) {
             state->motors[i].online = true;
-            printf(" %02u", state->config.entries[i].index);
             found++;
         } else {
             state->motors[i].online = false;
         }
-    }
-    if (state->config.chinese_ui) {
-        printf("\n被动扫描结果：%zu/%zu 台电机在线\n", found, state->config.entry_count);
-    } else {
-        printf("\npassive scan result: %zu/%zu motors online\n",
-               found, state->config.entry_count);
     }
     return found;
 }
@@ -343,6 +364,7 @@ static int console_power_on(flash_state *state)
     unsigned int before[MOTOR_MAP_MAX];
     size_t i;
     size_t passive_found;
+    size_t success;
     int ret;
 
     if (state->motor_power_on) {
@@ -365,33 +387,55 @@ static int console_power_on(flash_state *state)
         state->motors[i].online = false;
     }
     if (state->config.chinese_ui) {
-        printf("电机电源已开启，等待 %u ms 完成软启动\n",
-               state->config.power_on_wait_ms);
+        if ((state->config.power_on_wait_ms % 1000u) == 0u) {
+            printf("power_on: start 电源已开启 wait=%us\n",
+                   state->config.power_on_wait_ms / 1000u);
+        } else {
+            printf("power_on: start 电源已开启 wait=%.3fs\n",
+                   (double)state->config.power_on_wait_ms / 1000.0);
+        }
     } else {
-        printf("motor power ON; waiting %u ms for soft start\n",
-               state->config.power_on_wait_ms);
+        if ((state->config.power_on_wait_ms % 1000u) == 0u) {
+            printf("power_on: start power=on wait=%us\n",
+                   state->config.power_on_wait_ms / 1000u);
+        } else {
+            printf("power_on: start power=on wait=%.3fs\n",
+                   (double)state->config.power_on_wait_ms / 1000.0);
+        }
     }
     console_quiet_sleep_ms(state->config.power_on_wait_ms);
-    passive_found = console_print_passive_power_on_scan(state, before);
+    passive_found = console_update_online_from_rx_delta(state, before);
     if (passive_found != 0u) {
+        success = console_print_motor_offline_rows(state);
         console_can_warmup(state,
                            state->config.can_warmup_count,
                            state->config.can_warmup_period_ms,
                            true);
+        printf("power_on: done total=%zu success=%zu failed=%zu\n",
+               state->config.entry_count, success, state->config.entry_count - success);
         state->show_can_output = old_monitor;
         state->show_motor_input = old_input;
         return 0;
     }
 
-    printf("%s\n", console_text(state,
-           "被动监听没有收到电机输出，开始主动扫描；如果总线未接电机，可能产生 CAN TX error",
-           "passive listen saw no motor output; starting active scan; empty buses may produce CAN TX errors"));
+    printf("power_on: passive=0, active_scan=start\n");
     ret = console_probe_motors(state, state->config.scan_timeout_ms);
     if (ret == 0) {
         console_can_warmup(state,
                            state->config.can_warmup_count,
                            state->config.can_warmup_period_ms,
                            true);
+    }
+    {
+        size_t online = 0u;
+
+        for (i = 0u; i < state->config.entry_count; i++) {
+            if (state->motors[i].online) {
+                online++;
+            }
+        }
+        printf("power_on: done total=%zu success=%zu failed=%zu\n",
+               state->config.entry_count, online, state->config.entry_count - online);
     }
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
@@ -403,24 +447,20 @@ static int console_power_off(flash_state *state)
     size_t i;
     bool any_enabled = false;
 
+    printf("power_off: start total=1\n");
     if (!state->motor_power_on) {
-        printf("%s\n", console_text(state,
-               "电机电源已经关闭", "motor power is already OFF"));
+        printf("power_off: done total=1 success=1 failed=0 already_off\n");
         return 0;
     }
     for (i = 0u; i < state->config.entry_count; i++) {
         any_enabled |= state->motors[i].enabled;
     }
     if (any_enabled) {
-        printf("%s\n", console_text(state,
-               "下电前先失能已使能电机",
-               "disabling motors before power off"));
         console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, "mit_disable_all");
     }
     if (motor_pwr_set(0u) < 0) {
-        fprintf(stderr, "%s\n", console_text(state,
-                "电机下电失败：motor_pwr_set(0)",
-                "motor_pwr_set(0) failed"));
+        fprintf(stderr, "[power]: failed reason=motor_pwr_set_off\n");
+        fprintf(stderr, "power_off: done total=1 success=0 failed=1\n");
         return -1;
     }
     console_quiet_sleep_ms(300u);
@@ -429,7 +469,7 @@ static int console_power_off(flash_state *state)
         state->motors[i].online = false;
         state->motors[i].enabled = false;
     }
-    printf("%s\n", console_text(state, "电机电源已关闭", "motor power OFF"));
+    printf("power_off: done total=1 success=1 failed=0\n");
     return 0;
 }
 
@@ -460,12 +500,12 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
                "未知的电机序号", "unknown motor index"), index);
         return -1;
     }
+    printf("motor_set: start total=1 index=%02u bus=%u id=%u\n",
+           motor->index, motor->bus, motor->id);
     if (!state->motors[slot].enabled) {
-        if (state->config.chinese_ui) {
-            printf("motor_set 被拒绝：电机 index %02u 尚未确认使能\n", index);
-        } else {
-            printf("motor_set refused: motor index %02u is not known to be enabled\n", index);
-        }
+        printf("[motor%02u]: failed bus=%u id=%u reason=not_enabled\n",
+               motor->index, motor->bus, motor->id);
+        printf("motor_set: done total=1 success=0 failed=1\n");
         return -1;
     }
     limits = limits_for_entry(state, motor);
@@ -476,16 +516,15 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
         torque < limits->t_min || torque > limits->t_max ||
         kp < limits->kp_min || kp > limits->kp_max ||
         kd < limits->kd_min || kd > limits->kd_max) {
-        printf("%s: "
+        printf("[motor%02u]: failed bus=%u id=%u reason=out_of_range "
                "p[%g,%g] torque[%g,%g] vel[%g,%g] kp[%g,%g] kd[%g,%g]\n",
-               console_text(state,
-                   "motor_set 被拒绝，参数超出 MIT 范围",
-                   "motor_set refused: values exceed MIT limits"),
+               motor->index, motor->bus, motor->id,
                limits->p_min, limits->p_max,
                limits->t_min, limits->t_max,
                limits->v_min, limits->v_max,
                limits->kp_min, limits->kp_max,
                limits->kd_min, limits->kd_max);
+        printf("motor_set: done total=1 success=0 failed=1\n");
         return -1;
     }
     console_use_motor(state, motor);
@@ -503,6 +542,11 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
             sleep_ms(5u);
         }
         console_record_timeouts(state, before, (int)slot);
+        printf("[motor%02u]: %s bus=%u id=%u\n",
+               motor->index, send_ret == 0 ? "success" : "failed",
+               motor->bus, motor->id);
+        printf("motor_set: done total=1 success=%u failed=%u\n",
+               send_ret == 0 ? 1u : 0u, send_ret == 0 ? 0u : 1u);
         return send_ret;
     }
 }
@@ -516,39 +560,39 @@ static int console_move_zero(flash_state *state)
     unsigned int step;
     unsigned int bus;
     size_t i;
+    size_t failed = 0u;
     bool old_monitor = state->show_can_output;
+    bool send_failed[MOTOR_MAP_MAX];
     uint64_t pending_before[CANFD_DEVICE_NUM];
 
     if (console_require_power(state) != 0) {
         return -1;
     }
+    memset(send_failed, 0, sizeof(send_failed));
+    printf("stand_up: start total=%zu duration_ms=%u\n",
+           state->config.entry_count, state->config.home_soft_start_ms);
     for (i = 0u; i < state->config.entry_count; i++) {
         if (!state->motors[i].online || !state->motors[i].enabled) {
-            if (state->config.chinese_ui) {
-                printf("stand_up 被拒绝：index %02u 未同时满足在线和使能状态\n",
-                       state->config.entries[i].index);
-            } else {
-                printf("stand_up refused: index %02u is not online and enabled\n",
-                       state->config.entries[i].index);
-            }
-            return -1;
+            const motor_map_entry *m = &state->config.entries[i];
+
+            printf("[motor%02u]: failed bus=%u id=%u reason=%s%s%s\n",
+                   m->index, m->bus, m->id,
+                   !state->motors[i].online ? "offline" : "",
+                   (!state->motors[i].online && !state->motors[i].enabled) ? "," : "",
+                   !state->motors[i].enabled ? "not_enabled" : "");
+            failed++;
         }
+    }
+    if (failed != 0u) {
+        printf("stand_up: done total=%zu success=%zu failed=%zu\n",
+               state->config.entry_count, state->config.entry_count - failed, failed);
+        return -1;
     }
     steps = state->config.home_soft_start_ms / period_ms;
     if (steps == 0u) {
         steps = 1u;
     }
-    if (state->config.chinese_ui) {
-        printf("全部电机软启动回零：按 index 使用配置的 kp/kd，持续 %u ms\n",
-               state->config.home_soft_start_ms);
-    } else {
-        printf("moving all motors to zero: per-index kp/kd from config, duration=%u ms\n",
-               state->config.home_soft_start_ms);
-    }
     if (old_monitor) {
-        printf("%s\n", console_text(state,
-               "高频软启动期间暂时关闭实时回复打印",
-               "live reply printing is temporarily suppressed during the high-rate ramp"));
         state->show_can_output = false;
     }
     for (bus = 0u; bus < CANFD_DEVICE_NUM; bus++) {
@@ -566,8 +610,7 @@ static int console_move_zero(flash_state *state)
             console_use_motor(state, m);
             console_expect_reply(state, m->bus);
             if (send_debug_mit(state, 0.0f, 0.0f, kp, kd, 0.0f) != 0) {
-                printf("%s index %02u\n", console_text(state,
-                       "stand_up 发送失败：", "stand_up send failed at"), m->index);
+                send_failed[i] = true;
             }
         }
         sleep_ms(period_ms);
@@ -594,10 +637,25 @@ static int console_move_zero(flash_state *state)
     state->boot_id = old_id;
     update_boot_ids(state);
     state->show_can_output = old_monitor;
-    printf("%s\n", console_text(state,
-           "stand_up 软启动序列完成",
-           "stand_up soft-start sequence complete"));
-    return stop_requested ? -1 : 0;
+    failed = 0u;
+    for (i = 0u; i < state->config.entry_count; i++) {
+        if (send_failed[i]) {
+            const motor_map_entry *m = &state->config.entries[i];
+
+            printf("[motor%02u]: failed bus=%u id=%u reason=send_error\n",
+                   m->index, m->bus, m->id);
+            failed++;
+        }
+    }
+    if (stop_requested && failed == 0u) {
+        failed = state->config.entry_count;
+    }
+    printf("stand_up: done total=%zu success=%zu failed=%zu%s\n",
+           state->config.entry_count,
+           state->config.entry_count - failed,
+           failed,
+           stop_requested ? " interrupted" : "");
+    return failed == 0u && !stop_requested ? 0 : -1;
 }
 
 static void console_can_status(flash_state *state, bool reset)
@@ -666,6 +724,20 @@ static bool console_any_enabled(const flash_state *state)
         }
     }
     return false;
+}
+
+static const char *console_reg_command_name(unsigned int cmd)
+{
+    if (cmd == CAN_CMD_REG_READ) {
+        return "reg_read";
+    }
+    if (cmd == CAN_CMD_REG_WRITE) {
+        return "reg_write";
+    }
+    if (cmd == CAN_CMD_REG_SAVE) {
+        return "reg_save";
+    }
+    return "reg";
 }
 
 static int console_reg_send_one(flash_state *state,
@@ -749,9 +821,8 @@ static int console_reg_command_all(flash_state *state,
     state->show_can_output = false;
     state->show_motor_input = false;
     state->brief_register_output = true;
-    printf("%s plan=%s total=%zu start\n",
-           console_text(state, "批量寄存器命令", "register batch"),
-           DEFAULT_FLASH_PLAN, plan.target_count);
+    printf("%s: start plan=%s total=%zu\n",
+           console_reg_command_name(cmd), DEFAULT_FLASH_PLAN, plan.target_count);
     for (i = 0u; i < plan.target_count && !stop_requested; i++) {
         const flash_plan_target *target = &plan.targets[i];
         const motor_map_entry *motor;
@@ -772,6 +843,8 @@ static int console_reg_command_all(flash_state *state,
         if (console_reg_send_one(state, motor, cmd, reg, value, wait_ms) == 0) {
             succeeded++;
         } else {
+            printf("[motor%02u]: failed bus=%u id=%u reason=no_reply\n",
+                   motor->index, motor->bus, motor->id);
             failed++;
         }
     }
@@ -781,9 +854,8 @@ static int console_reg_command_all(flash_state *state,
     state->bus = old_bus;
     set_target_id(state, old_id);
 
-    printf("%s total=%zu success=%zu failed=%zu%s\n",
-           console_text(state, "批量寄存器完成", "register batch done"),
-           plan.target_count, succeeded, failed,
+    printf("%s: done total=%zu success=%zu failed=%zu%s\n",
+           console_reg_command_name(cmd), plan.target_count, succeeded, failed,
            stop_requested ? console_text(state, " interrupted", " interrupted") : "");
     return failed == 0u && succeeded == plan.target_count ? 0 : -1;
 }
@@ -796,6 +868,7 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
     unsigned int wait_ms = 1000u;
     unsigned int old_bus;
     unsigned int old_id;
+    bool old_brief_register_output;
     size_t slot;
     const motor_map_entry *motor;
     int ret;
@@ -862,7 +935,18 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
 
     old_bus = state->bus;
     old_id = state->boot_id;
+    old_brief_register_output = state->brief_register_output;
+    state->brief_register_output = true;
+    printf("%s: start total=1 index=%02u bus=%u id=%u\n",
+           console_reg_command_name(cmd), motor->index, motor->bus, motor->id);
     ret = console_reg_send_one(state, motor, cmd, reg, value, wait_ms);
+    if (ret != 0) {
+        printf("[motor%02u]: failed bus=%u id=%u reason=no_reply\n",
+               motor->index, motor->bus, motor->id);
+    }
+    printf("%s: done total=1 success=%u failed=%u\n",
+           console_reg_command_name(cmd), ret == 0 ? 1u : 0u, ret == 0 ? 0u : 1u);
+    state->brief_register_output = old_brief_register_output;
     state->bus = old_bus;
     set_target_id(state, old_id);
     (void)slot;

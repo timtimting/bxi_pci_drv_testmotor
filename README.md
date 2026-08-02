@@ -152,6 +152,22 @@ help
 4. 只向已确认在线电机发送 `can_warmup_count` 次零 MIT 帧，让 CAN TX error 通过成功 ACK 逐步恢复。
 5. 如果被动监听没有发现电机，再进入主动扫描；空总线可能产生 CAN TX error。
 
+典型输出：
+
+```text
+power_on: start 电源已开启 wait=2s
+power_on: done total=31 success=31 failed=0
+```
+
+如果有电机未回复，只会额外输出未回复的电机，并按照烧录配置中的 `name` 标出关节位置：
+
+```text
+power_on: start 电源已开启 wait=2s
+[motor08]: offline name=左腿 bus=1 id=6
+[motor29]: offline name=头部 bus=0 id=4
+power_on: done total=31 success=29 failed=2
+```
+
 也可以手动重新扫描：
 
 ```text

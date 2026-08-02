@@ -153,7 +153,9 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         state->show_motor_input = false;
         state->suppress_boot_text = true;
         state->brief_flash_output = true;
-        printf("FLASH SUMMARY total=%zu start\n", selected);
+        printf("flash_all: start total=%zu%s\n", selected, cycle ? " cycle" : "");
+    } else {
+        printf("flash_single: start total=1\n");
     }
     failed = 0u;
     for (i = 0u; i < selected && !stop_requested; i++) {
@@ -166,10 +168,10 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
         state->brief_flash_ordinal = ordinal;
         state->brief_flash_total = selected;
         if (all) {
-            printf("FLASH START %02zu/%02zu index=%02u bus=%u id=%u version=%s\n",
-                   ordinal, selected, motor->index, motor->bus, motor->id, motor->type);
+            printf("[motor%02u]: start ordinal=%zu/%zu bus=%u id=%u version=%s\n",
+                   motor->index, ordinal, selected, motor->bus, motor->id, motor->type);
         } else {
-            printf("\n######## FLASH SINGLE: index=%02u bus=%u id=%u file=%s%s ########\n",
+            printf("[motor%02u]: start bus=%u id=%u file=%s%s\n",
                    motor->index, motor->bus, motor->id, paths[i], cycle ? " cycle" : "");
         }
         ret = boot_flash_file(state, paths[i], cycle);
@@ -177,18 +179,16 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
             succeeded++;
             memset(&state->motors[slots[i]], 0, sizeof(state->motors[slots[i]]));
             if (all) {
-                printf("FLASH DONE  %02zu/%02zu index=%02u result=OK\n",
-                       ordinal, selected, motor->index);
+                printf("[motor%02u]: done result=success\n", motor->index);
             } else {
-                printf("######## FLASH SINGLE SUCCESS: index=%02u ########\n", motor->index);
+                printf("[motor%02u]: done result=success\n", motor->index);
             }
         } else {
             failed++;
             if (all) {
-                fprintf(stderr, "FLASH DONE  %02zu/%02zu index=%02u result=FAILED\n",
-                        ordinal, selected, motor->index);
+                fprintf(stderr, "[motor%02u]: done result=failed\n", motor->index);
             } else {
-                fprintf(stderr, "######## FLASH SINGLE FAILED: index=%02u ########\n", motor->index);
+                fprintf(stderr, "[motor%02u]: done result=failed\n", motor->index);
             }
         }
     }
@@ -198,8 +198,11 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     state->suppress_boot_text = old_suppress_boot_text;
     state->brief_flash_output = old_brief_flash_output;
     if (all) {
-        printf("FLASH SUMMARY total=%zu success=%zu failed=%zu%s\n",
+        printf("flash_all: done total=%zu success=%zu failed=%zu%s\n",
                selected, succeeded, failed, stop_requested ? " interrupted" : "");
+    } else {
+        printf("flash_single: done total=1 success=%zu failed=%zu%s\n",
+               succeeded, failed, stop_requested ? " interrupted" : "");
     }
     return failed == 0u && succeeded == selected ? 0 : -1;
 }
@@ -616,6 +619,7 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     bool cycle = false;
     bool old_monitor;
     const char *firmware_arg = NULL;
+    const motor_map_entry *target_motor = NULL;
     int ret;
     int argi;
 
@@ -642,6 +646,7 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
         (void)slot;
         bus = motor->bus;
         id = motor->id;
+        target_motor = motor;
         firmware_arg = argv[2];
         if (argc == 4) {
             cycle = true;
@@ -686,9 +691,16 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     old_id = state->boot_id;
     state->bus = bus;
     set_target_id(state, id);
+    if (target_motor == NULL) {
+        target_motor = console_motor_by_bus_id(state, bus, id, NULL);
+    }
 
-    printf("\n######## DEBUG FLASH: bus=%u id=%u file=%s%s ########\n",
+    printf("flash_debug: start total=1 bus=%u id=%u file=%s%s\n",
            bus, id, path, cycle ? " cycle" : "");
+    if (target_motor != NULL) {
+        printf("[motor%02u]: start bus=%u id=%u\n",
+               target_motor->index, bus, id);
+    }
     old_monitor = state->show_can_output;
     state->show_can_output = false;
     ret = boot_flash_file(state, path, cycle);
@@ -698,10 +710,16 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     set_target_id(state, old_id);
 
     if (ret == 0) {
-        printf("######## DEBUG FLASH SUCCESS: bus=%u id=%u ########\n", bus, id);
+        if (target_motor != NULL) {
+            printf("[motor%02u]: done result=success\n", target_motor->index);
+        }
+        printf("flash_debug: done total=1 success=1 failed=0\n");
         return 0;
     }
-    fprintf(stderr, "######## DEBUG FLASH FAILED: bus=%u id=%u ########\n", bus, id);
+    if (target_motor != NULL) {
+        fprintf(stderr, "[motor%02u]: done result=failed\n", target_motor->index);
+    }
+    fprintf(stderr, "flash_debug: done total=1 success=0 failed=1\n");
     return -1;
 }
 
@@ -870,6 +888,16 @@ static int load_flash_plan_config(const char *path, flash_plan_config *plan)
             if (target.line_no == 0u) {
                 target.line_no = line_no;
             }
+        } else if (in_targets && strcmp(key, "name") == 0) {
+            if (strlen(value) >= sizeof(target.name)) {
+                fprintf(stderr, "%s:%u: target name is too long\n", path, line_no);
+                fclose(fp);
+                return -1;
+            }
+            snprintf(target.name, sizeof(target.name), "%s", value);
+            if (target.line_no == 0u) {
+                target.line_no = line_no;
+            }
         } else {
             fprintf(stderr, "%s:%u: unknown flash plan key: %s\n", path, line_no, key);
             fclose(fp);
@@ -985,7 +1013,7 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     state->suppress_boot_text = true;
     state->brief_flash_output = true;
 
-    printf("FLASH ALL plan=%s total=%zu start%s\n",
+    printf("flash_all: start plan=%s total=%zu%s\n",
            plan_path, plan.target_count, cycle ? " cycle" : "");
     for (i = 0u; i < plan.target_count && !stop_requested; i++) {
         const flash_plan_target *target = &plan.targets[i];
@@ -996,8 +1024,8 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
         state->brief_flash_index = target->index;
         state->brief_flash_ordinal = i + 1u;
         state->brief_flash_total = plan.target_count;
-        printf("FLASH START %02zu/%02zu index=%02u bus=%u id=%u version=%s file=%s%s\n",
-               i + 1u, plan.target_count, target->index, target->bus, target->id,
+        printf("[motor%02u]: start ordinal=%zu/%zu bus=%u id=%u version=%s file=%s%s\n",
+               target->index, i + 1u, plan.target_count, target->bus, target->id,
                target->version, resolved_paths[i], cycle ? " cycle" : "");
         ret = boot_flash_file(state, resolved_paths[i], cycle);
         if (ret == 0) {
@@ -1005,12 +1033,10 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
             if (slots[i] != (size_t)-1) {
                 memset(&state->motors[slots[i]], 0, sizeof(state->motors[slots[i]]));
             }
-            printf("FLASH DONE  %02zu/%02zu index=%02u result=OK\n",
-                   i + 1u, plan.target_count, target->index);
+            printf("[motor%02u]: done result=success\n", target->index);
         } else {
             failed++;
-            fprintf(stderr, "FLASH DONE  %02zu/%02zu index=%02u result=FAILED\n",
-                    i + 1u, plan.target_count, target->index);
+            fprintf(stderr, "[motor%02u]: done result=failed\n", target->index);
         }
     }
     collect_text(state, 800u, 3000u);
@@ -1023,7 +1049,7 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     state->bus = old_bus;
     set_target_id(state, old_id);
 
-    printf("FLASH ALL SUMMARY total=%zu success=%zu failed=%zu%s\n",
+    printf("flash_all: done total=%zu success=%zu failed=%zu%s\n",
            plan.target_count, succeeded, failed, stop_requested ? " interrupted" : "");
     return failed == 0u && succeeded == plan.target_count ? 0 : -1;
 }
@@ -1075,7 +1101,7 @@ static int console_load_default_topology(motor_map_config *config)
             return -1;
         }
         if (motor_map_add_entry(config, target->index, target->bus, target->id,
-                                target->version, target->line_no) != 0) {
+                                target->version, target->name, target->line_no) != 0) {
             return -1;
         }
     }
