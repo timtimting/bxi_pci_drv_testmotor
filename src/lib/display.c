@@ -46,11 +46,13 @@ static void console_print_help(bool chinese)
         printf("      两位数按 index，一位 bus+一位 id 按 Bus/ID；必须显式指定固件。\n");
         printf("  motor_dbg <index00>\n");
         printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
+        printf("  motor_reply <index00> [wait_ms] [passive]  （别名：can_dbg）\n");
+        printf("      打印指定电机相关的原始 CAN 回复；默认发送一帧零 MIT 触发回复，passive 只监听。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
         printf("  quit | exit | q | qq\n");
-        printf("      退出终端；电机电源开启时必须先执行 `power_off`。\n");
+        printf("      退出终端；如果电机仍上电，会先自动执行 power_off。\n");
         printf("安全限制：烧录固件名和 version 只能在 firmware_dir 内解析，不接受绝对路径、/ 或 ..。\n");
         return;
     }
@@ -98,11 +100,14 @@ static void console_print_help(bool chinese)
     printf("  motor_dbg <index00>\n");
     printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
     printf("      is sent immediately; ` exits debug mode.\n");
+    printf("  motor_reply <index00> [wait_ms] [passive]  (alias: can_dbg)\n");
+    printf("      Print raw CAN replies related to one motor. By default sends one zero MIT\n");
+    printf("      frame first; passive only listens.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
     printf("  quit | exit | q | qq\n");
-    printf("      Exit. `power_off` is required first while motor power is on.\n");
+    printf("      Exit. If motor power is still on, power_off is run automatically first.\n");
     printf("Safety: firmware names and versions are resolved only inside firmware_dir; absolute paths, / and .. are rejected.\n");
 }
 

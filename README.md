@@ -254,7 +254,7 @@ quit
 ```
 
 如果仍有已知使能电机，`power_off` 会先发送全部失能命令，再关闭总电源。电源开启时
-直接执行 `quit` 会被拒绝。
+直接执行 `quit` / `q` / `qq` 会自动执行一次 `power_off`，下电成功后再退出。
 
 ## 8. CAN 输出和统计
 
@@ -505,7 +505,7 @@ config/motor_console.yaml
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
-| `quit` / `exit` / `q` / `qq` | 无 | 退出终端；电源开启时会拒绝直接退出 |
+| `quit` / `exit` / `q` / `qq` | 无 | 退出终端；电源开启时会先自动下电 |
 
 ### 11.2 MIT 控制
 

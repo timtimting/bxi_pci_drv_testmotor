@@ -112,7 +112,7 @@ power_on: done total=31 success=31 failed=0
 | `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | Two digits select index; one-digit bus + one-digit id select Bus/ID |
 | `can_status` | `[reset]` | Show or reset per-bus software statistics |
 | `help` / `-h` / `?` | none | Show built-in help |
-| `quit` / `exit` / `q` | none | Exit; motor power must be off |
+| `quit` / `exit` / `q` | none | Exit; automatically runs `power_off` first if motor power is on |
 
 Register commands follow the motor firmware CAN config protocol:
 `reg_write` sends `CAN_CMD_SET_CONFIG=0x11`, `reg_read` sends

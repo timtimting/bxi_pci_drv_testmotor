@@ -42,7 +42,7 @@ static const char *const console_command_words[] = {
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
     "reg_read", "reg_write", "reg_save",
     "flash_single", "flash_all", "flash_debug",
-    "motor_dbg",
+    "motor_dbg", "can_dbg", "motor_reply", "motor_can_dbg",
     "can_status",
     "language", "lang", "quit", "exit", "q", "qq",
 };

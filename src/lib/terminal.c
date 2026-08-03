@@ -149,6 +149,10 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_flash_debug(state, argc, argv);
     } else if (strcmp(cmd, "motor_dbg") == 0) {
         return console_motor_dbg(state, argc, argv);
+    } else if (strcmp(cmd, "can_dbg") == 0 ||
+               strcmp(cmd, "motor_reply") == 0 ||
+               strcmp(cmd, "motor_can_dbg") == 0) {
+        return console_motor_reply(state, argc, argv);
     } else if (strcmp(cmd, "can_status") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "reset") != 0)) {
             printf("%s: can_status [reset]\n", console_text(state, "用法", "usage"));
@@ -160,10 +164,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                strcmp(cmd, "quit") == 0 ||
                strcmp(cmd, "exit") == 0) {
         if (state->motor_power_on) {
-            printf("%s\n", console_text(state,
-                   "退出被拒绝：电机仍处于上电状态，请先执行 `power_off`",
-                   "exit refused: motor power is ON; run `power_off` first"));
-            return -1;
+            if (console_power_off(state) != 0) {
+                printf("%s\n", console_text(state,
+                       "退出失败：自动下电未完成，请检查后重试",
+                       "exit failed: automatic power_off did not complete; check and retry"));
+                return -1;
+            }
         }
         return CONSOLE_COMMAND_EXIT;
     } else {
