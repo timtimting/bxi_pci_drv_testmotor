@@ -78,14 +78,24 @@ motor[POWER-ON]> power_off
 motor[POWER-OFF]> quit
 ```
 
-`power_on` waits for soft start, listens/probes all configured motors, and only
-prints motor rows for motors that did not reply.
+`power_on` waits for soft start, listens/probes all configured motors, and prints
+the smaller side of the result: offline motors when only a few are missing, or
+online motors when most motors did not reply.
 
 Example:
 
 ```text
 power_on: start power=on wait=2s
 power_on: done total=31 success=31 failed=0
+```
+
+Mostly-offline example:
+
+```text
+power_on: start power=on wait=2s
+[motor00]: online name=waist-left bus=0 id=1
+[motor03]: online name=left-hip-pitch bus=1 id=1
+power_on: done total=31 success=2 failed=29
 ```
 
 ## Command reference

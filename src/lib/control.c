@@ -325,18 +325,33 @@ static size_t console_print_motor_offline_rows(const flash_state *state)
 {
     size_t i;
     size_t success = 0u;
+    size_t failed;
+    bool print_online;
+
+    for (i = 0u; i < state->config.entry_count; i++) {
+        if (state->motors[i].online) {
+            success++;
+        }
+    }
+    failed = state->config.entry_count - success;
+    if (failed == 0u) {
+        return success;
+    }
+    print_online = success != 0u && success <= failed;
 
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
         const char *name = m->name[0] != '\0' ? m->name : "-";
 
-        if (state->motors[i].online) {
-            success++;
-            continue;
+        if (print_online && state->motors[i].online) {
+            printf("[motor%02u]: online name=%s bus=%u id=%u\n",
+                   m->index, name, m->bus, m->id);
+        } else if (!print_online && !state->motors[i].online) {
+            printf("[motor%02u]: offline name=%s bus=%u id=%u\n",
+                   m->index, name, m->bus, m->id);
         }
-        printf("[motor%02u]: offline name=%s bus=%u id=%u\n",
-               m->index, name, m->bus, m->id);
     }
+
     return success;
 }
 

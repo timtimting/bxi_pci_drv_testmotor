@@ -159,13 +159,25 @@ power_on: start 电源已开启 wait=2s
 power_on: done total=31 success=31 failed=0
 ```
 
-如果有电机未回复，只会额外输出未回复的电机，并按照烧录配置中的 `name` 标出关节位置：
+如果有电机未回复，会自动选择更少的一侧输出，避免刷屏：
+
+- 离线电机较少：输出 `offline`，方便直接定位未回复关节。
+- 在线电机较少：输出 `online`，方便确认当前实际连上的电机。
 
 ```text
 power_on: start 电源已开启 wait=2s
 [motor08]: offline name=左腿 bus=1 id=6
 [motor29]: offline name=头部 bus=0 id=4
 power_on: done total=31 success=29 failed=2
+```
+
+大部分电机未回复时，输出会变成：
+
+```text
+power_on: start 电源已开启 wait=2s
+[motor00]: online name=腰部左边 bus=0 id=1
+[motor03]: online name=左腿髋部pitch、y轴 bus=1 id=1
+power_on: done total=31 success=2 failed=29
 ```
 
 也可以手动重新扫描：
