@@ -35,6 +35,64 @@ static size_t console_print_motor_offline_rows(const flash_state *state);
 static size_t console_update_online_from_rx_delta(flash_state *state,
                                                   const unsigned int *before);
 
+static bool console_split_joint_axis_name(const char *name,
+                                          const char **joint_start,
+                                          size_t *joint_name_len,
+                                          const char **joint,
+                                          const char **axis)
+{
+    static const struct {
+        const char *joint;
+        const char *marker;
+    } patterns[] = {
+        {"pitch", "pitch、"},
+        {"roll", "roll、"},
+        {"yaw", "yaw、"},
+    };
+    size_t i;
+
+    if (name == NULL) {
+        return false;
+    }
+    for (i = 0u; i < sizeof(patterns) / sizeof(patterns[0]); i++) {
+        const char *p = strstr(name, patterns[i].marker);
+
+        if (p != NULL) {
+            *joint_start = name;
+            *joint_name_len = (size_t)(p - name);
+            *joint = patterns[i].joint;
+            *axis = p + strlen(patterns[i].marker);
+            return **axis != '\0';
+        }
+    }
+    return false;
+}
+
+static void console_print_motor_presence_row(const motor_map_entry *m,
+                                             const char *presence)
+{
+    const char *name = m->name[0] != '\0' ? m->name : "-";
+    const char *base = NULL;
+    const char *joint = NULL;
+    const char *axis = NULL;
+    size_t base_len = 0u;
+
+    if (console_split_joint_axis_name(name, &base, &base_len, &joint, &axis)) {
+        printf("[motor%02u]: %s name=%.*s joint=%-5s axis=%s bus=%u id=%u\n",
+               m->index,
+               presence,
+               (int)base_len,
+               base,
+               joint,
+               axis,
+               m->bus,
+               m->id);
+    } else {
+        printf("[motor%02u]: %s name=%s bus=%u id=%u\n",
+               m->index, presence, name, m->bus, m->id);
+    }
+}
+
 static void console_home_gains_for_motor(const flash_state *state,
                                          const motor_map_entry *motor,
                                          float *kp,
@@ -341,14 +399,11 @@ static size_t console_print_motor_offline_rows(const flash_state *state)
 
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
-        const char *name = m->name[0] != '\0' ? m->name : "-";
 
         if (print_online && state->motors[i].online) {
-            printf("[motor%02u]: online name=%s bus=%u id=%u\n",
-                   m->index, name, m->bus, m->id);
+            console_print_motor_presence_row(m, "online");
         } else if (!print_online && !state->motors[i].online) {
-            printf("[motor%02u]: offline name=%s bus=%u id=%u\n",
-                   m->index, name, m->bus, m->id);
+            console_print_motor_presence_row(m, "offline");
         }
     }
 
