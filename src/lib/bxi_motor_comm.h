@@ -2,6 +2,7 @@
 #define BXI_MOTOR_COMM_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #define BXI_MOTOR_MIT_LEN 8u
@@ -37,7 +38,17 @@ typedef struct
     float torque;
     float mos_temperature;
     float motor_temperature;
+    bool aux_valid;
+    bool aux_payload_valid;
+    uint8_t aux_id;
+    uint16_t aux_payload;
+    float aux_value;
 } bxi_motor_reply;
+
+const char *bxi_motor_aux_name(uint8_t aux_id);
+const char *bxi_motor_aux_unit(uint8_t aux_id);
+const char *bxi_motor_fsm_state_name(unsigned int fsm_state);
+const char *bxi_motor_control_mode_name(unsigned int control_mode);
 
 extern const bxi_motor_limits bxi_motor_default_limits;
 

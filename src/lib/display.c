@@ -181,9 +181,9 @@ static void console_print_motors(const flash_state *state)
            console_text(state, "配置电机数", "configured motors"),
            state->config.entry_count);
     if (state->config.chinese_ui) {
-        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     mos(C) motor(C)\n");
+        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
     } else {
-        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     mos(C) motor(C)\n");
+        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
     }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
@@ -199,14 +199,14 @@ static void console_print_motors(const flash_state *state)
         last_bus = m->bus;
 
         if (r->last_reply_us == 0u) {
-            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s --      --         --         --         --     --\n",
+            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s --      --         --         --         --      --      --      --\n",
                    m->index, m->bus, m->id, m->type,
                    state_label,
                    online,
                    enabled);
             continue;
         }
-        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-7llu % .5f  % .5f  % .5f  % .1f  % .1f\n",
+        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-7llu % .5f  % .5f  % .5f",
                m->index, m->bus, m->id, m->type,
                state_label,
                online,
@@ -214,8 +214,27 @@ static void console_print_motors(const flash_state *state)
                (unsigned long long)((now - r->last_reply_us) / 1000ULL),
                r->last_reply.position,
                r->last_reply.velocity,
-               r->last_reply.torque,
-               r->last_reply.mos_temperature,
-               r->last_reply.motor_temperature);
+               r->last_reply.torque);
+        if (r->aux_valid[0]) {
+            printf("  % .1f", r->aux_value[0]);
+        } else {
+            printf("  --    ");
+        }
+        if (r->aux_valid[1]) {
+            printf("  % .1f", r->aux_value[1]);
+        } else {
+            printf("  --    ");
+        }
+        if (r->aux_valid[3]) {
+            printf("  % .2f", r->aux_value[3]);
+        } else {
+            printf("  --    ");
+        }
+        if (r->aux_valid[15]) {
+            printf("  %.0f", r->aux_value[15]);
+        } else {
+            printf("  --");
+        }
+        printf("\n");
     }
 }

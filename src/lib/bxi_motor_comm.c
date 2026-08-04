@@ -9,6 +9,123 @@ const bxi_motor_limits bxi_motor_default_limits = {
     -30.0f, 150.0f,
 };
 
+enum {
+    BXI_MOTOR_AUX_INVALID_PAYLOAD = 0x0fffu,
+    BXI_MOTOR_AUX_NTC1 = 0x0u,
+    BXI_MOTOR_AUX_NTC2 = 0x1u,
+    BXI_MOTOR_AUX_WINDING_TEMP = 0x2u,
+    BXI_MOTOR_AUX_VBUS = 0x3u,
+    BXI_MOTOR_AUX_IBUS = 0x4u,
+    BXI_MOTOR_AUX_IQ = 0x5u,
+    BXI_MOTOR_AUX_ID = 0x6u,
+    BXI_MOTOR_AUX_FSM_STATUS = 0x7u,
+    BXI_MOTOR_AUX_THERMAL_COEFF = 0x8u,
+    BXI_MOTOR_AUX_VOLTAGE_UTIL = 0x9u,
+    BXI_MOTOR_AUX_HEARTBEAT = 0x0fu,
+};
+
+const char *bxi_motor_aux_name(uint8_t aux_id)
+{
+    switch (aux_id) {
+    case BXI_MOTOR_AUX_NTC1:
+        return "ntc1";
+    case BXI_MOTOR_AUX_NTC2:
+        return "ntc2";
+    case BXI_MOTOR_AUX_WINDING_TEMP:
+        return "winding_temp";
+    case BXI_MOTOR_AUX_VBUS:
+        return "vbus";
+    case BXI_MOTOR_AUX_IBUS:
+        return "i_bus";
+    case BXI_MOTOR_AUX_IQ:
+        return "i_q";
+    case BXI_MOTOR_AUX_ID:
+        return "i_d";
+    case BXI_MOTOR_AUX_FSM_STATUS:
+        return "fsm_status";
+    case BXI_MOTOR_AUX_THERMAL_COEFF:
+        return "thermal_coeff";
+    case BXI_MOTOR_AUX_VOLTAGE_UTIL:
+        return "voltage_util";
+    case BXI_MOTOR_AUX_HEARTBEAT:
+        return "heartbeat";
+    default:
+        return "reserved";
+    }
+}
+
+const char *bxi_motor_aux_unit(uint8_t aux_id)
+{
+    switch (aux_id) {
+    case BXI_MOTOR_AUX_NTC1:
+    case BXI_MOTOR_AUX_NTC2:
+    case BXI_MOTOR_AUX_WINDING_TEMP:
+        return "C";
+    case BXI_MOTOR_AUX_VBUS:
+        return "V";
+    case BXI_MOTOR_AUX_IBUS:
+    case BXI_MOTOR_AUX_IQ:
+    case BXI_MOTOR_AUX_ID:
+        return "A";
+    case BXI_MOTOR_AUX_THERMAL_COEFF:
+    case BXI_MOTOR_AUX_VOLTAGE_UTIL:
+    case BXI_MOTOR_AUX_HEARTBEAT:
+    case BXI_MOTOR_AUX_FSM_STATUS:
+    default:
+        return "";
+    }
+}
+
+const char *bxi_motor_fsm_state_name(unsigned int fsm_state)
+{
+    switch (fsm_state & 0x0fu) {
+    case 0u:
+        return "startup";
+    case 1u:
+        return "motor_menu";
+    case 2u:
+        return "enable";
+    case 3u:
+        return "calib";
+    case 4u:
+        return "ktm";
+    case 5u:
+        return "enco";
+    case 6u:
+        return "ktm_auto";
+    case 7u:
+        return "setup";
+    case 8u:
+        return "error";
+    case 9u:
+        return "openloop";
+    case 10u:
+        return "sls";
+    default:
+        return "unknown";
+    }
+}
+
+const char *bxi_motor_control_mode_name(unsigned int control_mode)
+{
+    switch (control_mode & 0x07u) {
+    case 0u:
+        return "current";
+    case 1u:
+        return "current_ramp";
+    case 2u:
+        return "velocity";
+    case 3u:
+        return "velocity_ramp";
+    case 4u:
+        return "position";
+    case 5u:
+        return "position_trap";
+    default:
+        return "unknown";
+    }
+}
+
 static float clamp_float(float value, float min_value, float max_value)
 {
     if (value < min_value) {
@@ -113,6 +230,7 @@ int bxi_motor_unpack_reply(const uint8_t *data,
     uint32_t p_int;
     uint32_t v_int;
     uint32_t t_int;
+    uint16_t aux;
 
     if (data == 0 || reply == 0 || len < BXI_MOTOR_MIT_LEN) {
         return -1;
@@ -126,12 +244,50 @@ int bxi_motor_unpack_reply(const uint8_t *data,
     v_int = ((uint32_t)data[3] << 4) | ((uint32_t)data[4] >> 4);
     t_int = (((uint32_t)data[4] & 0x0fu) << 8) | (uint32_t)data[5];
 
+    aux = ((uint16_t)data[6] << 8) | (uint16_t)data[7];
+    reply->aux_valid = true;
+    reply->aux_id = (uint8_t)((aux >> 12) & 0x0fu);
+    reply->aux_payload = aux & 0x0fffu;
+    reply->aux_payload_valid = reply->aux_payload != BXI_MOTOR_AUX_INVALID_PAYLOAD;
+    reply->aux_value = 0.0f;
     reply->motor_id = data[0];
     reply->position = uint_to_float(p_int, limits->p_min, limits->p_max, 16u);
     reply->velocity = uint_to_float(v_int, limits->v_min, limits->v_max, 12u);
     reply->torque = uint_to_float(t_int, limits->t_min, limits->t_max, 12u);
-    reply->mos_temperature = uint_to_float(data[6], limits->temp_min, limits->temp_max, 8u);
-    reply->motor_temperature = uint_to_float(data[7], limits->temp_min, limits->temp_max, 8u);
+    reply->mos_temperature = 0.0f;
+    reply->motor_temperature = 0.0f;
+
+    if (reply->aux_payload_valid) {
+        switch (reply->aux_id) {
+        case BXI_MOTOR_AUX_NTC1:
+        case BXI_MOTOR_AUX_NTC2:
+        case BXI_MOTOR_AUX_WINDING_TEMP:
+            reply->aux_value = (float)reply->aux_payload / 10.0f - 50.0f;
+            break;
+        case BXI_MOTOR_AUX_VBUS:
+            reply->aux_value = (float)reply->aux_payload / 20.0f;
+            break;
+        case BXI_MOTOR_AUX_IBUS:
+        case BXI_MOTOR_AUX_IQ:
+        case BXI_MOTOR_AUX_ID:
+            reply->aux_value = (float)reply->aux_payload / 10.0f - 160.0f;
+            break;
+        case BXI_MOTOR_AUX_THERMAL_COEFF:
+        case BXI_MOTOR_AUX_VOLTAGE_UTIL:
+            reply->aux_value = (float)reply->aux_payload / 1000.0f;
+            break;
+        case BXI_MOTOR_AUX_FSM_STATUS:
+        case BXI_MOTOR_AUX_HEARTBEAT:
+        default:
+            reply->aux_value = (float)reply->aux_payload;
+            break;
+        }
+    }
+    if (reply->aux_id == BXI_MOTOR_AUX_NTC1 && reply->aux_payload_valid) {
+        reply->mos_temperature = reply->aux_value;
+    } else if (reply->aux_id == BXI_MOTOR_AUX_NTC2 && reply->aux_payload_valid) {
+        reply->motor_temperature = reply->aux_value;
+    }
 
     return 0;
 }

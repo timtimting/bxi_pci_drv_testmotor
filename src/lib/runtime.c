@@ -60,6 +60,8 @@ enum {
     MOTOR_NAME_LEN = 64,
     MOTOR_STATE_LEN = 32,
     STATE_PATTERN_LEN = 128,
+    STATE_PATTERN_MAX = 32,
+    STATE_CODE_MAX = 32,
     PATH_LEN = 512,
     MOTOR_MAP_MAX = 256,
     FIRMWARE_FILE_MAX = 256,
@@ -129,6 +131,18 @@ typedef struct
 
 typedef struct
 {
+    char label[MOTOR_STATE_LEN];
+    char pattern[STATE_PATTERN_LEN];
+} state_pattern_rule;
+
+typedef struct
+{
+    unsigned int code;
+    char label[MOTOR_STATE_LEN];
+} state_code_rule;
+
+typedef struct
+{
     char firmware_dir[PATH_LEN];
     char firmware_base_url[PATH_LEN];
     char firmware_cache_dir[PATH_LEN];
@@ -150,6 +164,11 @@ typedef struct
     char state_boot_menu_pattern[STATE_PATTERN_LEN];
     char state_motor_menu_pattern[STATE_PATTERN_LEN];
     char state_menu_pattern[STATE_PATTERN_LEN];
+    char state_code_prefix[STATE_PATTERN_LEN];
+    state_pattern_rule state_patterns[STATE_PATTERN_MAX];
+    size_t state_pattern_count;
+    state_code_rule state_codes[STATE_CODE_MAX];
+    size_t state_code_count;
     bxi_motor_limits mit_limits;
     bool mit_canfd;
     bool live_output;
@@ -180,6 +199,9 @@ typedef struct
     bool enabled;
     uint64_t last_reply_us;
     bxi_motor_reply last_reply;
+    bool aux_valid[16];
+    float aux_value[16];
+    uint16_t aux_payload[16];
     unsigned int rx_count;
     unsigned int timeout_count;
     char state_label[MOTOR_STATE_LEN];
@@ -231,6 +253,9 @@ typedef struct
     bool chinese_override;
     char config_path[PATH_LEN];
 } flash_state;
+
+static const char *state_label_for_code(const motor_map_config *config,
+                                        unsigned int code);
 
 static volatile sig_atomic_t stop_requested = 0;
 static char command_history[HISTORY_DEPTH][LINE_LEN];
@@ -537,64 +562,134 @@ static const char *motor_runtime_state(const motor_runtime *runtime)
     return runtime->state_label;
 }
 
+static void motor_runtime_update_aux(const motor_map_config *config,
+                                     motor_runtime *runtime,
+                                     const bxi_motor_reply *reply)
+{
+    unsigned int fsm_state;
+
+    if (runtime == NULL || reply == NULL || !reply->aux_valid ||
+        reply->aux_id >= 16u || !reply->aux_payload_valid) {
+        return;
+    }
+
+    runtime->aux_valid[reply->aux_id] = true;
+    runtime->aux_value[reply->aux_id] = reply->aux_value;
+    runtime->aux_payload[reply->aux_id] = reply->aux_payload;
+
+    if (reply->aux_id == 0x0u) {
+        runtime->last_reply.mos_temperature = reply->aux_value;
+    } else if (reply->aux_id == 0x1u) {
+        runtime->last_reply.motor_temperature = reply->aux_value;
+    } else if (reply->aux_id == 0x7u) {
+        fsm_state = reply->aux_payload & 0x0fu;
+        motor_runtime_set_state(runtime, state_label_for_code(config, fsm_state));
+        runtime->enabled = ((reply->aux_payload & (1u << 4)) != 0u);
+    }
+}
+
+static void print_mit_aux_decode(const motor_map_config *config,
+                                 const bxi_motor_reply *reply)
+{
+    unsigned int fsm_state;
+    unsigned int control_mode;
+
+    if (reply == NULL || !reply->aux_valid) {
+        return;
+    }
+    printf(" aux=0x%x:%s", reply->aux_id, bxi_motor_aux_name(reply->aux_id));
+    if (!reply->aux_payload_valid) {
+        printf(" invalid");
+        return;
+    }
+    if (reply->aux_id == 0x7u) {
+        fsm_state = reply->aux_payload & 0x0fu;
+        control_mode = (reply->aux_payload >> 9) & 0x07u;
+        printf(" state=%s armed=%u enci=%u enco=%u fw=%u mit=%u ctrl=%s raw=0x%03x",
+               state_label_for_code(config, fsm_state),
+               (reply->aux_payload >> 4) & 0x01u,
+               (reply->aux_payload >> 5) & 0x01u,
+               (reply->aux_payload >> 6) & 0x01u,
+               (reply->aux_payload >> 7) & 0x01u,
+               (reply->aux_payload >> 8) & 0x01u,
+               bxi_motor_control_mode_name(control_mode),
+               reply->aux_payload);
+        return;
+    }
+    printf(" value=% .3f%s raw=%u",
+           reply->aux_value,
+           bxi_motor_aux_unit(reply->aux_id),
+           reply->aux_payload);
+}
+
+static bool motor_state_marker_from_line(const motor_map_config *config,
+                                         const char *line,
+                                         const char **state)
+{
+    const char *p;
+    unsigned int fsm_state;
+
+    if (config == NULL || line == NULL || state == NULL ||
+        config->state_code_prefix[0] == '\0') {
+        return false;
+    }
+    p = strstr(line, config->state_code_prefix);
+    if (p == NULL) {
+        return false;
+    }
+    p += strlen(config->state_code_prefix);
+    while (*p != '\0' && isspace((unsigned char)*p)) {
+        p++;
+    }
+    if (!isdigit((unsigned char)*p)) {
+        return false;
+    }
+    fsm_state = (unsigned int)strtoul(p, NULL, 10);
+    *state = state_label_for_code(config, fsm_state);
+    return true;
+}
+
 static void update_motor_state_from_boot_line(flash_state *state,
                                               motor_runtime *runtime,
                                               const char *line)
 {
     const motor_map_config *config;
+    const char *state_from_marker = NULL;
 
     if (state == NULL || runtime == NULL || line == NULL) {
         return;
     }
     config = &state->config;
-    if (config->state_boot_pattern[0] != '\0' &&
-        strstr(line, config->state_boot_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "boot");
+    if (motor_state_marker_from_line(config, line, &state_from_marker)) {
+        motor_runtime_set_state(runtime, state_from_marker);
     }
-    if (config->state_motor_pattern[0] != '\0' &&
-        strstr(line, config->state_motor_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "motor");
-    }
-    if (config->state_no_app_pattern[0] != '\0' &&
-        strstr(line, config->state_no_app_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "boot");
-    }
-    if (config->state_boot_menu_pattern[0] != '\0' &&
-        strstr(line, config->state_boot_menu_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "boot_menu");
-    }
-    if (config->state_motor_menu_pattern[0] != '\0' &&
-        strstr(line, config->state_motor_menu_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "motor_menu");
-    }
-    if (strstr(line, "Commands:") != NULL &&
-        strcmp(motor_runtime_state(runtime), "motor") != 0 &&
-        strcmp(motor_runtime_state(runtime), "motor_menu") != 0) {
-        motor_runtime_set_state(runtime, "boot_menu");
-    }
-    if (config->state_menu_pattern[0] != '\0' &&
-        strstr(line, config->state_menu_pattern) != NULL) {
-        motor_runtime_set_state(runtime, "boot_menu");
+    {
+        size_t i;
+
+        for (i = 0u; i < config->state_pattern_count; i++) {
+            if (strstr(line, config->state_patterns[i].pattern) != NULL) {
+                motor_runtime_set_state(runtime, config->state_patterns[i].label);
+            }
+        }
     }
 }
 
 static bool boot_menu_text_seen(const flash_state *state, const char *text)
 {
     const motor_map_config *config;
+    size_t i;
 
     if (state == NULL || text == NULL) {
         return false;
     }
     config = &state->config;
-    if (config->state_boot_menu_pattern[0] != '\0' &&
-        strstr(text, config->state_boot_menu_pattern) != NULL) {
-        return true;
+    for (i = 0u; i < config->state_pattern_count; i++) {
+        if (strcmp(config->state_patterns[i].label, "boot_menu") == 0 &&
+            strstr(text, config->state_patterns[i].pattern) != NULL) {
+            return true;
+        }
     }
-    if (config->state_menu_pattern[0] != '\0' &&
-        strstr(text, config->state_menu_pattern) != NULL) {
-        return true;
-    }
-    return strstr(text, "Boot menu:") != NULL || strstr(text, "Commands:") != NULL;
+    return false;
 }
 
 static void print_boot_output_prefix(const motor_map_entry *entry,
@@ -847,11 +942,21 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                 const bxi_motor_limits *limits = limits_for_entry(state, entry);
 
                 if (bxi_motor_unpack_reply(frame.data, frame.len, limits, &reply) == 0) {
+                    float old_mos = runtime->last_reply.mos_temperature;
+                    float old_motor = runtime->last_reply.motor_temperature;
+
                     runtime->online = true;
                     runtime->last_reply_us = frame.time_us;
                     runtime->last_reply = reply;
+                    runtime->last_reply.mos_temperature = old_mos;
+                    runtime->last_reply.motor_temperature = old_motor;
+                    if (strcmp(motor_runtime_state(runtime), "unknown") == 0 ||
+                        strcmp(motor_runtime_state(runtime), "boot") == 0 ||
+                        strcmp(motor_runtime_state(runtime), "boot_menu") == 0) {
+                        motor_runtime_set_state(runtime, "motor");
+                    }
+                    motor_runtime_update_aux(&state->config, runtime, &reply);
                     runtime->rx_count++;
-                    motor_runtime_set_state(runtime, "motor");
                     decoded_motor = true;
                     state->can_stats[msg->bus].decoded_motor_replies++;
                     if (state->can_stats[msg->bus].outstanding_replies > 0u) {
@@ -862,17 +967,21 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                         flockfile(stdout);
                         if (state->config.chinese_ui) {
                             printf("\n[电机输出] index=%02u bus=%u id=%u "
-                                   "位置=% .5f 速度=% .5f 转矩=% .5f MOS温度=% .1fC 电机温度=% .1fC\n",
+                                   "位置=% .5f 速度=% .5f 转矩=% .5f MOS温度=% .1fC 电机温度=% .1fC",
                                    entry->index, entry->bus, entry->id,
                                    reply.position, reply.velocity, reply.torque,
-                                   reply.mos_temperature, reply.motor_temperature);
+                                   runtime->last_reply.mos_temperature,
+                                   runtime->last_reply.motor_temperature);
                         } else {
                             printf("\n[MOTOR OUTPUT] index=%02u bus=%u id=%u "
-                                   "pos=% .5f vel=% .5f torque=% .5f mos=% .1fC motor=% .1fC\n",
+                                   "pos=% .5f vel=% .5f torque=% .5f mos=% .1fC motor=% .1fC",
                                    entry->index, entry->bus, entry->id,
                                    reply.position, reply.velocity, reply.torque,
-                                   reply.mos_temperature, reply.motor_temperature);
+                                   runtime->last_reply.mos_temperature,
+                                   runtime->last_reply.motor_temperature);
                         }
+                        print_mit_aux_decode(&state->config, &reply);
+                        printf("\n");
                         fflush(stdout);
                         funlockfile(stdout);
                     }
@@ -1277,14 +1386,12 @@ static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
         bxi_motor_reply reply;
 
         if (bxi_motor_unpack_reply(frame->data, frame->len, &state->limits, &reply) == 0) {
-            printf("\nmotor:%u\nposition:% .5f  velocity:% .5f  torque:% .5f\n"
-                   "mos_temperature:% .1f C  motor_temperature:% .1f C",
+            printf("\nmotor:%u\nposition:% .5f  velocity:% .5f  torque:% .5f",
                    reply.motor_id,
                    reply.position,
                    reply.velocity,
-                   reply.torque,
-                   reply.mos_temperature,
-                   reply.motor_temperature);
+                   reply.torque);
+            print_mit_aux_decode(&state->config, &reply);
         }
     }
     printf("\n=========================================================\n");
@@ -1980,6 +2087,153 @@ static int add_motor_type_config(motor_map_config *config,
     return 0;
 }
 
+static int state_label_is_valid(const char *label)
+{
+    size_t i;
+
+    if (label == NULL || label[0] == '\0' || strlen(label) >= MOTOR_STATE_LEN) {
+        return 0;
+    }
+    for (i = 0u; label[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)label[i];
+
+        if (!isalnum(c) && c != '_' && c != '-') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int add_state_pattern_rule(motor_map_config *config,
+                                  const char *label,
+                                  const char *pattern,
+                                  const char *map_path,
+                                  unsigned int line_no)
+{
+    if (!state_label_is_valid(label) ||
+        pattern == NULL || pattern[0] == '\0' ||
+        strlen(pattern) >= STATE_PATTERN_LEN) {
+        fprintf(stderr, "%s:%u: invalid state pattern rule\n", map_path, line_no);
+        return -1;
+    }
+    if (config->state_pattern_count >= STATE_PATTERN_MAX) {
+        fprintf(stderr, "%s:%u: only %u state patterns are supported\n",
+                map_path, line_no, (unsigned int)STATE_PATTERN_MAX);
+        return -1;
+    }
+    snprintf(config->state_patterns[config->state_pattern_count].label,
+             MOTOR_STATE_LEN, "%s", label);
+    snprintf(config->state_patterns[config->state_pattern_count].pattern,
+             STATE_PATTERN_LEN, "%s", pattern);
+    config->state_pattern_count++;
+    return 0;
+}
+
+static int add_state_code_rule(motor_map_config *config,
+                               unsigned int code,
+                               const char *label,
+                               const char *map_path,
+                               unsigned int line_no)
+{
+    size_t i;
+
+    if (!state_label_is_valid(label)) {
+        fprintf(stderr, "%s:%u: invalid state code label\n", map_path, line_no);
+        return -1;
+    }
+    if (config->state_code_count >= STATE_CODE_MAX) {
+        fprintf(stderr, "%s:%u: only %u state codes are supported\n",
+                map_path, line_no, (unsigned int)STATE_CODE_MAX);
+        return -1;
+    }
+    for (i = 0u; i < config->state_code_count; i++) {
+        if (config->state_codes[i].code == code) {
+            fprintf(stderr, "%s:%u: duplicate state code: %u\n",
+                    map_path, line_no, code);
+            return -1;
+        }
+    }
+    config->state_codes[config->state_code_count].code = code;
+    snprintf(config->state_codes[config->state_code_count].label,
+             MOTOR_STATE_LEN, "%s", label);
+    config->state_code_count++;
+    return 0;
+}
+
+static const char *state_label_for_code(const motor_map_config *config,
+                                        unsigned int code)
+{
+    size_t i;
+
+    if (config != NULL) {
+        for (i = 0u; i < config->state_code_count; i++) {
+            if (config->state_codes[i].code == code) {
+                return config->state_codes[i].label;
+            }
+        }
+    }
+    return bxi_motor_fsm_state_name(code);
+}
+
+static void add_default_state_rules_if_missing(motor_map_config *config)
+{
+    static const struct {
+        const char *label;
+        const char *pattern;
+    } default_patterns[] = {
+        {"boot", "boot..."},
+        {"boot", "no useful app"},
+        {"motor", "========== BOOT INFO =========="},
+        {"motor", "APP   :"},
+        {"motor", "READY"},
+        {"boot_menu", "Boot menu:"},
+        {"motor_menu", "Motor main menu:"},
+        {"motor_menu", "Menu:"},
+    };
+    static const struct {
+        unsigned int code;
+        const char *label;
+    } default_codes[] = {
+        {0u, "startup"},
+        {1u, "motor_menu"},
+        {2u, "enable"},
+        {3u, "calib"},
+        {4u, "ktm"},
+        {5u, "enco"},
+        {6u, "ktm_auto"},
+        {7u, "setup"},
+        {8u, "error"},
+        {9u, "openloop"},
+        {10u, "sls"},
+    };
+    size_t i;
+
+    if (config == NULL) {
+        return;
+    }
+    if (config->state_code_prefix[0] == '\0') {
+        snprintf(config->state_code_prefix, sizeof(config->state_code_prefix), "STATE :");
+    }
+    if (config->state_pattern_count == 0u) {
+        for (i = 0u; i < sizeof(default_patterns) / sizeof(default_patterns[0]); i++) {
+            (void)add_state_pattern_rule(config,
+                                         default_patterns[i].label,
+                                         default_patterns[i].pattern,
+                                         "default",
+                                         0u);
+        }
+    }
+    if (config->state_code_count == 0u) {
+        for (i = 0u; i < sizeof(default_codes) / sizeof(default_codes[0]); i++) {
+            (void)add_state_code_rule(config,
+                                      default_codes[i].code,
+                                      default_codes[i].label,
+                                      "default",
+                                      0u);
+        }
+    }
+}
+
 static int add_firmware_mapping(motor_map_config *config,
                                 const char *type,
                                 const char *filename,
@@ -2343,11 +2597,49 @@ static int yaml_finalize_type_config(const char *map_path,
     return add_motor_type_config(config, type, firmware, limits, map_path, line_no);
 }
 
+static int yaml_finalize_state_pattern(const char *map_path,
+                                       motor_map_config *config,
+                                       unsigned int line_no,
+                                       int fields,
+                                       const char *label,
+                                       const char *pattern)
+{
+    if (fields == 0) {
+        return 0;
+    }
+    if ((fields & 0x03) != 0x03) {
+        fprintf(stderr, "%s:%u: state pattern entry requires label and pattern\n",
+                map_path, line_no);
+        return -1;
+    }
+    return add_state_pattern_rule(config, label, pattern, map_path, line_no);
+}
+
+static int yaml_finalize_state_code(const char *map_path,
+                                    motor_map_config *config,
+                                    unsigned int line_no,
+                                    int fields,
+                                    unsigned int code,
+                                    const char *label)
+{
+    if (fields == 0) {
+        return 0;
+    }
+    if ((fields & 0x03) != 0x03) {
+        fprintf(stderr, "%s:%u: state code entry requires code and label\n",
+                map_path, line_no);
+        return -1;
+    }
+    return add_state_code_rule(config, code, label, map_path, line_no);
+}
+
 typedef enum
 {
     YAML_SECTION_GLOBAL = 0,
     YAML_SECTION_FIRMWARE_FILES,
     YAML_SECTION_MOTOR_TYPES,
+    YAML_SECTION_STATE_PATTERNS,
+    YAML_SECTION_STATE_CODES,
     YAML_SECTION_MOTORS,
 } yaml_section;
 
@@ -2368,6 +2660,14 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     char type_firmware[FIRMWARE_NAME_MAX] = "";
     bxi_motor_limits type_limits = config->mit_limits;
     int type_fields = 0;
+    unsigned int state_pattern_line = 0u;
+    char state_pattern_label[MOTOR_STATE_LEN] = "";
+    char state_pattern_text[STATE_PATTERN_LEN] = "";
+    int state_pattern_fields = 0;
+    unsigned int state_code_line = 0u;
+    unsigned int state_code = 0u;
+    char state_code_label[MOTOR_STATE_LEN] = "";
+    int state_code_fields = 0;
     yaml_section section = YAML_SECTION_GLOBAL;
 
     fp = fopen(map_path, "r");
@@ -2405,6 +2705,20 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+            if (section == YAML_SECTION_STATE_PATTERNS &&
+                yaml_finalize_state_pattern(map_path, config, state_pattern_line,
+                                            state_pattern_fields, state_pattern_label,
+                                            state_pattern_text) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_CODES &&
+                yaml_finalize_state_code(map_path, config, state_code_line,
+                                         state_code_fields, state_code,
+                                         state_code_label) != 0) {
+                fclose(fp);
+                return -1;
+            }
             if (section == YAML_SECTION_MOTORS) {
                 entry_line = line_no;
                 bus = 0u;
@@ -2419,6 +2733,16 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 type_firmware[0] = '\0';
                 type_limits = config->mit_limits;
                 type_fields = 0;
+            } else if (section == YAML_SECTION_STATE_PATTERNS) {
+                state_pattern_line = line_no;
+                state_pattern_label[0] = '\0';
+                state_pattern_text[0] = '\0';
+                state_pattern_fields = 0;
+            } else if (section == YAML_SECTION_STATE_CODES) {
+                state_code_line = line_no;
+                state_code = 0u;
+                state_code_label[0] = '\0';
+                state_code_fields = 0;
             }
         }
 
@@ -2547,6 +2871,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             snprintf(config->state_motor_menu_pattern, sizeof(config->state_motor_menu_pattern), "%s", value);
         } else if (strcmp(key, "state_menu_pattern") == 0) {
             snprintf(config->state_menu_pattern, sizeof(config->state_menu_pattern), "%s", value);
+        } else if (strcmp(key, "state_code_prefix") == 0) {
+            snprintf(config->state_code_prefix, sizeof(config->state_code_prefix), "%s", value);
         } else if (strncmp(key, "mit_", 4u) == 0 &&
                    strcmp(key, "mit_canfd") != 0) {
             bxi_motor_limits *limits = section == YAML_SECTION_MOTOR_TYPES ?
@@ -2590,13 +2916,75 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 fclose(fp);
                 return -1;
             }
+            if (section == YAML_SECTION_STATE_PATTERNS &&
+                yaml_finalize_state_pattern(map_path, config, state_pattern_line,
+                                            state_pattern_fields, state_pattern_label,
+                                            state_pattern_text) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_CODES &&
+                yaml_finalize_state_code(map_path, config, state_code_line,
+                                         state_code_fields, state_code,
+                                         state_code_label) != 0) {
+                fclose(fp);
+                return -1;
+            }
             section = YAML_SECTION_MOTOR_TYPES;
             type_entry_line = 0u;
             type_fields = 0;
+        } else if (strcmp(key, "state_patterns") == 0) {
+            if (section == YAML_SECTION_MOTOR_TYPES &&
+                yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
+                                          type_entry, type_firmware, &type_limits) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_CODES &&
+                yaml_finalize_state_code(map_path, config, state_code_line,
+                                         state_code_fields, state_code,
+                                         state_code_label) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            section = YAML_SECTION_STATE_PATTERNS;
+            state_pattern_line = 0u;
+            state_pattern_fields = 0;
+        } else if (strcmp(key, "state_codes") == 0) {
+            if (section == YAML_SECTION_MOTOR_TYPES &&
+                yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
+                                          type_entry, type_firmware, &type_limits) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_PATTERNS &&
+                yaml_finalize_state_pattern(map_path, config, state_pattern_line,
+                                            state_pattern_fields, state_pattern_label,
+                                            state_pattern_text) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            section = YAML_SECTION_STATE_CODES;
+            state_code_line = 0u;
+            state_code_fields = 0;
         } else if (strcmp(key, "motors") == 0) {
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware, &type_limits) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_PATTERNS &&
+                yaml_finalize_state_pattern(map_path, config, state_pattern_line,
+                                            state_pattern_fields, state_pattern_label,
+                                            state_pattern_text) != 0) {
+                fclose(fp);
+                return -1;
+            }
+            if (section == YAML_SECTION_STATE_CODES &&
+                yaml_finalize_state_code(map_path, config, state_code_line,
+                                         state_code_fields, state_code,
+                                         state_code_label) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -2667,6 +3055,39 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             } else {
                 fields |= 0x04;
             }
+        } else if (section == YAML_SECTION_STATE_PATTERNS &&
+                   strcmp(key, "label") == 0) {
+            snprintf(state_pattern_label, sizeof(state_pattern_label), "%s", value);
+            if (state_pattern_line == 0u) {
+                state_pattern_line = line_no;
+            }
+            state_pattern_fields |= 0x01;
+        } else if (section == YAML_SECTION_STATE_PATTERNS &&
+                   strcmp(key, "pattern") == 0) {
+            snprintf(state_pattern_text, sizeof(state_pattern_text), "%s", value);
+            if (state_pattern_line == 0u) {
+                state_pattern_line = line_no;
+            }
+            state_pattern_fields |= 0x02;
+        } else if (section == YAML_SECTION_STATE_CODES &&
+                   strcmp(key, "code") == 0) {
+            if (parse_uint_arg(value, &state_code) != 0) {
+                fprintf(stderr, "%s:%u: invalid state code: %s\n",
+                        map_path, line_no, value);
+                fclose(fp);
+                return -1;
+            }
+            if (state_code_line == 0u) {
+                state_code_line = line_no;
+            }
+            state_code_fields |= 0x01;
+        } else if (section == YAML_SECTION_STATE_CODES &&
+                   strcmp(key, "label") == 0) {
+            snprintf(state_code_label, sizeof(state_code_label), "%s", value);
+            if (state_code_line == 0u) {
+                state_code_line = line_no;
+            }
+            state_code_fields |= 0x02;
         } else if (section == YAML_SECTION_MOTORS && strcmp(key, "name") == 0) {
             if (strlen(value) >= sizeof(name)) {
                 fprintf(stderr, "%s:%u: motor name is too long\n", map_path, line_no);
@@ -2680,6 +3101,20 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     if (section == YAML_SECTION_MOTOR_TYPES &&
         yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                   type_entry, type_firmware, &type_limits) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    if (section == YAML_SECTION_STATE_PATTERNS &&
+        yaml_finalize_state_pattern(map_path, config, state_pattern_line,
+                                    state_pattern_fields, state_pattern_label,
+                                    state_pattern_text) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    if (section == YAML_SECTION_STATE_CODES &&
+        yaml_finalize_state_code(map_path, config, state_code_line,
+                                 state_code_fields, state_code,
+                                 state_code_label) != 0) {
         fclose(fp);
         return -1;
     }
@@ -2709,19 +3144,27 @@ static int load_motor_map_config(const char *map_path, motor_map_config *config)
     config->can_warmup_count = 260u;
     config->can_warmup_period_ms = 10u;
     snprintf(config->state_boot_pattern, sizeof(config->state_boot_pattern), "boot...");
-    snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "stm run");
+    snprintf(config->state_motor_pattern, sizeof(config->state_motor_pattern), "APP   :");
     snprintf(config->state_no_app_pattern, sizeof(config->state_no_app_pattern), "no useful app");
     snprintf(config->state_boot_menu_pattern, sizeof(config->state_boot_menu_pattern), "Boot menu:");
     snprintf(config->state_motor_menu_pattern, sizeof(config->state_motor_menu_pattern), "Motor main menu:");
+    snprintf(config->state_code_prefix, sizeof(config->state_code_prefix), "STATE :");
     config->mit_limits = bxi_motor_default_limits;
     config->mit_canfd = true;
     config->live_output = true;
     config->chinese_ui = true;
 
     if (has_suffix(map_path, ".csv")) {
-        return parse_csv_motor_map(map_path, config);
+        ret = parse_csv_motor_map(map_path, config);
+        if (ret == 0) {
+            add_default_state_rules_if_missing(config);
+        }
+        return ret;
     }
     ret = parse_yaml_motor_map(map_path, config);
+    if (ret == 0) {
+        add_default_state_rules_if_missing(config);
+    }
     if (ret == 0 && (!isfinite(config->home_kp) || !isfinite(config->home_kd))) {
         fprintf(stderr, "%s: invalid home_kp/home_kd\n", map_path);
         return -1;

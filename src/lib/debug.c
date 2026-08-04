@@ -153,12 +153,11 @@ static void console_print_raw_motor_can_frame(flash_state *state,
         const bxi_motor_limits *limits = limits_for_entry(state, motor);
 
         if (bxi_motor_unpack_reply(frame->data, frame->len, limits, &reply) == 0) {
-            printf("  decode: pos=% .5f vel=% .5f torque=% .5f mos=% .1fC motor=% .1fC",
+            printf("  decode: pos=% .5f vel=% .5f torque=% .5f",
                    reply.position,
                    reply.velocity,
-                   reply.torque,
-                   reply.mos_temperature,
-                   reply.motor_temperature);
+                   reply.torque);
+            print_mit_aux_decode(&state->config, &reply);
         }
     }
     printf("\n");

@@ -33,12 +33,53 @@ power_on_wait_ms: 2000
 can_warmup_count: 260
 can_warmup_period_ms: 10
 
-# 电机输出状态识别关键字。后续如果固件输出变化，可只改这里。
-state_boot_pattern: boot...
-state_motor_pattern: stm run
-state_no_app_pattern: no useful app
-state_boot_menu_pattern: Boot menu:
-state_motor_menu_pattern: Motor main menu:
+# 电机输出状态识别。后续如果固件输出变化，只改这里即可。
+# state_code_prefix 用于从类似 "STATE : 02 MOTOR" 的输出中提取状态码。
+# state_patterns 用于按文本关键字识别状态，按顺序匹配，后面的规则可以覆盖前面的规则。
+# state_codes 同时用于文本输出中的 STATE 行，以及 MIT aux=0x7 的 FSM 状态码。
+state_code_prefix: "STATE :"
+
+state_patterns:
+  - label: boot
+    pattern: boot...
+  - label: boot
+    pattern: no useful app
+  - label: motor
+    pattern: "========== BOOT INFO =========="
+  - label: motor
+    pattern: "APP   :"
+  - label: motor
+    pattern: READY
+  - label: boot_menu
+    pattern: "Boot menu:"
+  - label: motor_menu
+    pattern: "Motor main menu:"
+  - label: motor_menu
+    pattern: "Menu:"
+
+state_codes:
+  - code: 0
+    label: startup
+  - code: 1
+    label: motor_menu
+  - code: 2
+    label: enable
+  - code: 3
+    label: calib
+  - code: 4
+    label: ktm
+  - code: 5
+    label: enco
+  - code: 6
+    label: ktm_auto
+  - code: 7
+    label: setup
+  - code: 8
+    label: error
+  - code: 9
+    label: openloop
+  - code: 10
+    label: sls
 
 # MIT 控制帧使用 CAN-FD；实时打印并解析收到的 CAN 帧。
 mit_canfd: on
