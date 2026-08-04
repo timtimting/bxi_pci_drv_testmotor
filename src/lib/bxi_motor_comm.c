@@ -248,7 +248,12 @@ int bxi_motor_unpack_reply(const uint8_t *data,
     reply->aux_valid = true;
     reply->aux_id = (uint8_t)((aux >> 12) & 0x0fu);
     reply->aux_payload = aux & 0x0fffu;
-    reply->aux_payload_valid = reply->aux_payload != BXI_MOTOR_AUX_INVALID_PAYLOAD;
+    /*
+     * The latest motor firmware reserves payload 0xFFF as invalid for numeric
+     * telemetry, but heartbeat intentionally uses the full 0..4095 range.
+     */
+    reply->aux_payload_valid = reply->aux_id == BXI_MOTOR_AUX_HEARTBEAT ||
+                               reply->aux_payload != BXI_MOTOR_AUX_INVALID_PAYLOAD;
     reply->aux_value = 0.0f;
     reply->motor_id = data[0];
     reply->position = uint_to_float(p_int, limits->p_min, limits->p_max, 16u);
@@ -265,12 +270,12 @@ int bxi_motor_unpack_reply(const uint8_t *data,
             reply->aux_value = (float)reply->aux_payload / 10.0f - 50.0f;
             break;
         case BXI_MOTOR_AUX_VBUS:
-            reply->aux_value = (float)reply->aux_payload / 20.0f;
+            reply->aux_value = (float)reply->aux_payload / 10.0f;
             break;
         case BXI_MOTOR_AUX_IBUS:
         case BXI_MOTOR_AUX_IQ:
         case BXI_MOTOR_AUX_ID:
-            reply->aux_value = (float)reply->aux_payload / 10.0f - 160.0f;
+            reply->aux_value = (float)reply->aux_payload / 10.0f - 150.0f;
             break;
         case BXI_MOTOR_AUX_THERMAL_COEFF:
         case BXI_MOTOR_AUX_VOLTAGE_UTIL:
