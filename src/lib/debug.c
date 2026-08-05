@@ -129,31 +129,29 @@ static void console_print_raw_motor_can_frame(flash_state *state,
                                               const rx_can_frame *frame,
                                               bool use_aux_decode);
 
-static bool console_read_motor_fw_version(flash_state *state,
-                                          const motor_map_entry *motor,
-                                          uint32_t *major_value,
-                                          uint32_t *minor_value)
+static bool console_read_motor_config_version(flash_state *state,
+                                              const motor_map_entry *motor,
+                                              uint32_t *version_value)
 {
     enum {
+        CONFIG_VERSION_REG = 0x70u,
         CONFIG_VERSION_WAIT_MS = 300u,
     };
-    uint8_t empty_data[1] = {0u};
-    unsigned int frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_FW_VERSION);
+    uint8_t data[4] = {0u};
+    unsigned int frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_READ);
     uint64_t deadline;
     bool old_canfd = state->debug_use_canfd;
     bool old_input = state->show_motor_input;
 
-    if (major_value != NULL) {
-        *major_value = 0u;
+    if (version_value != NULL) {
+        *version_value = 0u;
     }
-    if (minor_value != NULL) {
-        *minor_value = 0u;
-    }
+    u32_to_data(CONFIG_VERSION_REG, data);
     state->debug_use_canfd = false;
     state->show_motor_input = false;
     frame_ring_clear(&state->frames);
-    console_print_motor_tx_frame(motor, "fw_version", motor->bus, frame_id, 0u, 0u, empty_data);
-    if (send_debug_packet(state, frame_id, empty_data, 0u) != 0) {
+    console_print_motor_tx_frame(motor, "config_version", motor->bus, frame_id, sizeof(data), 0u, data);
+    if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
         state->debug_use_canfd = old_canfd;
         state->show_motor_input = old_input;
         return false;
@@ -182,23 +180,25 @@ static bool console_read_motor_fw_version(flash_state *state,
             (frame.can_id & 0x0fu) != (motor->id & 0x0fu)) {
             continue;
         }
-        if (frame.len >= 8u) {
-            uint32_t major = data_to_u32(&frame.data[0]);
-            uint32_t minor = data_to_u32(&frame.data[4]);
+        if (frame.len >= 8u &&
+            data_to_u32(&frame.data[0]) == CONFIG_VERSION_REG) {
+            uint32_t version = data_to_u32(&frame.data[4]);
+            bool old_brief = state->brief_register_output;
 
-            console_print_raw_motor_can_frame(state, motor, &frame, false);
-            if (major_value != NULL) {
-                *major_value = major;
-            }
-            if (minor_value != NULL) {
-                *minor_value = minor;
+            state->brief_register_output = true;
+            print_register_debug_frame(state, &frame);
+            state->brief_register_output = old_brief;
+            if (version_value != NULL) {
+                *version_value = version;
             }
             state->debug_use_canfd = old_canfd;
             state->show_motor_input = old_input;
             return true;
         }
-        console_print_raw_motor_can_frame(state, motor, &frame, false);
-        if (frame.can_id == frame_id && frame.len == 0u) {
+        if (frame.len > 0u) {
+            console_print_raw_motor_can_frame(state, motor, &frame, false);
+        }
+        if (is_reg_cmd_id(frame.can_id) && frame.len == 0u) {
             break;
         }
     }
@@ -215,9 +215,7 @@ static void console_print_raw_motor_can_frame(flash_state *state,
 {
     const char *kind = "can";
 
-    if ((frame->can_id >> 4) == CAN_CMD_REG_FW_VERSION) {
-        kind = "fw_version";
-    } else if (boot_output_id_matches(frame->can_id, motor->id)) {
+    if (boot_output_id_matches(frame->can_id, motor->id)) {
         kind = "boot";
     } else if (mit_reply_frame_matches(frame, motor->id)) {
         kind = "mit";
@@ -256,10 +254,6 @@ static void console_print_raw_motor_can_frame(flash_state *state,
                    reply.motor_temperature);
             }
         }
-    } else if ((frame->can_id >> 4) == CAN_CMD_REG_FW_VERSION && frame->len >= 8u) {
-        printf("  fw_version=%u.%u",
-               data_to_u32(&frame->data[0]),
-               data_to_u32(&frame->data[4]));
     }
     printf("\n");
 }
@@ -275,8 +269,7 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
     unsigned int old_id;
     bool old_monitor;
     bool old_input;
-    uint32_t fw_major = 0u;
-    uint32_t fw_minor = 0u;
+    uint32_t config_version = 0u;
     bool use_aux_decode = false;
     uint64_t deadline;
     size_t matched = 0u;
@@ -323,14 +316,13 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
            motor->id,
            timeout_ms,
            probe ? " probe" : "");
-    if (console_read_motor_fw_version(state, motor, &fw_major, &fw_minor)) {
-        use_aux_decode = fw_major == 0u && fw_minor <= 1u;
-        printf("[motor%02u]: mit_decode=%s fw_version=%u.%u%s\n",
+    if (console_read_motor_config_version(state, motor, &config_version)) {
+        use_aux_decode = config_version == 1u;
+        printf("[motor%02u]: mit_decode=%s config_version=%u%s\n",
                motor->index,
                use_aux_decode ? "aux" : "legacy_ntc",
-               fw_major,
-               fw_minor,
-               use_aux_decode ? " reason=polling_mit_supported" : "");
+               config_version,
+               use_aux_decode ? " version=0.1 reason=polling_mit_supported" : "");
     } else {
         printf("[motor%02u]: mit_decode=legacy_ntc reason=config_version_empty\n",
                motor->index);
