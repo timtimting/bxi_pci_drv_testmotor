@@ -820,13 +820,17 @@ static int console_reg_send_one(flash_state *state,
     unsigned int frame_id;
     uint8_t data[8] = {0u};
     bool old_canfd;
+    bool old_input;
     int ret;
+    unsigned int tx_len = 4u;
 
     console_use_motor(state, motor);
     frame_id = (unsigned int)reg_frame_id(state, cmd);
     frame_ring_clear(&state->frames);
     old_canfd = state->debug_use_canfd;
+    old_input = state->show_motor_input;
     state->debug_use_canfd = false;
+    state->show_motor_input = false;
     if (cmd == CAN_CMD_REG_READ) {
         u32_to_data(reg, data);
         if (!state->brief_register_output) {
@@ -834,25 +838,26 @@ static int console_reg_send_one(flash_state *state,
                    console_text(state, "读取寄存器", "reading register"),
                    motor->index, motor->bus, motor->id, reg);
         }
-        ret = send_debug_packet(state, frame_id, data, 4u);
     } else if (cmd == CAN_CMD_REG_WRITE) {
         u32_to_data(reg, &data[0]);
         u32_to_data(value, &data[4]);
+        tx_len = 8u;
         if (!state->brief_register_output) {
             printf("%s index=%02u bus=%u id=%u reg=0x%08x value=0x%08x\n",
                    console_text(state, "写入寄存器", "writing register"),
                    motor->index, motor->bus, motor->id, reg, value);
         }
-        ret = send_debug_packet(state, frame_id, data, 8u);
     } else {
         if (!state->brief_register_output) {
             printf("%s index=%02u bus=%u id=%u\n",
                    console_text(state, "保存寄存器配置", "saving register config"),
                    motor->index, motor->bus, motor->id);
         }
-        ret = send_debug_packet(state, frame_id, data, 4u);
     }
+    console_print_motor_tx_frame(motor, "reg", motor->bus, frame_id, tx_len, 0u, data);
+    ret = send_debug_packet(state, frame_id, data, tx_len);
     state->debug_use_canfd = old_canfd;
+    state->show_motor_input = old_input;
 
     if (ret == 0) {
         ret = wait_debug_reply(state, frame_id, wait_ms);

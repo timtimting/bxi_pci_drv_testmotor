@@ -1017,6 +1017,37 @@ static void print_data(const uint8_t *data, unsigned int len)
     }
 }
 
+static void console_print_motor_tx_frame(const motor_map_entry *motor,
+                                         const char *kind,
+                                         unsigned int bus,
+                                         unsigned int can_id,
+                                         unsigned int len,
+                                         unsigned int flags,
+                                         const uint8_t *data)
+{
+    if (motor != NULL) {
+        printf("[motor%02u]: tx kind=%s bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+               motor->index,
+               kind,
+               bus,
+               motor->id,
+               clean_can_id(can_id),
+               len,
+               flags);
+    } else {
+        printf("[motor??]: tx kind=%s bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+               kind,
+               bus,
+               can_id & 0x0fu,
+               clean_can_id(can_id),
+               len,
+               flags);
+    }
+    print_data(data, len);
+    printf("\n");
+    fflush(stdout);
+}
+
 static int send_can_bytes(flash_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
 {
     canfd_packet packet;
@@ -1258,12 +1289,23 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
 
         if (state->brief_register_output) {
             if (entry != NULL) {
-                printf("[motor%02u]: bus=%u id=%u reg=0x%02x",
-                       entry->index, frame->bus, node_id, reg);
+                printf("[motor%02u]: rx kind=reg bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       entry->index,
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
             } else {
-                printf("[motor??]: bus=%u id=%u reg=0x%02x",
-                       frame->bus, node_id, reg);
+                printf("[motor??]: rx kind=reg bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
             }
+            print_data(frame->data, frame->len);
+            printf(" reg=0x%02x", reg);
             if (meta != NULL) {
                 printf(" %s", meta->name);
             }
@@ -1298,14 +1340,23 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
 
         if (state->brief_register_output) {
             if (entry != NULL) {
-                printf("[motor%02u]: bus=%u id=%u reg_save status=%d%s\n",
-                       entry->index, frame->bus, node_id, status,
-                       status == 0 ? " OK" : "");
+                printf("[motor%02u]: rx kind=reg bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       entry->index,
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
             } else {
-                printf("[motor??]: bus=%u id=%u reg_save status=%d%s\n",
-                       frame->bus, node_id, status,
-                       status == 0 ? " OK" : "");
+                printf("[motor??]: rx kind=reg bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
             }
+            print_data(frame->data, frame->len);
+            printf(" reg_save status=%d%s\n", status, status == 0 ? " OK" : "");
             fflush(stdout);
             return 1;
         }

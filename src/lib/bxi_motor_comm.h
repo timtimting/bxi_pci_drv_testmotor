@@ -64,5 +64,9 @@ int bxi_motor_unpack_reply(const uint8_t *data,
                            size_t len,
                            const bxi_motor_limits *limits,
                            bxi_motor_reply *reply);
+int bxi_motor_unpack_reply_legacy_ntc(const uint8_t *data,
+                                      size_t len,
+                                      const bxi_motor_limits *limits,
+                                      bxi_motor_reply *reply);
 
 #endif

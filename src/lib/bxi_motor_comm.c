@@ -296,3 +296,39 @@ int bxi_motor_unpack_reply(const uint8_t *data,
 
     return 0;
 }
+
+int bxi_motor_unpack_reply_legacy_ntc(const uint8_t *data,
+                                      size_t len,
+                                      const bxi_motor_limits *limits,
+                                      bxi_motor_reply *reply)
+{
+    uint32_t p_int;
+    uint32_t v_int;
+    uint32_t t_int;
+
+    if (data == 0 || reply == 0 || len < BXI_MOTOR_MIT_LEN) {
+        return -1;
+    }
+
+    if (limits == 0) {
+        limits = &bxi_motor_default_limits;
+    }
+
+    p_int = ((uint32_t)data[1] << 8) | (uint32_t)data[2];
+    v_int = ((uint32_t)data[3] << 4) | ((uint32_t)data[4] >> 4);
+    t_int = (((uint32_t)data[4] & 0x0fu) << 8) | (uint32_t)data[5];
+
+    reply->motor_id = data[0];
+    reply->position = uint_to_float(p_int, limits->p_min, limits->p_max, 16u);
+    reply->velocity = uint_to_float(v_int, limits->v_min, limits->v_max, 12u);
+    reply->torque = uint_to_float(t_int, limits->t_min, limits->t_max, 12u);
+    reply->mos_temperature = uint_to_float(data[6], limits->temp_min, limits->temp_max, 8u);
+    reply->motor_temperature = uint_to_float(data[7], limits->temp_min, limits->temp_max, 8u);
+    reply->aux_valid = false;
+    reply->aux_payload_valid = false;
+    reply->aux_id = 0u;
+    reply->aux_payload = 0u;
+    reply->aux_value = 0.0f;
+
+    return 0;
+}
