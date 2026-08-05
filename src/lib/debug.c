@@ -127,91 +127,155 @@ static bool console_motor_can_frame_matches(const rx_can_frame *frame,
 static void console_print_raw_motor_can_frame(flash_state *state,
                                               const motor_map_entry *motor,
                                               const rx_can_frame *frame,
-                                              bool use_aux_decode);
+                                              uint32_t config_version);
 
-static bool console_read_motor_config_version(flash_state *state,
-                                              const motor_map_entry *motor,
-                                              uint32_t *version_value)
+/*
+ * 通过普通寄存器 CAN 通道读取一个 32 位电机配置寄存器。
+ *
+ * 这个函数只做很薄的一层封装：发送 CAN_CMD_REG_READ，等待 bus/id/reg
+ * 都匹配的回复，打印原始 TX/RX 帧，并返回 uint32 原始值。寄存器含义
+ * 由调用方决定。
+ */
+static bool console_read_motor_register(flash_state *state,
+                                        const motor_map_entry *motor,
+                                        uint32_t reg,
+                                        uint32_t *value)
 {
     enum {
-        CONFIG_VERSION_REG = 0x70u,
-        CONFIG_VERSION_WAIT_MS = 300u,
+        /* 版本探测不应阻塞太久，保持 can_dbg 响应比较快。 */
+        REGISTER_READ_WAIT_MS = 300u,
     };
+    /* 寄存器读请求的数据区是 4 字节小端寄存器地址。 */
     uint8_t data[4] = {0u};
+    /* 寄存器 CAN ID 格式是 (command << 4) | motor_id。 */
     unsigned int frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_READ);
+    /* 等待匹配寄存器回复的绝对超时时间。 */
     uint64_t deadline;
+    /* 保存调试发送模式；寄存器协议需要使用 classic CAN。 */
     bool old_canfd = state->debug_use_canfd;
+    /* 读取二进制寄存器回复时，临时隐藏电机文本输出，避免混杂。 */
     bool old_input = state->show_motor_input;
 
-    if (version_value != NULL) {
-        *version_value = 0u;
+    /* 默认值置 0；调用方可以把读取失败安全地当作旧版本处理。 */
+    if (value != NULL) {
+        *value = 0u;
     }
-    u32_to_data(CONFIG_VERSION_REG, data);
+    /* 将目标寄存器地址写入 4 字节读请求。 */
+    u32_to_data(reg, data);
+    /* 寄存器协议使用 classic CAN，不使用 CAN-FD/BRS 的 MIT 帧。 */
     state->debug_use_canfd = false;
+    /* 避免本次一次性寄存器探测和电机文本输出混在一起。 */
     state->show_motor_input = false;
+    /* 清掉旧帧，避免把上一次命令的回复误认为本次寄存器回复。 */
     frame_ring_clear(&state->frames);
-    console_print_motor_tx_frame(motor, "config_version", motor->bus, frame_id, sizeof(data), 0u, data);
+    /* 调试输出：打印准确的 TX 帧，便于现场排查 bus/id/reg 是否正确。 */
+#if 0
+    console_print_motor_tx_frame(motor, "reg", motor->bus, frame_id, sizeof(data), 0u, data);
+#endif
+    /* 向指定电机发送寄存器读请求。 */
     if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
+        /* 发送失败也必须恢复终端/调试状态。 */
         state->debug_use_canfd = old_canfd;
         state->show_motor_input = old_input;
         return false;
     }
 
-    deadline = time_us() + (uint64_t)CONFIG_VERSION_WAIT_MS * 1000ULL;
+    /* 将相对等待时间转换为绝对截止时间。 */
+    deadline = time_us() + (uint64_t)REGISTER_READ_WAIT_MS * 1000ULL;
+    /* 轮询共享帧队列，直到收到匹配的寄存器回复或超时。 */
     while (!stop_requested && time_us() < deadline) {
         rx_can_frame frame;
         uint64_t now = time_us();
+        /* 小周期醒来一次，方便及时响应 Ctrl-C/stop_requested。 */
         unsigned int wait_ms = 20u;
 
+        /* 最后一轮等待不能超过总截止时间。 */
         if (deadline > now) {
             uint64_t remain_ms = (deadline - now) / 1000ULL;
             if (remain_ms < wait_ms) {
                 wait_ms = (unsigned int)remain_ms;
             }
         }
+        /* frame_ring_pop 需要非零超时时间。 */
         if (wait_ms == 0u) {
             wait_ms = 1u;
         }
+        /* 本小窗口没有收到帧，继续等到总超时。 */
         if (!frame_ring_pop(&state->frames, &frame, wait_ms)) {
             continue;
         }
+        /* 忽略其它 bus、其它命令、其它电机 ID 的帧。 */
         if (frame.bus != motor->bus ||
             frame.can_id != frame_id ||
             (frame.can_id & 0x0fu) != (motor->id & 0x0fu)) {
             continue;
         }
+        /* 有效寄存器回复格式为：[reg u32][value u32]。 */
         if (frame.len >= 8u &&
-            data_to_u32(&frame.data[0]) == CONFIG_VERSION_REG) {
-            uint32_t version = data_to_u32(&frame.data[4]);
+            data_to_u32(&frame.data[0]) == reg) {
+            /* 从 bytes 4..7 取出寄存器返回值。 */
+            uint32_t reply_value = data_to_u32(&frame.data[4]);
+            /* 调试输出：复用已有的简洁寄存器输出，保持日志格式一致。 */
+#if 0
             bool old_brief = state->brief_register_output;
 
+            /* can_dbg 前置探测时，强制寄存器回复单行输出。 */
             state->brief_register_output = true;
             print_register_debug_frame(state, &frame);
             state->brief_register_output = old_brief;
-            if (version_value != NULL) {
-                *version_value = version;
+#endif
+            /* 返回原始值；具体版本含义由调用方解释。 */
+            if (value != NULL) {
+                *value = reply_value;
             }
+            /* 成功读取后恢复终端/调试状态。 */
             state->debug_use_canfd = old_canfd;
             state->show_motor_input = old_input;
             return true;
         }
+        /* 调试输出：打印非预期但非空的帧，便于发现协议不匹配。 */
+#if 0
         if (frame.len > 0u) {
-            console_print_raw_motor_can_frame(state, motor, &frame, false);
+            console_print_raw_motor_can_frame(state, motor, &frame, 0u);
         }
+#endif
+        /* 空寄存器回复通常表示目标拒绝或忽略了本次请求。 */
         if (is_reg_cmd_id(frame.can_id) && frame.len == 0u) {
             break;
         }
     }
 
+    /* 超时或未匹配到回复时，也要先恢复状态再返回失败。 */
     state->debug_use_canfd = old_canfd;
     state->show_motor_input = old_input;
     return false;
 }
 
+/*
+ * 根据电机配置版本解析一帧 MIT 回复。
+ *
+ * 当前兼容规则：
+ *   config_version != 0：新版固件，bytes 6..7 是轮询 AUX 遥测。
+ *   config_version == 0：旧版固件，bytes 6..7 是 NTC 温度。
+ */
+static int console_unpack_motor_reply_by_version(const uint8_t *data,
+                                                 size_t len,
+                                                 const bxi_motor_limits *limits,
+                                                 uint32_t config_version,
+                                                 bxi_motor_reply *reply)
+{
+    /* 任何非零配置版本都认为电机使用轮询 AUX 遥测。 */
+    if (config_version != 0u) {
+        return bxi_motor_unpack_reply(data, len, limits, reply);
+    }
+    /* 版本 0，或者版本读取失败后保留的默认 0，都按旧版 NTC 字节解析。 */
+    return bxi_motor_unpack_reply_legacy_ntc(data, len, limits, reply);
+}
+
 static void console_print_raw_motor_can_frame(flash_state *state,
                                               const motor_map_entry *motor,
                                               const rx_can_frame *frame,
-                                              bool use_aux_decode)
+                                              uint32_t config_version)
 {
     const char *kind = "can";
 
@@ -238,15 +302,17 @@ static void console_print_raw_motor_can_frame(flash_state *state,
         const bxi_motor_limits *limits = limits_for_entry(state, motor);
         int decode_ret;
 
-        decode_ret = use_aux_decode ?
-                     bxi_motor_unpack_reply(frame->data, frame->len, limits, &reply) :
-                     bxi_motor_unpack_reply_legacy_ntc(frame->data, frame->len, limits, &reply);
+        decode_ret = console_unpack_motor_reply_by_version(frame->data,
+                                                           frame->len,
+                                                           limits,
+                                                           config_version,
+                                                           &reply);
         if (decode_ret == 0) {
             printf("  decode: pos=% .5f vel=% .5f torque=% .5f",
                    reply.position,
                    reply.velocity,
                    reply.torque);
-            if (use_aux_decode) {
+            if (config_version != 0u) {
                 print_mit_aux_decode(&state->config, &reply);
             } else {
                 printf(" ntc1=% .1fC ntc2=% .1fC",
@@ -260,6 +326,9 @@ static void console_print_raw_motor_can_frame(flash_state *state,
 
 static int console_motor_reply(flash_state *state, int argc, char **argv)
 {
+    enum {
+        CONFIG_VERSION_REG = 0x7cu,
+    };
     unsigned int index;
     unsigned int timeout_ms = 3000u;
     bool probe = true;
@@ -270,7 +339,6 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
     bool old_monitor;
     bool old_input;
     uint32_t config_version = 0u;
-    bool use_aux_decode = false;
     uint64_t deadline;
     size_t matched = 0u;
     int argi;
@@ -316,13 +384,12 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
            motor->id,
            timeout_ms,
            probe ? " probe" : "");
-    if (console_read_motor_config_version(state, motor, &config_version)) {
-        use_aux_decode = config_version == 1u;
+    if (console_read_motor_register(state, motor, CONFIG_VERSION_REG, &config_version)) {
         printf("[motor%02u]: mit_decode=%s config_version=%u%s\n",
                motor->index,
-               use_aux_decode ? "aux" : "legacy_ntc",
+               config_version != 0u ? "aux" : "legacy_ntc",
                config_version,
-               use_aux_decode ? " version=0.1 reason=polling_mit_supported" : "");
+               config_version != 0u ? " reason=polling_mit_supported" : "");
     } else {
         printf("[motor%02u]: mit_decode=legacy_ntc reason=config_version_empty\n",
                motor->index);
@@ -368,7 +435,7 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
         if (!console_motor_can_frame_matches(&frame, motor)) {
             continue;
         }
-        console_print_raw_motor_can_frame(state, motor, &frame, use_aux_decode);
+        console_print_raw_motor_can_frame(state, motor, &frame, config_version);
         matched++;
     }
 

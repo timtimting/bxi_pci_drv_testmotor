@@ -1226,7 +1226,7 @@ static const reg_config_meta reg_config_table[] = {
     {0x2fu, "enco_calib_valid", REG_VALUE_INT},
     {0x30u, "config_version", REG_VALUE_UINT},
     {0x31u, "reduction_ratio", REG_VALUE_FLOAT},
-    {0x70u, "config_version", REG_VALUE_UINT},
+    {0x7cu, "config_version", REG_VALUE_UINT},
     {0xf0u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
 };
 
