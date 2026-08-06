@@ -272,21 +272,35 @@ static int console_unpack_motor_reply_by_version(const uint8_t *data,
     return bxi_motor_unpack_reply_legacy_ntc(data, len, limits, reply);
 }
 
+/*
+ * 打印一帧和指定电机相关的 CAN 回复，并在可能时附带解析结果。
+ *
+ * 这个函数用于 can_dbg/motor_reply 的主监听阶段：
+ *   1. 先根据 CAN ID 判断这帧大概属于 boot 文本、MIT 回复、寄存器回复或普通 CAN。
+ *   2. 默认关闭原始帧调试输出，避免现场刷屏；需要时可打开下面的 #if 0。
+ *   3. 如果是 MIT 回复，再根据 config_version 选择新版轮询 AUX 或旧版 NTC 解析。
+ */
 static void console_print_raw_motor_can_frame(flash_state *state,
                                               const motor_map_entry *motor,
                                               const rx_can_frame *frame,
                                               uint32_t config_version)
 {
+#if 0
+    /* 默认类型为普通 CAN；后面根据 ID 逐步细分。 */
     const char *kind = "can";
 
+    /* boot/debug 文本回复使用 0x7fX。 */
     if (boot_output_id_matches(frame->can_id, motor->id)) {
         kind = "boot";
+    /* MIT 回复使用 master_id：通常为 0x01X。 */
     } else if (mit_reply_frame_matches(frame, motor->id)) {
         kind = "mit";
+    /* 寄存器读写保存等命令使用 command<<4 | id。 */
     } else if (is_reg_cmd_id(frame->can_id)) {
         kind = "reg";
     }
 
+    /* 调试输出：原始帧信息，默认关闭。 */
     printf("[motor%02u]: rx kind=%s bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
            motor->index,
            kind,
@@ -296,31 +310,42 @@ static void console_print_raw_motor_can_frame(flash_state *state,
            frame->len,
            frame->flags);
     print_data(frame->data, frame->len);
+#endif
 
+    /* 只有 MIT 回复才尝试解析位置、速度、力矩和扩展字段。 */
     if (mit_reply_frame_matches(frame, motor->id)) {
         bxi_motor_reply reply;
+        /* 每种电机型号可能有不同力矩范围，所以按配置取解析限制。 */
         const bxi_motor_limits *limits = limits_for_entry(state, motor);
         int decode_ret;
 
+        /* 根据版本选择新版 AUX 解析或旧版 NTC 解析。 */
         decode_ret = console_unpack_motor_reply_by_version(frame->data,
                                                            frame->len,
                                                            limits,
                                                            config_version,
                                                            &reply);
+        /* 解析成功后，输出人能直接看的数值。 */
         if (decode_ret == 0) {
-            printf("  decode: pos=% .5f vel=% .5f torque=% .5f",
+            printf("[motor%02u]: pos=% .5f vel=% .5f torque=% .5f",
+                   motor->index,
                    reply.position,
                    reply.velocity,
                    reply.torque);
+            /* 非零版本：bytes 6..7 是轮询 AUX，需要打印 aux_id/payload/value。 */
             if (config_version != 0u) {
                 print_mit_aux_decode(&state->config, &reply);
             } else {
+                /* 版本 0：bytes 6..7 是旧版 NTC 温度。 */
                 printf(" ntc1=% .1fC ntc2=% .1fC",
                    reply.mos_temperature,
                    reply.motor_temperature);
             }
         }
+    } else {
+        return;
     }
+    /* 每帧输出独占一行，避免和交互终端提示符混在一起。 */
     printf("\n");
 }
 
@@ -400,6 +425,8 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
 
         bxi_motor_pack_mit(data, limits_for_entry(state, motor),
                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        /* 调试输出：MIT 探测发送帧，默认关闭。 */
+#if 0
         console_print_motor_tx_frame(motor,
                                      "mit",
                                      motor->bus,
@@ -407,6 +434,7 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
                                      BXI_MOTOR_MIT_LEN,
                                      state->debug_use_canfd ? (CANFD_BRS | CANFD_FDF) : 0u,
                                      data);
+#endif
         console_expect_reply(state, motor->bus);
         if (send_debug_packet(state, motor->id, data, BXI_MOTOR_MIT_LEN) != 0) {
             printf("[motor%02u]: failed bus=%u id=%u reason=probe_send_error\n",

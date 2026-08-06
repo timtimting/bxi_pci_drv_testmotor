@@ -528,17 +528,33 @@ static bool boot_output_id_matches(unsigned int can_id, unsigned int motor_id)
 
 static int is_reg_cmd_id(unsigned int can_id);
 
+/*
+ * 判断一帧 CAN 是否是指定电机的 MIT 状态回复。
+ *
+ * 当前电机 MIT 通信约定：
+ *   - 主机发送 MIT 控制帧到电机 ID：0x00X，例如 id=1 时发送 can_id=0x001。
+ *   - 电机回复到 master_id：0x01X，例如 id=1 时回复 can_id=0x011。
+ *   - 回复数据 byte0 也填 master_id，用于进一步确认这帧确实来自该电机。
+ *
+ * 这里会主动排除两类容易误判的帧：
+ *   - 寄存器命令回复：can_id 也是 command<<4 | id，可能和 0x01X 形式接近。
+ *   - boot/debug 文本回复：can_id 为 0x7fX，不属于 MIT 状态帧。
+ */
 static bool mit_reply_frame_matches(const rx_can_frame *frame, unsigned int motor_id)
 {
+    /* 按电机 id 计算该电机的 MIT 回复 ID，也就是 master_id。 */
     unsigned int master_id = 0x10u | (motor_id & 0x0fu);
 
+    /* 空帧、非法电机 id、长度不足 8 字节，都不可能是完整 MIT 回复。 */
     if (frame == NULL || motor_id == 0u || motor_id > 0x0fu ||
         frame->len < BXI_MOTOR_MIT_LEN) {
         return false;
     }
+    /* 排除寄存器回复和 boot/debug 文本回复，避免调试帧被误解析为 MIT。 */
     if (is_reg_cmd_id(frame->can_id) || boot_output_id_matches(frame->can_id, motor_id)) {
         return false;
     }
+    /* CAN ID 和 payload byte0 同时匹配 master_id，才认为是该电机 MIT 回复。 */
     return frame->can_id == master_id && frame->data[0] == master_id;
 }
 
