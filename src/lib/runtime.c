@@ -201,6 +201,7 @@ typedef struct
     bool aux_valid[16];
     float aux_value[16];
     uint16_t aux_payload[16];
+    bool mit_aux_enabled;
     unsigned int rx_count;
     unsigned int timeout_count;
     char state_label[MOTOR_STATE_LEN];
@@ -605,6 +606,25 @@ static void motor_runtime_update_aux(const motor_map_config *config,
     }
 }
 
+static void motor_runtime_set_mit_aux_enabled(flash_state *state,
+                                              const motor_map_entry *entry,
+                                              bool enabled)
+{
+    size_t slot;
+
+    if (state == NULL || entry == NULL) {
+        return;
+    }
+    slot = (size_t)(entry - state->config.entries);
+    if (slot >= state->config.entry_count) {
+        return;
+    }
+    state->motors[slot].mit_aux_enabled = enabled;
+    if (!enabled) {
+        memset(state->motors[slot].aux_valid, 0, sizeof(state->motors[slot].aux_valid));
+    }
+}
+
 static void print_mit_aux_decode(const motor_map_config *config,
                                  const bxi_motor_reply *reply)
 {
@@ -958,15 +978,24 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
 
                 const bxi_motor_limits *limits = limits_for_entry(state, entry);
 
-                if (bxi_motor_unpack_reply(frame.data, frame.len, limits, &reply) == 0) {
+                int unpack_ret;
+
+                if (runtime->mit_aux_enabled) {
+                    unpack_ret = bxi_motor_unpack_reply(frame.data, frame.len, limits, &reply);
+                } else {
+                    unpack_ret = bxi_motor_unpack_reply_legacy_ntc(frame.data, frame.len, limits, &reply);
+                }
+                if (unpack_ret == 0) {
                     float old_mos = runtime->last_reply.mos_temperature;
                     float old_motor = runtime->last_reply.motor_temperature;
 
                     runtime->online = true;
                     runtime->last_reply_us = frame.time_us;
                     runtime->last_reply = reply;
-                    runtime->last_reply.mos_temperature = old_mos;
-                    runtime->last_reply.motor_temperature = old_motor;
+                    if (runtime->mit_aux_enabled) {
+                        runtime->last_reply.mos_temperature = old_mos;
+                        runtime->last_reply.motor_temperature = old_motor;
+                    }
                     if (strcmp(motor_runtime_state(runtime), "unknown") == 0 ||
                         strcmp(motor_runtime_state(runtime), "boot") == 0 ||
                         strcmp(motor_runtime_state(runtime), "boot_menu") == 0) {
@@ -997,7 +1026,9 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                                    runtime->last_reply.mos_temperature,
                                    runtime->last_reply.motor_temperature);
                         }
-                        print_mit_aux_decode(&state->config, &reply);
+                        if (runtime->mit_aux_enabled) {
+                            print_mit_aux_decode(&state->config, &reply);
+                        }
                         printf("\n");
                         fflush(stdout);
                         funlockfile(stdout);
@@ -1256,6 +1287,7 @@ static const reg_config_meta reg_config_table[] = {
     {0x69u, "max_tor", REG_VALUE_FLOAT},
     {0x6au, "kp_max", REG_VALUE_FLOAT},
     {0x6bu, "kd_max", REG_VALUE_FLOAT},
+    {0x6du, "mit_aux_enable", REG_VALUE_BOOL},
     {0x7cu, "config_version", REG_VALUE_VERSION},
 };
 
@@ -1398,6 +1430,10 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
         const reg_config_meta *meta = reg_config_meta_for_addr(reg);
         reg_value_type value_type = wire_type != REG_VALUE_UNKNOWN ? wire_type :
                                     (meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
+
+        if (status == CAN_REG_STATUS_OK && reg == 0x6du && entry != NULL) {
+            motor_runtime_set_mit_aux_enabled(state, entry, value != 0u);
+        }
 
         if (state->brief_register_output) {
             if (entry != NULL) {

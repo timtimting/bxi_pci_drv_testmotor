@@ -127,7 +127,7 @@ static bool console_motor_can_frame_matches(const rx_can_frame *frame,
 static void console_print_raw_motor_can_frame(flash_state *state,
                                               const motor_map_entry *motor,
                                               const rx_can_frame *frame,
-                                              uint32_t config_version);
+                                              bool mit_aux_enabled);
 
 /*
  * 通过普通寄存器 CAN 通道读取一个 32 位电机配置寄存器。
@@ -142,7 +142,7 @@ static bool console_read_motor_register(flash_state *state,
                                         uint32_t *value)
 {
     enum {
-        /* 版本探测不应阻塞太久，保持 can_dbg 响应比较快。 */
+        /* can_dbg 前置寄存器探测不应阻塞太久，保持响应比较快。 */
         REGISTER_READ_WAIT_MS = 300u,
     };
     /* 寄存器读请求的数据区是 4 字节小端寄存器地址。 */
@@ -265,23 +265,23 @@ static bool console_read_motor_register(flash_state *state,
 }
 
 /*
- * 根据电机配置版本解析一帧 MIT 回复。
+ * 根据电机运行时 mit_aux_enable 开关解析一帧 MIT 回复。
  *
  * 当前兼容规则：
- *   config_version != 0：新版固件，bytes 6..7 是轮询 AUX 遥测。
- *   config_version == 0：旧版固件，bytes 6..7 是 NTC 温度。
+ *   mit_aux_enable != 0：bytes 6..7 是轮询 AUX 遥测。
+ *   mit_aux_enable == 0：bytes 6..7 是旧版 NTC 温度。
  */
-static int console_unpack_motor_reply_by_version(const uint8_t *data,
-                                                 size_t len,
-                                                 const bxi_motor_limits *limits,
-                                                 uint32_t config_version,
-                                                 bxi_motor_reply *reply)
+static int console_unpack_motor_reply_by_aux_enable(const uint8_t *data,
+                                                    size_t len,
+                                                    const bxi_motor_limits *limits,
+                                                    bool mit_aux_enabled,
+                                                    bxi_motor_reply *reply)
 {
-    /* 任何非零配置版本都认为电机使用轮询 AUX 遥测。 */
-    if (config_version != 0u) {
+    /* 0x6D 运行时开关为 1 时，电机最后两个字节使用 AUX 轮询遥测。 */
+    if (mit_aux_enabled) {
         return bxi_motor_unpack_reply(data, len, limits, reply);
     }
-    /* 版本 0，或者版本读取失败后保留的默认 0，都按旧版 NTC 字节解析。 */
+    /* 默认上电为 0，或者读取失败时，都按旧版 NTC 字节解析。 */
     return bxi_motor_unpack_reply_legacy_ntc(data, len, limits, reply);
 }
 
@@ -291,12 +291,12 @@ static int console_unpack_motor_reply_by_version(const uint8_t *data,
  * 这个函数用于 can_dbg/motor_reply 的主监听阶段：
  *   1. 先根据 CAN ID 判断这帧大概属于 boot 文本、MIT 回复、寄存器回复或普通 CAN。
  *   2. 默认关闭原始帧调试输出，避免现场刷屏；需要时可打开下面的 #if 0。
- *   3. 如果是 MIT 回复，再根据 config_version 选择新版轮询 AUX 或旧版 NTC 解析。
+ *   3. 如果是 MIT 回复，再根据 mit_aux_enable 选择新版轮询 AUX 或旧版 NTC 解析。
  */
 static void console_print_raw_motor_can_frame(flash_state *state,
                                               const motor_map_entry *motor,
                                               const rx_can_frame *frame,
-                                              uint32_t config_version)
+                                              bool mit_aux_enabled)
 {
 #if 0
     /* 默认类型为普通 CAN；后面根据 ID 逐步细分。 */
@@ -332,12 +332,12 @@ static void console_print_raw_motor_can_frame(flash_state *state,
         const bxi_motor_limits *limits = limits_for_entry(state, motor);
         int decode_ret;
 
-        /* 根据版本选择新版 AUX 解析或旧版 NTC 解析。 */
-        decode_ret = console_unpack_motor_reply_by_version(frame->data,
-                                                           frame->len,
-                                                           limits,
-                                                           config_version,
-                                                           &reply);
+        /* 根据 0x6D 运行时开关选择新版 AUX 解析或旧版 NTC 解析。 */
+        decode_ret = console_unpack_motor_reply_by_aux_enable(frame->data,
+                                                              frame->len,
+                                                              limits,
+                                                              mit_aux_enabled,
+                                                              &reply);
         /* 解析成功后，输出人能直接看的数值。 */
         if (decode_ret == 0) {
             printf("[motor%02u]: pos=% .5f vel=% .5f torque=% .5f",
@@ -345,11 +345,11 @@ static void console_print_raw_motor_can_frame(flash_state *state,
                    reply.position,
                    reply.velocity,
                    reply.torque);
-            /* 非零版本：bytes 6..7 是轮询 AUX，需要打印 aux_id/payload/value。 */
-            if (config_version != 0u) {
+            /* mit_aux_enable=1：bytes 6..7 是轮询 AUX，需要打印 aux_id/payload/value。 */
+            if (mit_aux_enabled) {
                 print_mit_aux_decode(&state->config, &reply);
             } else {
-                /* 版本 0：bytes 6..7 是旧版 NTC 温度。 */
+                /* mit_aux_enable=0：bytes 6..7 是旧版 NTC 温度。 */
                 printf(" ntc1=% .1fC ntc2=% .1fC",
                    reply.mos_temperature,
                    reply.motor_temperature);
@@ -365,7 +365,7 @@ static void console_print_raw_motor_can_frame(flash_state *state,
 static int console_motor_reply(flash_state *state, int argc, char **argv)
 {
     enum {
-        CONFIG_VERSION_REG = 0x7cu,
+        MIT_AUX_ENABLE_REG = 0x6du,
     };
     unsigned int index;
     unsigned int timeout_ms = 3000u;
@@ -376,7 +376,8 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
     unsigned int old_id;
     bool old_monitor;
     bool old_input;
-    uint32_t config_version = 0u;
+    uint32_t mit_aux_enable = 0u;
+    bool mit_aux_enabled = false;
     uint64_t deadline;
     size_t matched = 0u;
     int argi;
@@ -422,16 +423,19 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
            motor->id,
            timeout_ms,
            probe ? " probe" : "");
-    if (console_read_motor_register(state, motor, CONFIG_VERSION_REG, &config_version)) {
-        printf("[motor%02u]: mit_decode=%s config_version=%u.%u raw=0x%08x%s\n",
+    if (console_read_motor_register(state, motor, MIT_AUX_ENABLE_REG, &mit_aux_enable)) {
+        mit_aux_enabled = mit_aux_enable != 0u;
+        state->motors[slot].mit_aux_enabled = mit_aux_enabled;
+        if (!mit_aux_enabled) {
+            memset(state->motors[slot].aux_valid, 0, sizeof(state->motors[slot].aux_valid));
+        }
+        printf("[motor%02u]: mit_decode=%s mit_aux_enable=%u%s\n",
                motor->index,
-               config_version != 0u ? "aux" : "legacy_ntc",
-               (unsigned int)((config_version >> 8) & 0xffu),
-               (unsigned int)(config_version & 0xffu),
-               config_version,
-               config_version != 0u ? " reason=polling_mit_supported" : "");
+               mit_aux_enabled ? "aux" : "legacy_ntc",
+               mit_aux_enabled ? 1u : 0u,
+               mit_aux_enabled ? " reason=register_0x6d_enabled" : "");
     } else {
-        printf("[motor%02u]: mit_decode=legacy_ntc reason=config_version_empty\n",
+        printf("[motor%02u]: mit_decode=legacy_ntc reason=mit_aux_enable_read_failed\n",
                motor->index);
     }
     frame_ring_clear(&state->frames);
@@ -478,7 +482,7 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
         if (!console_motor_can_frame_matches(&frame, motor)) {
             continue;
         }
-        console_print_raw_motor_can_frame(state, motor, &frame, config_version);
+        console_print_raw_motor_can_frame(state, motor, &frame, mit_aux_enabled);
         matched++;
     }
 

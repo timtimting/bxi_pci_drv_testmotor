@@ -219,12 +219,16 @@ static void console_print_motors(const flash_state *state)
                r->last_reply.position,
                r->last_reply.velocity,
                r->last_reply.torque);
-        if (r->aux_valid[0]) {
+        if (!r->mit_aux_enabled) {
+            printf("  % .1f", r->last_reply.mos_temperature);
+        } else if (r->aux_valid[0]) {
             printf("  % .1f", r->aux_value[0]);
         } else {
             printf("  --    ");
         }
-        if (r->aux_valid[1]) {
+        if (!r->mit_aux_enabled) {
+            printf("  % .1f", r->last_reply.motor_temperature);
+        } else if (r->aux_valid[1]) {
             printf("  % .1f", r->aux_value[1]);
         } else {
             printf("  --    ");

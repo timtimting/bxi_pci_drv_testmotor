@@ -333,7 +333,7 @@ can_dbg 00
 
 `can_dbg` 会：
 
-1. 读取 `0x7c config_version`。
+1. 读取 `0x6d mit_aux_enable`。
 2. 发送一帧零 MIT 探测帧。
 3. 打印该电机的 MIT 回复解析结果。
 
@@ -341,7 +341,7 @@ can_dbg 00
 
 ```text
 motor_reply: start total=1 index=00 bus=0 id=1 timeout_ms=3000 probe
-[motor00]: mit_decode=aux config_version=0.1 raw=0x00000001 reason=polling_mit_supported
+[motor00]: mit_decode=aux mit_aux_enable=1 reason=register_0x6d_enabled
 [motor00]: pos= 0.02041 vel=-0.01099 torque=-0.01954 aux=0x3:vbus value=24.0V raw=240
 motor_reply: done total=1 success=1 failed=0 frames=1
 ```
@@ -585,10 +585,16 @@ config/motor_console.yaml
 
 ```text
 reg_read 00 0x7c     # 读取配置版本
+reg_read 00 0x6d     # 读取 MIT AUX 轮询开关，0=旧版 NTC，1=AUX 轮询
+reg_write 00 0x6d 1  # 本次上电周期启用 MIT AUX 轮询回复
+reg_write 00 0x6d 0  # 切回旧版 NTC 回复
 reg_read 00 0x01     # 读取 motor_pole_pairs
 reg_write 00 0x01 10 # 写入 motor_pole_pairs
 reg_save 00          # 保存配置到电机 Flash
 ```
+
+`0x6d mit_aux_enable` 是运行时开关，电机上电默认值为 0，且不会保存到 Flash。
+需要 MIT AUX 轮询遥测时，每次上电后都需要重新写 1。
 
 ### 11.3 烧录
 
@@ -651,14 +657,14 @@ flash_all config/flash_plan_debug.yaml
 | `bxi_motor_unpack_reply` | `src/lib/bxi_motor_comm.c` | 新版 MIT 回复解析；解析位置、速度、力矩和 AUX 轮询遥测 |
 | `bxi_motor_unpack_reply_legacy_ntc` | `src/lib/bxi_motor_comm.c` | 旧版 MIT 回复解析；最后两个字节按 NTC 温度解析 |
 | `mit_reply_frame_matches` | `src/lib/runtime.c` | 判断 CAN 帧是否匹配某个电机的 MIT 回复 |
-| `console_unpack_motor_reply_by_version` | `src/lib/debug.c` | 根据 `config_version` 选择新版 AUX 或旧版 NTC 解析 |
+| `console_unpack_motor_reply_by_aux_enable` | `src/lib/debug.c` | 根据 `mit_aux_enable` 选择新版 AUX 或旧版 NTC 解析 |
 | `console_print_raw_motor_can_frame` | `src/lib/debug.c` | `can_dbg/motor_reply` 的单电机回复输出 |
 
 ### 12.2 寄存器协议相关函数
 
 | 函数 | 位置 | 说明 |
 |---|---|---|
-| `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x7c config_version` |
+| `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x6d mit_aux_enable` |
 | `reg_value_type_from_wire` | `src/lib/runtime.c` | 从 `reply_header` 解析 `value_type` |
 | `reg_request_header` | `src/lib/runtime.c` | 生成写寄存器请求头：`address | value_type << 8` |
 | `reg_reply_status` | `src/lib/runtime.c` | 从 `reply_header` 解析寄存器返回状态 |
