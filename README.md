@@ -539,7 +539,9 @@ config/motor_console.yaml
 `reg_read` 使用 `CAN_CMD_REG_READ=0x17`，`reg_write` 使用
 `CAN_CMD_REG_WRITE=0x18`，`reg_save` 使用 `CAN_CMD_REG_SAVE=0x19`。
 `reg_write` 会根据寄存器地址自动填充 `value_type`，回复会解析
-`status`、`value_type` 和 value；这些命令需要电机配置版本非 0 才会响应。
+`status`、`value_type` 和 value；`value_type` 使用 `bit8..10`，
+目前 `0=int`、`1=bool`、`2=float`、`3=uint32`、`4=version`。
+这些命令需要电机配置版本非 0 才会响应。
 
 ### 11.3 烧录
 

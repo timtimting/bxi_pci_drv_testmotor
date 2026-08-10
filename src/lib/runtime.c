@@ -1182,6 +1182,7 @@ typedef enum
     REG_VALUE_BOOL,
     REG_VALUE_FLOAT,
     REG_VALUE_UINT,
+    REG_VALUE_VERSION,
     REG_VALUE_UNKNOWN,
 } reg_value_type;
 
@@ -1194,7 +1195,7 @@ enum {
     CAN_REG_STATUS_TYPE_MISMATCH = 5u,
     CAN_REG_REPLY_STATUS_MASK = 0xffu,
     CAN_REG_REPLY_TYPE_SHIFT = 8u,
-    CAN_REG_REPLY_TYPE_MASK = 0x03u,
+    CAN_REG_REPLY_TYPE_MASK = 0x07u,
     CAN_REG_REQUEST_TYPE_SHIFT = 8u,
 };
 
@@ -1255,7 +1256,7 @@ static const reg_config_meta reg_config_table[] = {
     {0x69u, "max_tor", REG_VALUE_FLOAT},
     {0x6au, "kp_max", REG_VALUE_FLOAT},
     {0x6bu, "kd_max", REG_VALUE_FLOAT},
-    {0x7cu, "config_version", REG_VALUE_INT},
+    {0x7cu, "config_version", REG_VALUE_VERSION},
 };
 
 static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
@@ -1318,6 +1319,8 @@ static const char *reg_value_type_name(reg_value_type type)
         return "float";
     case REG_VALUE_UINT:
         return "uint32";
+    case REG_VALUE_VERSION:
+        return "version";
     default:
         return "unknown";
     }
@@ -1334,6 +1337,8 @@ static reg_value_type reg_value_type_from_wire(unsigned int wire_type)
         return REG_VALUE_FLOAT;
     case 3u:
         return REG_VALUE_UINT;
+    case 4u:
+        return REG_VALUE_VERSION;
     default:
         return REG_VALUE_UNKNOWN;
     }
@@ -1368,6 +1373,11 @@ static void print_register_value(uint32_t value, reg_value_type type)
         printf("%u", value != 0u ? 1u : 0u);
     } else if (type == REG_VALUE_INT) {
         printf("%d", (int32_t)value);
+    } else if (type == REG_VALUE_VERSION) {
+        printf("%u.%u raw=0x%08x",
+               (unsigned int)((value >> 8) & 0xffu),
+               (unsigned int)(value & 0xffu),
+               value);
     } else {
         printf("raw=0x%08x", value);
     }

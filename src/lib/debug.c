@@ -212,7 +212,7 @@ static bool console_read_motor_register(flash_state *state,
         }
         /* 新版有效寄存器回复格式为：[reply_header u32][value u32]。 */
         if (frame.len >= 8u) {
-            /* reply_header 低 8 bit 是状态，bit8..9 是 value_type。 */
+            /* reply_header 低 8 bit 是状态，bit8..10 是 value_type。 */
             uint32_t reply_header = data_to_u32(&frame.data[0]);
             /* 只有 status=OK 才能把后 4 字节当作有效寄存器值。 */
             unsigned int status = reg_reply_status(reply_header);
