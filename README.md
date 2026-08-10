@@ -5,6 +5,22 @@
 唯一对外程序为 `motor_console`。它把电机上下电、在线扫描、MIT 控制、状态管理、
 CAN 统计和固件烧录集成在同一个交互终端中。
 
+## 快速开始
+
+在项目根目录编译并检查配置：
+
+```bash
+cd ~/bxi_ws/bxi_pci_drv
+make -j4
+./build/motor_console --check-config
+```
+
+启动终端：
+
+```bash
+sudo ./build/motor_console
+```
+
 ## 1. 安全说明
 
 操作真实电机前请确认：
@@ -67,16 +83,16 @@ sudo ./build/motor_console --language en
 启动时程序只加载配置、初始化 PCI/CAN 并拉起终端，不会自动上电、使能、复位或
 烧录电机。
 
-默认语言为英文，因此默认提示符：
+默认配置语言为中文，因此默认提示符：
 
 ```text
-motor[POWER-OFF]>
+电机[已下电]>
 ```
 
 电机上电后提示符变为：
 
 ```text
-motor[POWER-ON]>
+电机[已上电]>
 ```
 
 ## 4. 终端编辑功能
@@ -92,10 +108,10 @@ motor[POWER-ON]>
 
 ## 5. 中英文切换
 
-终端默认语言为英文，由配置文件决定：
+终端默认语言由配置文件决定。当前模板默认中文：
 
 ```yaml
-language: en
+language: zh
 ```
 
 终端内即时切换，不需要重启：
@@ -309,6 +325,27 @@ can_status reset
 当前公开驱动接口没有提供 CAN 控制器 TEC、REC 和 bus-off 状态，因此这里显示的是
 软件发送错误与命令回复丢失统计，不是底层控制器硬件错误寄存器。
 
+快速查看单个电机原始回复解析：
+
+```text
+can_dbg 00
+```
+
+`can_dbg` 会：
+
+1. 读取 `0x7c config_version`。
+2. 发送一帧零 MIT 探测帧。
+3. 打印该电机的 MIT 回复解析结果。
+
+新版固件输出示例：
+
+```text
+motor_reply: start total=1 index=00 bus=0 id=1 timeout_ms=3000 probe
+[motor00]: mit_decode=aux config_version=0.1 raw=0x00000001 reason=polling_mit_supported
+[motor00]: pos= 0.02041 vel=-0.01099 torque=-0.01954 aux=0x3:vbus value=24.0V raw=240
+motor_reply: done total=1 success=1 failed=0 frames=1
+```
+
 ## 9. 固件烧录
 
 ### 9.1 准备固件
@@ -514,6 +551,7 @@ config/motor_console.yaml
 | `help` / `-h` / `?` | 无 | 显示终端帮助 |
 | `power_on` | 无 | 电机上电、等待软启动、扫描全部电机 |
 | `power_off` | 无 | 失能已知使能电机并关闭总电源 |
+| `power_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
@@ -542,6 +580,15 @@ config/motor_console.yaml
 `status`、`value_type` 和 value；`value_type` 使用 `bit8..10`，
 目前 `0=int`、`1=bool`、`2=float`、`3=uint32`、`4=version`。
 这些命令需要电机配置版本非 0 才会响应。
+
+常用寄存器示例：
+
+```text
+reg_read 00 0x7c     # 读取配置版本
+reg_read 00 0x01     # 读取 motor_pole_pairs
+reg_write 00 0x01 10 # 写入 motor_pole_pairs
+reg_save 00          # 保存配置到电机 Flash
+```
 
 ### 11.3 烧录
 
@@ -593,6 +640,30 @@ flash_all config/flash_plan_debug.yaml
 | `src/lib/display.c` | help、配置、电机列表等输出 |
 | `src/lib/control.c` | 上下电、扫描、MIT 控制、CAN 统计 |
 | `src/lib/flash.c` | 单台/全部/计划烧录和烧录配置解析 |
-| `src/lib/debug.c` | 单电机直通调试 |
+| `src/lib/debug.c` | 单电机直通调试、`can_dbg` 单电机回复解析 |
 | `src/lib/terminal.c` | 命令分发、配置重载、交互终端循环 |
 | `src/lib/bxi_motor_comm.c` / `src/lib/bxi_motor_comm.h` | MIT 帧打包、特殊命令帧、回复解析和默认参数范围 |
+
+### 12.1 MIT 轮询解析相关函数
+
+| 函数 | 位置 | 说明 |
+|---|---|---|
+| `bxi_motor_unpack_reply` | `src/lib/bxi_motor_comm.c` | 新版 MIT 回复解析；解析位置、速度、力矩和 AUX 轮询遥测 |
+| `bxi_motor_unpack_reply_legacy_ntc` | `src/lib/bxi_motor_comm.c` | 旧版 MIT 回复解析；最后两个字节按 NTC 温度解析 |
+| `mit_reply_frame_matches` | `src/lib/runtime.c` | 判断 CAN 帧是否匹配某个电机的 MIT 回复 |
+| `console_unpack_motor_reply_by_version` | `src/lib/debug.c` | 根据 `config_version` 选择新版 AUX 或旧版 NTC 解析 |
+| `console_print_raw_motor_can_frame` | `src/lib/debug.c` | `can_dbg/motor_reply` 的单电机回复输出 |
+
+### 12.2 寄存器协议相关函数
+
+| 函数 | 位置 | 说明 |
+|---|---|---|
+| `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x7c config_version` |
+| `reg_value_type_from_wire` | `src/lib/runtime.c` | 从 `reply_header` 解析 `value_type` |
+| `reg_request_header` | `src/lib/runtime.c` | 生成写寄存器请求头：`address | value_type << 8` |
+| `reg_reply_status` | `src/lib/runtime.c` | 从 `reply_header` 解析寄存器返回状态 |
+| `reg_reply_value_type` | `src/lib/runtime.c` | 从 `reply_header` 解析 `bit8..10` 的 `value_type` |
+| `print_register_value` | `src/lib/runtime.c` | 按 `value_type` 打印 int/bool/float/uint32/version |
+| `print_register_debug_frame` | `src/lib/runtime.c` | 寄存器回复的主要解析和输出函数 |
+| `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save` 对单台电机的实际发送函数 |
+| `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按寄存器类型转成 32 位 raw value |

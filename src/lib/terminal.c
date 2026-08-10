@@ -84,6 +84,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_power_off(state);
+    } else if (strcmp(cmd, "power_probe") == 0) {
+        if (argc != 1) {
+            printf("%s: power_probe\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_power_probe(state);
     } else if (strcmp(cmd, "motor_scan") == 0) {
         timeout_ms = state->config.scan_timeout_ms;
         if (argc > 2 || (argc == 2 && parse_uint_arg(argv[1], &timeout_ms) != 0)) {

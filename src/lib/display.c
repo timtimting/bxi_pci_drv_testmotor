@@ -16,6 +16,8 @@ static void console_print_help(bool chinese)
         printf("      电机总电源上电，等待软启动，扫描全部配置电机并输出回复序号。\n");
         printf("  power_off\n");
         printf("      先失能已知处于使能状态的电机，再关闭电机总电源。\n");
+        printf("  power_probe\n");
+        printf("      上电、接收并显示配置电机回复，最后无论结果如何都会自动下电。\n");
         printf("  motor_scan [timeout_ms]\n");
         printf("      扫描所有 CAN 总线上的配置电机，不改变使能状态。\n");
         printf("  motor_list\n");
@@ -67,6 +69,8 @@ static void console_print_help(bool chinese)
     printf("      and print the responding motor indexes.\n");
     printf("  power_off\n");
     printf("      Disable known enabled motors first, then turn motor power off.\n");
+    printf("  power_probe\n");
+    printf("      Power on, receive and print configured motor replies, then always power off.\n");
     printf("  motor_scan [timeout_ms]\n");
     printf("      Probe every configured motor on all CAN buses without changing enable state.\n");
     printf("  motor_list\n");

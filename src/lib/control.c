@@ -543,6 +543,43 @@ static int console_power_off(flash_state *state)
     return 0;
 }
 
+static int console_power_probe(flash_state *state)
+{
+    int power_on_ret;
+    int power_off_ret;
+    size_t online = 0u;
+    size_t i;
+
+    if (state->motor_power_on) {
+        printf("%s\n", console_text(state,
+               "power_probe 被拒绝：电机已经上电，请先执行 power_off",
+               "power_probe refused: motor power is already ON; run power_off first"));
+        return -1;
+    }
+
+    printf("power_probe: start total=%zu\n", state->config.entry_count);
+    power_on_ret = console_power_on(state);
+
+    if (state->motor_power_on) {
+        console_print_motors(state);
+        for (i = 0u; i < state->config.entry_count; i++) {
+            if (state->motors[i].online) {
+                online++;
+            }
+        }
+    }
+
+    power_off_ret = console_power_off(state);
+    printf("power_probe: done total=%zu success=%zu failed=%zu power_on=%s power_off=%s\n",
+           state->config.entry_count,
+           online,
+           state->config.entry_count - online,
+           power_on_ret == 0 ? "OK" : "FAIL",
+           power_off_ret == 0 ? "OK" : "FAIL");
+
+    return power_on_ret == 0 && power_off_ret == 0 ? 0 : -1;
+}
+
 static int console_motor_set(flash_state *state, int argc, char **argv)
 {
     unsigned int index;

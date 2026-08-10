@@ -37,7 +37,7 @@ typedef struct
 } flash_plan_config;
 
 static const char *const console_command_words[] = {
-    "help", "-h", "?", "power_on", "power_off", "motor_scan", "motor_list",
+    "help", "-h", "?", "power_on", "power_off", "power_probe", "motor_scan", "motor_list",
     "mit_zero_set", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "motor_set", "stand_up",
     "reg_read", "reg_write", "reg_save",
