@@ -295,8 +295,8 @@ int bxi_motor_unpack_reply(const uint8_t *data,
         case BXI_MOTOR_AUX_NTC1:
         case BXI_MOTOR_AUX_NTC2:
         case BXI_MOTOR_AUX_WINDING_TEMP:
-            /* 温度范围：-50.0 .. 200.0 C，分辨率 0.1 C。 */
-            reply->aux_value = (float)reply->aux_payload / 10.0f - 50.0f;
+            /* 温度范围：-30.0 .. 150.0 C，分辨率 0.1 C。 */
+            reply->aux_value = (float)reply->aux_payload / 10.0f - 30.0f;
             break;
         case BXI_MOTOR_AUX_VBUS:
             /* 母线电压范围：0.0 .. 100.0 V，分辨率 0.1 V。 */

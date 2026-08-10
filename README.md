@@ -535,10 +535,11 @@ config/motor_console.yaml
 | `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | 写入寄存器；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
 | `reg_save` | `<index00\|all> [wait_ms]` | 保存寄存器配置；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
 
-寄存器命令按底层电机程序的 CAN 配置协议发送：
-`reg_write` 使用 `CAN_CMD_SET_CONFIG=0x11`，`reg_read` 使用
-`CAN_CMD_GET_CONFIG=0x12`，`reg_save` 使用 `CAN_CMD_UPDATE_CONFIGS=0x13`。
-读写回复会打印寄存器地址和 raw/uint/int/float 四种值。
+寄存器命令按底层电机程序的新版 CAN 配置协议发送：
+`reg_read` 使用 `CAN_CMD_REG_READ=0x17`，`reg_write` 使用
+`CAN_CMD_REG_WRITE=0x18`，`reg_save` 使用 `CAN_CMD_REG_SAVE=0x19`。
+`reg_write` 会根据寄存器地址自动填充 `value_type`，回复会解析
+`status`、`value_type` 和 value；这些命令需要电机配置版本非 0 才会响应。
 
 ### 11.3 烧录
 

@@ -32,11 +32,10 @@
 #define DEFAULT_BOOT_TX_RETRY_DELAY_MS 2u
 
 enum {
-    CAN_CMD_REG_WRITE = 0x11,
-    CAN_CMD_REG_READ = 0x12,
-    CAN_CMD_REG_SAVE = 0x13,
-    CAN_CMD_REG_RESET_ALL = 0x14,
-    CAN_CMD_REG_FW_VERSION = 0x15,
+    CAN_CMD_REG_READ = 0x17,
+    CAN_CMD_REG_WRITE = 0x18,
+    CAN_CMD_REG_SAVE = 0x19,
+    CAN_CMD_REG_INFO = 0x1a,
 };
 
 enum {
@@ -244,6 +243,8 @@ typedef struct
     bool suppress_boot_text;
     bool brief_flash_output;
     bool brief_register_output;
+    bool pending_register_valid;
+    uint32_t pending_register_addr;
     bool firmware_prefetch_ready;
     char active_firmware_dir[PATH_LEN];
     unsigned int brief_flash_index;
@@ -1172,18 +1173,30 @@ static int is_reg_cmd_id(unsigned int can_id)
     return cmd == CAN_CMD_REG_READ ||
            cmd == CAN_CMD_REG_WRITE ||
            cmd == CAN_CMD_REG_SAVE ||
-           cmd == CAN_CMD_REG_RESET_ALL ||
-           cmd == CAN_CMD_REG_FW_VERSION;
+           cmd == CAN_CMD_REG_INFO;
 }
 
 typedef enum
 {
     REG_VALUE_INT = 0,
-    REG_VALUE_UINT,
-    REG_VALUE_FLOAT,
     REG_VALUE_BOOL,
+    REG_VALUE_FLOAT,
+    REG_VALUE_UINT,
     REG_VALUE_UNKNOWN,
 } reg_value_type;
+
+enum {
+    CAN_REG_STATUS_OK = 0u,
+    CAN_REG_STATUS_INVALID_ADDR = 1u,
+    CAN_REG_STATUS_READ_ONLY = 2u,
+    CAN_REG_STATUS_SAVE_FAIL = 3u,
+    CAN_REG_STATUS_INVALID_LEN = 4u,
+    CAN_REG_STATUS_TYPE_MISMATCH = 5u,
+    CAN_REG_REPLY_STATUS_MASK = 0xffu,
+    CAN_REG_REPLY_TYPE_SHIFT = 8u,
+    CAN_REG_REPLY_TYPE_MASK = 0x03u,
+    CAN_REG_REQUEST_TYPE_SHIFT = 8u,
+};
 
 typedef struct
 {
@@ -1197,53 +1210,52 @@ static const reg_config_meta reg_config_table[] = {
     {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
     {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
     {0x04u, "inertia", REG_VALUE_FLOAT},
-    {0x05u, "encoder_dir_rev", REG_VALUE_INT},
-    {0x06u, "encoder_offset", REG_VALUE_INT},
-    {0x07u, "calib_valid", REG_VALUE_INT},
-    {0x08u, "calib_current", REG_VALUE_FLOAT},
-    {0x09u, "calib_max_voltage", REG_VALUE_FLOAT},
-    {0x0au, "control_mode", REG_VALUE_INT},
-    {0x0bu, "current_ramp_rate", REG_VALUE_FLOAT},
-    {0x0cu, "vel_ramp_rate", REG_VALUE_FLOAT},
-    {0x0du, "traj_vel", REG_VALUE_FLOAT},
-    {0x0eu, "traj_accel", REG_VALUE_FLOAT},
-    {0x0fu, "traj_decel", REG_VALUE_FLOAT},
-    {0x10u, "pos_gain", REG_VALUE_FLOAT},
-    {0x11u, "vel_gain", REG_VALUE_FLOAT},
-    {0x12u, "vel_integrator_gain", REG_VALUE_FLOAT},
-    {0x13u, "vel_limit", REG_VALUE_FLOAT},
-    {0x14u, "current_limit", REG_VALUE_FLOAT},
-    {0x15u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
-    {0x16u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
-    {0x17u, "current_ctrl_bandwidth", REG_VALUE_INT},
-    {0x18u, "protect_under_voltage", REG_VALUE_FLOAT},
-    {0x19u, "protect_over_voltage", REG_VALUE_FLOAT},
-    {0x1au, "protect_over_speed", REG_VALUE_FLOAT},
-    {0x1bu, "can_id", REG_VALUE_INT},
-    {0x1cu, "can_timeout_ms", REG_VALUE_INT},
-    {0x1du, "can_sync_target_enable", REG_VALUE_BOOL},
-    {0x1eu, "torquet_limit", REG_VALUE_FLOAT},
-    {0x1fu, "protect_temperature_low", REG_VALUE_FLOAT},
-    {0x20u, "protect_temperature_high", REG_VALUE_FLOAT},
-    {0x21u, "protect_i_abc_error", REG_VALUE_FLOAT},
-    {0x22u, "can_mode_switch", REG_VALUE_BOOL},
-    {0x23u, "master_id", REG_VALUE_INT},
-    {0x24u, "field_weaken_mode", REG_VALUE_BOOL},
-    {0x25u, "sync_boot_id_flag", REG_VALUE_BOOL},
-    {0x26u, "current_test_enable", REG_VALUE_BOOL},
-    {0x27u, "mit_mode", REG_VALUE_BOOL},
-    {0x28u, "max_pos", REG_VALUE_FLOAT},
-    {0x29u, "max_vel", REG_VALUE_FLOAT},
-    {0x2au, "max_tor", REG_VALUE_FLOAT},
-    {0x2bu, "kp_max", REG_VALUE_FLOAT},
-    {0x2cu, "kd_max", REG_VALUE_FLOAT},
-    {0x2du, "usr_enc1_offset", REG_VALUE_INT},
-    {0x2eu, "usr_enc2_offset", REG_VALUE_FLOAT},
-    {0x2fu, "enco_calib_valid", REG_VALUE_INT},
-    {0x30u, "config_version", REG_VALUE_UINT},
-    {0x31u, "reduction_ratio", REG_VALUE_FLOAT},
-    {0x7cu, "config_version", REG_VALUE_UINT},
-    {0xf0u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
+    {0x05u, "reduction_ratio", REG_VALUE_FLOAT},
+    {0x10u, "encoder_dir_rev", REG_VALUE_INT},
+    {0x11u, "encoder_offset", REG_VALUE_INT},
+    {0x12u, "calib_valid", REG_VALUE_INT},
+    {0x13u, "ldc1614_calib_valid", REG_VALUE_INT},
+    {0x14u, "usr_enc1_offset", REG_VALUE_INT},
+    {0x15u, "usr_enc2_offset", REG_VALUE_FLOAT},
+    {0x17u, "ldc1614_dir", REG_VALUE_INT},
+    {0x18u, "ldc1614_offset", REG_VALUE_FLOAT},
+    {0x20u, "calib_current", REG_VALUE_FLOAT},
+    {0x21u, "calib_max_voltage", REG_VALUE_FLOAT},
+    {0x30u, "control_mode", REG_VALUE_INT},
+    {0x31u, "pos_gain", REG_VALUE_FLOAT},
+    {0x32u, "vel_gain", REG_VALUE_FLOAT},
+    {0x33u, "vel_integrator_gain", REG_VALUE_FLOAT},
+    {0x34u, "vel_limit", REG_VALUE_FLOAT},
+    {0x35u, "current_limit", REG_VALUE_FLOAT},
+    {0x36u, "torquet_limit", REG_VALUE_FLOAT},
+    {0x37u, "current_ramp_rate", REG_VALUE_FLOAT},
+    {0x38u, "vel_ramp_rate", REG_VALUE_FLOAT},
+    {0x39u, "traj_vel", REG_VALUE_FLOAT},
+    {0x3au, "traj_accel", REG_VALUE_FLOAT},
+    {0x3bu, "traj_decel", REG_VALUE_FLOAT},
+    {0x3cu, "field_weaken_mode", REG_VALUE_BOOL},
+    {0x40u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
+    {0x41u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
+    {0x42u, "current_ctrl_bandwidth", REG_VALUE_INT},
+    {0x50u, "protect_under_voltage", REG_VALUE_FLOAT},
+    {0x51u, "protect_over_voltage", REG_VALUE_FLOAT},
+    {0x52u, "protect_over_speed", REG_VALUE_FLOAT},
+    {0x53u, "protect_temperature_low", REG_VALUE_FLOAT},
+    {0x54u, "protect_temperature_high", REG_VALUE_FLOAT},
+    {0x55u, "protect_i_abc_error", REG_VALUE_FLOAT},
+    {0x60u, "can_id", REG_VALUE_INT},
+    {0x61u, "master_id", REG_VALUE_INT},
+    {0x62u, "sync_boot_id_flag", REG_VALUE_BOOL},
+    {0x63u, "can_timeout_ms", REG_VALUE_INT},
+    {0x64u, "can_sync_target_enable", REG_VALUE_BOOL},
+    {0x65u, "can_mode_switch", REG_VALUE_BOOL},
+    {0x66u, "mit_mode", REG_VALUE_BOOL},
+    {0x67u, "max_pos", REG_VALUE_FLOAT},
+    {0x68u, "max_vel", REG_VALUE_FLOAT},
+    {0x69u, "max_tor", REG_VALUE_FLOAT},
+    {0x6au, "kp_max", REG_VALUE_FLOAT},
+    {0x6bu, "kd_max", REG_VALUE_FLOAT},
+    {0x7cu, "config_version", REG_VALUE_INT},
 };
 
 static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
@@ -1260,22 +1272,90 @@ static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
 
 static const char *reg_cmd_name(unsigned int cmd)
 {
-    if (cmd == CAN_CMD_REG_WRITE) {
-        return "write";
-    }
     if (cmd == CAN_CMD_REG_READ) {
         return "read";
+    }
+    if (cmd == CAN_CMD_REG_WRITE) {
+        return "write";
     }
     if (cmd == CAN_CMD_REG_SAVE) {
         return "save";
     }
-    if (cmd == CAN_CMD_REG_RESET_ALL) {
-        return "reset_all";
-    }
-    if (cmd == CAN_CMD_REG_FW_VERSION) {
-        return "fw_version";
+    if (cmd == CAN_CMD_REG_INFO) {
+        return "info";
     }
     return "unknown";
+}
+
+static const char *reg_status_name(unsigned int status)
+{
+    switch (status) {
+    case CAN_REG_STATUS_OK:
+        return "OK";
+    case CAN_REG_STATUS_INVALID_ADDR:
+        return "INVALID_ADDR";
+    case CAN_REG_STATUS_READ_ONLY:
+        return "READ_ONLY";
+    case CAN_REG_STATUS_SAVE_FAIL:
+        return "SAVE_FAIL";
+    case CAN_REG_STATUS_INVALID_LEN:
+        return "INVALID_LEN";
+    case CAN_REG_STATUS_TYPE_MISMATCH:
+        return "TYPE_MISMATCH";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *reg_value_type_name(reg_value_type type)
+{
+    switch (type) {
+    case REG_VALUE_INT:
+        return "int";
+    case REG_VALUE_BOOL:
+        return "bool";
+    case REG_VALUE_FLOAT:
+        return "float";
+    case REG_VALUE_UINT:
+        return "uint32";
+    default:
+        return "unknown";
+    }
+}
+
+static reg_value_type reg_value_type_from_wire(unsigned int wire_type)
+{
+    switch (wire_type & CAN_REG_REPLY_TYPE_MASK) {
+    case 0u:
+        return REG_VALUE_INT;
+    case 1u:
+        return REG_VALUE_BOOL;
+    case 2u:
+        return REG_VALUE_FLOAT;
+    case 3u:
+        return REG_VALUE_UINT;
+    default:
+        return REG_VALUE_UNKNOWN;
+    }
+}
+
+static uint32_t reg_request_header(uint32_t reg, reg_value_type type)
+{
+    if (type == REG_VALUE_UNKNOWN) {
+        type = REG_VALUE_UINT;
+    }
+    return (reg & 0xffu) | (((uint32_t)type & CAN_REG_REPLY_TYPE_MASK) << CAN_REG_REQUEST_TYPE_SHIFT);
+}
+
+static unsigned int reg_reply_status(uint32_t reply_header)
+{
+    return reply_header & CAN_REG_REPLY_STATUS_MASK;
+}
+
+static reg_value_type reg_reply_value_type(uint32_t reply_header)
+{
+    return reg_value_type_from_wire((reply_header >> CAN_REG_REPLY_TYPE_SHIFT) &
+                                    CAN_REG_REPLY_TYPE_MASK);
 }
 
 static void print_register_value(uint32_t value, reg_value_type type)
@@ -1300,9 +1380,14 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
     const motor_map_entry *entry = find_motor_by_bus_id(state, frame->bus, node_id);
 
     if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) && frame->len >= 8u) {
-        uint32_t reg = data_to_u32(&frame->data[0]);
+        uint32_t reply_header = data_to_u32(&frame->data[0]);
+        unsigned int status = reg_reply_status(reply_header);
+        reg_value_type wire_type = reg_reply_value_type(reply_header);
+        uint32_t reg = state->pending_register_valid ? state->pending_register_addr : 0xffffffffu;
         uint32_t value = data_to_u32(&frame->data[4]);
         const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+        reg_value_type value_type = wire_type != REG_VALUE_UNKNOWN ? wire_type :
+                                    (meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
 
         if (state->brief_register_output) {
             if (entry != NULL) {
@@ -1322,38 +1407,48 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
                        frame->flags);
             }
             print_data(frame->data, frame->len);
-            printf(" reg=0x%02x", reg);
+            if (reg != 0xffffffffu) {
+                printf(" reg=0x%02x", reg);
+            } else {
+                printf(" reg=unknown");
+            }
             if (meta != NULL) {
                 printf(" %s", meta->name);
             }
-            printf(" value=");
-            print_register_value(value, meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
+            printf(" status=%u(%s) type=%s value=",
+                   status, reg_status_name(status), reg_value_type_name(value_type));
+            print_register_value(value, value_type);
             printf("\n");
             fflush(stdout);
             return 1;
         }
         if (entry != NULL) {
-            printf("\n%s index=%02u reg=0x%02x",
+            printf("\n%s index=%02u",
                    state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]",
-                   entry->index,
-                   reg);
+                   entry->index);
         } else {
-            printf("\n%s index=?? reg=0x%02x",
-                   state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]",
-                   reg);
+            printf("\n%s index=??",
+                   state->config.chinese_ui ? "[寄存器回复]" : "[REGISTER]");
+        }
+        if (reg != 0xffffffffu) {
+            printf(" reg=0x%02x", reg);
+        } else {
+            printf(" reg=unknown");
         }
         if (meta != NULL) {
             printf(" %s", meta->name);
         }
-        printf(" value=");
-        print_register_value(value, meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
-        printf("\n  bus=%u id=%u can_id=0x%03x cmd=%s\n",
-               frame->bus, node_id, frame->can_id, reg_cmd_name(cmd));
+        printf(" status=%u(%s) type=%s value=",
+               status, reg_status_name(status), reg_value_type_name(value_type));
+        print_register_value(value, value_type);
+        printf("\n  bus=%u id=%u can_id=0x%03x cmd=%s raw=0x%08x\n",
+               frame->bus, node_id, frame->can_id, reg_cmd_name(cmd), value);
         fflush(stdout);
         return 1;
     }
     if (cmd == CAN_CMD_REG_SAVE && frame->len >= 4u) {
-        int32_t status = (int32_t)data_to_u32(&frame->data[0]);
+        uint32_t reply_header = data_to_u32(&frame->data[0]);
+        unsigned int status = reply_header & CAN_REG_REPLY_STATUS_MASK;
 
         if (state->brief_register_output) {
             if (entry != NULL) {
@@ -1373,21 +1468,21 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
                        frame->flags);
             }
             print_data(frame->data, frame->len);
-            printf(" reg_save status=%d%s\n", status, status == 0 ? " OK" : "");
+            printf(" reg_save status=%u(%s)\n", status, reg_status_name(status));
             fflush(stdout);
             return 1;
         }
         if (entry != NULL) {
-            printf("\n%s index=%02u status=%d%s\n",
+            printf("\n%s index=%02u status=%u(%s)\n",
                    state->config.chinese_ui ? "[寄存器保存]" : "[REGISTER SAVE]",
                    entry->index,
                    status,
-                   status == 0 ? " OK" : "");
+                   reg_status_name(status));
         } else {
-            printf("\n%s index=?? status=%d%s\n",
+            printf("\n%s index=?? status=%u(%s)\n",
                    state->config.chinese_ui ? "[寄存器保存]" : "[REGISTER SAVE]",
                    status,
-                   status == 0 ? " OK" : "");
+                   reg_status_name(status));
         }
         printf("  bus=%u id=%u can_id=0x%03x cmd=%s\n",
                frame->bus, node_id, frame->can_id, reg_cmd_name(cmd));
@@ -1424,31 +1519,27 @@ static void print_debug_frame(flash_state *state, const rx_can_frame *frame)
 
         if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) &&
             frame->len >= 8u) {
-            uint32_t reg = data_to_u32(&frame->data[0]);
+            uint32_t reply_header = data_to_u32(&frame->data[0]);
+            unsigned int status = reply_header & CAN_REG_REPLY_STATUS_MASK;
+            reg_value_type value_type = reg_value_type_from_wire((reply_header >> CAN_REG_REPLY_TYPE_SHIFT) &
+                                                                 CAN_REG_REPLY_TYPE_MASK);
             uint32_t value = data_to_u32(&frame->data[4]);
 
-            printf("\nregister: addr=0x%08x value_raw=0x%08x uint=%u int=%d float=% .6g",
-                   reg,
+            printf("\nregister: status=%u(%s) type=%s value_raw=0x%08x uint=%u int=%d float=% .6g",
+                   status,
+                   reg_status_name(status),
+                   reg_value_type_name(value_type),
                    value,
                    value,
                    (int32_t)value,
                    data_to_float(&frame->data[4]));
         } else if (cmd == CAN_CMD_REG_SAVE && frame->len >= 4u) {
-            int32_t status = (int32_t)data_to_u32(&frame->data[0]);
+            unsigned int status = data_to_u32(&frame->data[0]) & CAN_REG_REPLY_STATUS_MASK;
 
-            printf("\nregister save: status=%d%s",
+            printf("\nregister save: status=%u(%s)%s",
                    status,
+                   reg_status_name(status),
                    status == 0 ? " OK" : "");
-        } else if (cmd == CAN_CMD_REG_RESET_ALL && frame->len >= 4u) {
-            int32_t status = (int32_t)data_to_u32(&frame->data[0]);
-
-            printf("\nregister reset-all: status=%d%s",
-                   status,
-                   status == 0 ? " OK" : "");
-        } else if (cmd == CAN_CMD_REG_FW_VERSION && frame->len >= 8u) {
-            printf("\nfirmware version: major=%u minor=%u",
-                   data_to_u32(&frame->data[0]),
-                   data_to_u32(&frame->data[4]));
         }
     } else if (mit_reply_frame_matches(frame, state->boot_id)) {
         bxi_motor_reply reply;
@@ -3843,6 +3934,8 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
     unsigned int wait_ms = 1000u;
     uint8_t data[8];
     unsigned int frame_id;
+    const reg_config_meta *meta;
+    reg_value_type value_type;
 
     if (argc < 2 ||
         parse_uint_arg(argv[0], &reg) != 0 ||
@@ -3856,7 +3949,9 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
     }
 
     frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_WRITE);
-    u32_to_data(reg, &data[0]);
+    meta = reg_config_meta_for_addr(reg);
+    value_type = meta != NULL ? meta->type : REG_VALUE_UINT;
+    u32_to_data(reg_request_header(reg, value_type), &data[0]);
     u32_to_data(value, &data[4]);
     frame_ring_clear(&state->frames);
     if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
@@ -3868,7 +3963,7 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
 static int run_debug_reg_save(flash_state *state, int argc, char **argv)
 {
     unsigned int wait_ms = 1000u;
-    uint8_t data[4] = {0u, 0u, 0u, 0u};
+    uint8_t data[1] = {0u};
     unsigned int frame_id;
 
     if (argc > 0 && parse_uint_arg(argv[0], &wait_ms) != 0) {
@@ -3878,7 +3973,7 @@ static int run_debug_reg_save(flash_state *state, int argc, char **argv)
 
     frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_SAVE);
     frame_ring_clear(&state->frames);
-    if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
+    if (send_debug_packet(state, frame_id, data, 0u) != 0) {
         return -1;
     }
     return wait_debug_reply(state, frame_id, wait_ms);

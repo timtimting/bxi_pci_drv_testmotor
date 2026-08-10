@@ -132,9 +132,9 @@ static void console_print_raw_motor_can_frame(flash_state *state,
 /*
  * 通过普通寄存器 CAN 通道读取一个 32 位电机配置寄存器。
  *
- * 这个函数只做很薄的一层封装：发送 CAN_CMD_REG_READ，等待 bus/id/reg
- * 都匹配的回复，打印原始 TX/RX 帧，并返回 uint32 原始值。寄存器含义
- * 由调用方决定。
+ * 这个函数只做很薄的一层封装：发送 CAN_CMD_REG_READ，等待同一 bus/id
+ * 的新版寄存器回复，并返回 uint32 原始值。新版回复头不再回显寄存器
+ * 地址，因此这里只能依赖“刚刚发送的目标寄存器”来标注输出。
  */
 static bool console_read_motor_register(flash_state *state,
                                         const motor_map_entry *motor,
@@ -210,20 +210,33 @@ static bool console_read_motor_register(flash_state *state,
             (frame.can_id & 0x0fu) != (motor->id & 0x0fu)) {
             continue;
         }
-        /* 有效寄存器回复格式为：[reg u32][value u32]。 */
-        if (frame.len >= 8u &&
-            data_to_u32(&frame.data[0]) == reg) {
+        /* 新版有效寄存器回复格式为：[reply_header u32][value u32]。 */
+        if (frame.len >= 8u) {
+            /* reply_header 低 8 bit 是状态，bit8..9 是 value_type。 */
+            uint32_t reply_header = data_to_u32(&frame.data[0]);
+            /* 只有 status=OK 才能把后 4 字节当作有效寄存器值。 */
+            unsigned int status = reg_reply_status(reply_header);
             /* 从 bytes 4..7 取出寄存器返回值。 */
             uint32_t reply_value = data_to_u32(&frame.data[4]);
             /* 调试输出：复用已有的简洁寄存器输出，保持日志格式一致。 */
 #if 0
             bool old_brief = state->brief_register_output;
+            bool old_pending = state->pending_register_valid;
+            uint32_t old_pending_reg = state->pending_register_addr;
 
             /* can_dbg 前置探测时，强制寄存器回复单行输出。 */
             state->brief_register_output = true;
+            state->pending_register_valid = true;
+            state->pending_register_addr = reg;
             print_register_debug_frame(state, &frame);
             state->brief_register_output = old_brief;
+            state->pending_register_valid = old_pending;
+            state->pending_register_addr = old_pending_reg;
 #endif
+            /* 底层返回非 OK 时，说明地址/长度/状态不支持，本次探测失败。 */
+            if (status != CAN_REG_STATUS_OK) {
+                break;
+            }
             /* 返回原始值；具体版本含义由调用方解释。 */
             if (value != NULL) {
                 *value = reply_value;
@@ -410,9 +423,11 @@ static int console_motor_reply(flash_state *state, int argc, char **argv)
            timeout_ms,
            probe ? " probe" : "");
     if (console_read_motor_register(state, motor, CONFIG_VERSION_REG, &config_version)) {
-        printf("[motor%02u]: mit_decode=%s config_version=%u%s\n",
+        printf("[motor%02u]: mit_decode=%s config_version=%u.%u raw=0x%08x%s\n",
                motor->index,
                config_version != 0u ? "aux" : "legacy_ntc",
+               (unsigned int)((config_version >> 8) & 0xffu),
+               (unsigned int)(config_version & 0xffu),
                config_version,
                config_version != 0u ? " reason=polling_mit_supported" : "");
     } else {

@@ -823,6 +823,8 @@ static int console_reg_send_one(flash_state *state,
     bool old_input;
     int ret;
     unsigned int tx_len = 4u;
+    const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+    reg_value_type value_type = meta != NULL ? meta->type : REG_VALUE_UINT;
 
     console_use_motor(state, motor);
     frame_id = (unsigned int)reg_frame_id(state, cmd);
@@ -839,15 +841,17 @@ static int console_reg_send_one(flash_state *state,
                    motor->index, motor->bus, motor->id, reg);
         }
     } else if (cmd == CAN_CMD_REG_WRITE) {
-        u32_to_data(reg, &data[0]);
+        u32_to_data(reg_request_header(reg, value_type), &data[0]);
         u32_to_data(value, &data[4]);
         tx_len = 8u;
         if (!state->brief_register_output) {
-            printf("%s index=%02u bus=%u id=%u reg=0x%08x value=0x%08x\n",
+            printf("%s index=%02u bus=%u id=%u reg=0x%08x type=%s value=0x%08x\n",
                    console_text(state, "写入寄存器", "writing register"),
-                   motor->index, motor->bus, motor->id, reg, value);
+                   motor->index, motor->bus, motor->id, reg,
+                   reg_value_type_name(value_type), value);
         }
     } else {
+        tx_len = 0u;
         if (!state->brief_register_output) {
             printf("%s index=%02u bus=%u id=%u\n",
                    console_text(state, "保存寄存器配置", "saving register config"),
@@ -855,20 +859,25 @@ static int console_reg_send_one(flash_state *state,
         }
     }
     console_print_motor_tx_frame(motor, "reg", motor->bus, frame_id, tx_len, 0u, data);
+    state->pending_register_valid = (cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE);
+    state->pending_register_addr = reg;
     ret = send_debug_packet(state, frame_id, data, tx_len);
     state->debug_use_canfd = old_canfd;
     state->show_motor_input = old_input;
 
     if (ret == 0) {
         ret = wait_debug_reply(state, frame_id, wait_ms);
+        state->pending_register_valid = false;
         if (ret != 0) {
             printf("%s\n", console_text(state,
                    "提示：底层电机固件在 mit_mode=1 时会把 CAN 帧交给 MIT 回调，"
-                   "不会处理 0x11/0x12/0x13 配置寄存器命令；需要固件支持或切换 mit_mode 后才会回复。",
+                   "不会处理 0x17/0x18/0x19 配置寄存器命令；需要固件支持或切换 mit_mode 后才会回复。",
                    "hint: motor firmware routes CAN frames to the MIT callback when mit_mode=1, "
-                   "so 0x11/0x12/0x13 config register commands are not handled; firmware support "
+                   "so 0x17/0x18/0x19 config register commands are not handled; firmware support "
                    "or switching mit_mode is required."));
         }
+    } else {
+        state->pending_register_valid = false;
     }
     return ret;
 }
@@ -935,6 +944,38 @@ static int console_reg_command_all(flash_state *state,
     return failed == 0u && succeeded == plan.target_count ? 0 : -1;
 }
 
+static int console_parse_register_value_arg(unsigned int reg,
+                                            const char *text,
+                                            unsigned int *raw_value)
+{
+    const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+    reg_value_type type = meta != NULL ? meta->type : REG_VALUE_UINT;
+
+    if (raw_value == NULL || text == NULL) {
+        return -1;
+    }
+
+    if (type == REG_VALUE_FLOAT) {
+        float parsed;
+
+        if (parse_float_arg(text, &parsed) != 0) {
+            return -1;
+        }
+        memcpy(raw_value, &parsed, sizeof(parsed));
+        return 0;
+    }
+    if (type == REG_VALUE_BOOL) {
+        bool parsed;
+
+        if (parse_on_off(text, &parsed) != 0) {
+            return -1;
+        }
+        *raw_value = parsed ? 1u : 0u;
+        return 0;
+    }
+    return parse_uint_arg(text, raw_value);
+}
+
 static int console_reg_command(flash_state *state, int argc, char **argv, unsigned int cmd)
 {
     unsigned int index;
@@ -960,7 +1001,7 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
     } else if (cmd == CAN_CMD_REG_WRITE) {
         if (argc < 4 || argc > 5 ||
             parse_uint_arg(argv[2], &reg) != 0 ||
-            parse_uint_arg(argv[3], &value) != 0 ||
+            console_parse_register_value_arg(reg, argv[3], &value) != 0 ||
             (argc == 5 && parse_uint_arg(argv[4], &wait_ms) != 0)) {
             printf("%s: reg_write <index00|all> <reg_index> <value> [wait_ms]\n",
                    console_text(state, "用法", "usage"));
