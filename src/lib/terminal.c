@@ -57,7 +57,11 @@ static int console_run_command(flash_state *state, int argc, char **argv)
     }
     cmd = argv[0];
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
-        console_print_help(state->config.chinese_ui);
+        if (argc > 2 || (argc == 2 && strcmp(argv[1], "all") != 0)) {
+            printf("%s: %s [all]\n", console_text(state, "用法", "usage"), cmd);
+            return -1;
+        }
+        console_print_help(state->config.chinese_ui, argc == 2);
     } else if (strcmp(cmd, "language") == 0 || strcmp(cmd, "lang") == 0) {
         if (argc != 2 ||
             (strcmp(argv[1], "zh") != 0 && strcmp(argv[1], "en") != 0)) {
@@ -103,12 +107,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_print_motors(state);
-    } else if (strcmp(cmd, "mit_zero_set") == 0) {
+    } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
-            printf("%s: mit_zero_set\n", console_text(state, "用法", "usage"));
+            printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_send_special(state, -1, BXI_MOTOR_CMD_ZERO, cmd);
+        return console_send_special(state, -1, BXI_MOTOR_CMD_ZERO, "mit_zero_set_all");
     } else if (strcmp(cmd, "mit_zero_set_single") == 0 ||
                strcmp(cmd, "mit_enable_single") == 0 ||
                strcmp(cmd, "mit_disable_single") == 0) {

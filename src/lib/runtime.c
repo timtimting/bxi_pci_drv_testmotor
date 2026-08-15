@@ -4348,6 +4348,12 @@ static const char *const *completion_words_for_line(const char *line, size_t len
         *count = sizeof(language_words) / sizeof(language_words[0]);
         return language_words;
     }
+    if (custom_command_words != NULL &&
+        (strcmp(first, "help") == 0 || strcmp(first, "-h") == 0 || strcmp(first, "?") == 0) &&
+        tokens_before == 1u) {
+        *count = sizeof(listen_words) / sizeof(listen_words[0]);
+        return listen_words;
+    }
     if ((strcmp(first, "enter") == 0 ||
          strcmp(first, "flash") == 0 ||
          strcmp(first, "flash-one") == 0 ||

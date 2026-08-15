@@ -4,12 +4,51 @@
  * Included by main.c; do not add as a standalone CMake source.
  */
 
-static void console_print_help(bool chinese)
+static void console_print_help(bool chinese, bool verbose)
 {
+    if (!verbose) {
+        if (chinese) {
+            printf("统一电机终端命令（详细说明：help all 或 -h all）：\n");
+            printf("  帮助/语言： help | -h | ?    language zh|en\n\n");
+            printf("  电源/状态： power_on    power_off    motor_probe\n");
+            printf("             motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
+            printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
+            printf("             mit_enable_all    mit_disable_all\n");
+            printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
+            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
+            printf("             reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+            printf("             reg_save <index00|all> [wait_ms]\n\n");
+            printf("  烧录：      flash_single <index00> [version|firmware.bin] [cycle]\n");
+            printf("             flash_all [plan.yaml] [cycle]\n");
+            printf("             flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n\n");
+            printf("  调试/退出： motor_dbg <index00>    can_dbg <index00> [wait_ms] [passive]\n");
+            printf("             quit | exit | q | qq\n");
+        } else {
+            printf("Unified motor console commands (details: help all or -h all):\n");
+            printf("  Help/lang:  help | -h | ?    language zh|en\n\n");
+            printf("  Power/status: power_on    power_off    motor_probe\n");
+            printf("                motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
+            printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
+            printf("                mit_enable_all    mit_disable_all\n");
+            printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
+            printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
+            printf("                reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+            printf("                reg_save <index00|all> [wait_ms]\n\n");
+            printf("  Flash:        flash_single <index00> [version|firmware.bin] [cycle]\n");
+            printf("                flash_all [plan.yaml] [cycle]\n");
+            printf("                flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n\n");
+            printf("  Debug/exit:   motor_dbg <index00>    can_dbg <index00> [wait_ms] [passive]\n");
+            printf("                quit | exit | q | qq\n");
+        }
+        return;
+    }
+
     if (chinese) {
-        printf("统一电机终端推荐命令：\n");
-        printf("  help | -h | ?\n");
-        printf("      显示推荐命令、参数和安全说明。\n");
+        printf("统一电机终端详细命令：\n");
+        printf("  help | -h | ? [all]\n");
+        printf("      默认显示精简分组命令；带 all 显示本详细说明。\n");
         printf("  language zh|en  （别名：lang）\n");
         printf("      在中文和英文界面之间即时切换。\n");
         printf("  power_on\n");
@@ -22,7 +61,7 @@ static void console_print_help(bool chinese)
         printf("      扫描所有 CAN 总线上的配置电机，不改变使能状态。\n");
         printf("  motor_list\n");
         printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
-        printf("  mit_zero_set\n");
+        printf("  mit_zero_set_all\n");
         printf("      给全部电机发送 MIT 零位校准帧；要求电机已上电并处于失能状态。\n");
         printf("  mit_zero_set_single <index00>\n");
         printf("      给指定逻辑序号的电机发送 MIT 零位校准帧。\n");
@@ -59,9 +98,9 @@ static void console_print_help(bool chinese)
         return;
     }
 
-    printf("Recommended unified motor console commands:\n");
-    printf("  help | -h | ?\n");
-    printf("      Show recommended commands, parameters and safety notes.\n");
+    printf("Detailed unified motor console commands:\n");
+    printf("  help | -h | ? [all]\n");
+    printf("      Show concise grouped commands by default; all shows this detailed help.\n");
     printf("  language zh|en  (alias: lang)\n");
     printf("      Switch the console interface between Chinese and English.\n");
     printf("  power_on\n");
@@ -75,7 +114,7 @@ static void console_print_help(bool chinese)
     printf("      Probe every configured motor on all CAN buses without changing enable state.\n");
     printf("  motor_list\n");
     printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
-    printf("  mit_zero_set\n");
+    printf("  mit_zero_set_all\n");
     printf("      Send the MIT zero-calibration frame to every configured motor. Motors must\n");
     printf("      be powered and disabled.\n");
     printf("  mit_zero_set_single <index00>\n");

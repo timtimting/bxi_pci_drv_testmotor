@@ -134,6 +134,7 @@ lang en
 ```bash
 ./build/motor_console -h
 ./build/motor_console --help
+./build/motor_console -h all
 ```
 
 查看中文帮助：
@@ -142,12 +143,14 @@ lang en
 ./build/motor_console --language zh --help
 ```
 
-终端内查看帮助：
+终端内查看帮助。默认输出精简分组命令，详细说明使用 `all`：
 
 ```text
 help
 -h
 ?
+help all
+-h all
 ```
 
 ## 7. 推荐操作流程
@@ -208,7 +211,7 @@ motor_scan 1500
 给全部电机发送 MIT 零位校准帧：
 
 ```text
-mit_zero_set
+mit_zero_set_all
 ```
 
 给单台电机发送零位校准帧：
@@ -542,13 +545,14 @@ config/motor_console.yaml
 
 ## 11. 当前命令
 
-终端里可以执行 `help` / `-h` / `?` 查看推荐命令。实际测试时建议优先使用下面这些常用命令。
+终端里可以执行 `help` / `-h` / `?` 查看精简分组命令；执行
+`help all` / `-h all` 查看每个命令的详细说明。实际测试时建议优先使用下面这些常用命令。
 
 ### 11.1 常用操作
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
-| `help` / `-h` / `?` | 无 | 显示终端帮助 |
+| `help` / `-h` / `?` | `[all]` | 显示终端帮助；带 `all` 显示详细说明 |
 | `power_on` | 无 | 电机上电、等待软启动、扫描全部电机 |
 | `power_off` | 无 | 失能已知使能电机并关闭总电源 |
 | `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
@@ -561,7 +565,7 @@ config/motor_console.yaml
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
-| `mit_zero_set` | 无 | 给全部电机发送 MIT 零位校准帧 |
+| `mit_zero_set_all` | 无 | 给全部电机发送 MIT 零位校准帧 |
 | `mit_zero_set_single` | `<index00>` | 给单台电机发送 MIT 零位校准帧 |
 | `mit_enable_all` | 无 | 使能全部电机 |
 | `mit_disable_all` | 无 | 失能全部电机 |
