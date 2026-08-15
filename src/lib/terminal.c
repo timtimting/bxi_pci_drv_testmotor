@@ -84,12 +84,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_power_off(state);
-    } else if (strcmp(cmd, "power_probe") == 0) {
+    } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
-            printf("%s: power_probe\n", console_text(state, "用法", "usage"));
+            printf("%s: motor_probe\n", console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_power_probe(state);
+        return console_motor_probe(state);
     } else if (strcmp(cmd, "motor_scan") == 0) {
         timeout_ms = state->config.scan_timeout_ms;
         if (argc > 2 || (argc == 2 && parse_uint_arg(argv[1], &timeout_ms) != 0)) {
@@ -133,7 +133,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
-    } else if (strcmp(cmd, "motor_set") == 0) {
+    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
         return console_motor_set(state, argc, argv);
     } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
         if (argc != 1) {

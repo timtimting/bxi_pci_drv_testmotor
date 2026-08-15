@@ -543,7 +543,7 @@ static int console_power_off(flash_state *state)
     return 0;
 }
 
-static int console_power_probe(flash_state *state)
+static int console_motor_probe(flash_state *state)
 {
     int power_on_ret;
     int power_off_ret;
@@ -552,12 +552,12 @@ static int console_power_probe(flash_state *state)
 
     if (state->motor_power_on) {
         printf("%s\n", console_text(state,
-               "power_probe 被拒绝：电机已经上电，请先执行 power_off",
-               "power_probe refused: motor power is already ON; run power_off first"));
+               "motor_probe 被拒绝：电机已经上电，请先执行 power_off",
+               "motor_probe refused: motor power is already ON; run power_off first"));
         return -1;
     }
 
-    printf("power_probe: start total=%zu\n", state->config.entry_count);
+    printf("motor_probe: start total=%zu\n", state->config.entry_count);
     power_on_ret = console_power_on(state);
 
     if (state->motor_power_on) {
@@ -570,7 +570,7 @@ static int console_power_probe(flash_state *state)
     }
 
     power_off_ret = console_power_off(state);
-    printf("power_probe: done total=%zu success=%zu failed=%zu power_on=%s power_off=%s\n",
+    printf("motor_probe: done total=%zu success=%zu failed=%zu power_on=%s power_off=%s\n",
            state->config.entry_count,
            online,
            state->config.entry_count - online,
@@ -594,7 +594,7 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
         parse_float_arg(argv[4], &vel) != 0 ||
         parse_float_arg(argv[5], &kp) != 0 ||
         parse_float_arg(argv[6], &kd) != 0) {
-        printf("%s: motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n",
+        printf("%s: mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n",
                console_text(state, "用法", "usage"));
         return -1;
     }
@@ -607,12 +607,12 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
                "未知的电机序号", "unknown motor index"), index);
         return -1;
     }
-    printf("motor_set: start total=1 index=%02u bus=%u id=%u\n",
+    printf("mit_set: start total=1 index=%02u bus=%u id=%u\n",
            motor->index, motor->bus, motor->id);
     if (!state->motors[slot].enabled) {
         printf("[motor%02u]: failed bus=%u id=%u reason=not_enabled\n",
                motor->index, motor->bus, motor->id);
-        printf("motor_set: done total=1 success=0 failed=1\n");
+        printf("mit_set: done total=1 success=0 failed=1\n");
         return -1;
     }
     limits = limits_for_entry(state, motor);
@@ -631,7 +631,7 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
                limits->v_min, limits->v_max,
                limits->kp_min, limits->kp_max,
                limits->kd_min, limits->kd_max);
-        printf("motor_set: done total=1 success=0 failed=1\n");
+        printf("mit_set: done total=1 success=0 failed=1\n");
         return -1;
     }
     console_use_motor(state, motor);
@@ -652,7 +652,7 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
         printf("[motor%02u]: %s bus=%u id=%u\n",
                motor->index, send_ret == 0 ? "success" : "failed",
                motor->bus, motor->id);
-        printf("motor_set: done total=1 success=%u failed=%u\n",
+        printf("mit_set: done total=1 success=%u failed=%u\n",
                send_ret == 0 ? 1u : 0u, send_ret == 0 ? 0u : 1u);
         return send_ret;
     }

@@ -16,7 +16,7 @@ static void console_print_help(bool chinese)
         printf("      电机总电源上电，等待软启动，扫描全部配置电机并输出回复序号。\n");
         printf("  power_off\n");
         printf("      先失能已知处于使能状态的电机，再关闭电机总电源。\n");
-        printf("  power_probe\n");
+        printf("  motor_probe\n");
         printf("      上电、接收并显示配置电机回复，最后无论结果如何都会自动下电。\n");
         printf("  motor_scan [timeout_ms]\n");
         printf("      扫描所有 CAN 总线上的配置电机，不改变使能状态。\n");
@@ -30,7 +30,7 @@ static void console_print_help(bool chinese)
         printf("      使能或失能全部配置电机。\n");
         printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
         printf("      使能或失能指定电机。\n");
-        printf("  motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
+        printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
@@ -69,7 +69,7 @@ static void console_print_help(bool chinese)
     printf("      and print the responding motor indexes.\n");
     printf("  power_off\n");
     printf("      Disable known enabled motors first, then turn motor power off.\n");
-    printf("  power_probe\n");
+    printf("  motor_probe\n");
     printf("      Power on, receive and print configured motor replies, then always power off.\n");
     printf("  motor_scan [timeout_ms]\n");
     printf("      Probe every configured motor on all CAN buses without changing enable state.\n");
@@ -84,7 +84,7 @@ static void console_print_help(bool chinese)
     printf("      Send MIT enable/disable to every configured motor.\n");
     printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
     printf("      Send MIT enable/disable to one motor.\n");
-    printf("  motor_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
+    printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
     printf("      Send one MIT control frame. The selected motor must be enabled.\n");
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");

@@ -235,13 +235,13 @@ mit_disable_single 00
 ### 7.4 单电机 MIT 控制
 
 ```text
-motor_set <index00> <pos> <torque> <vel> <kp> <kd>
+mit_set <index00> <pos> <torque> <vel> <kp> <kd>
 ```
 
 示例：控制 `index 00` 到位置 `0.5`，目标速度和前馈转矩为 0：
 
 ```text
-motor_set 00 0.5 0 0 10 1
+mit_set 00 0.5 0 0 10 1
 ```
 
 参数顺序：
@@ -551,7 +551,7 @@ config/motor_console.yaml
 | `help` / `-h` / `?` | 无 | 显示终端帮助 |
 | `power_on` | 无 | 电机上电、等待软启动、扫描全部电机 |
 | `power_off` | 无 | 失能已知使能电机并关闭总电源 |
-| `power_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
+| `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
@@ -567,7 +567,7 @@ config/motor_console.yaml
 | `mit_disable_all` | 无 | 失能全部电机 |
 | `mit_enable_single` | `<index00>` | 使能单台电机 |
 | `mit_disable_single` | `<index00>` | 失能单台电机 |
-| `motor_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 给单台电机发送一次 MIT 控制帧 |
+| `mit_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 给单台电机发送一次 MIT 控制帧 |
 | `stand_up` | 无 | 全部在线且已使能电机软启动回零 |
 | `reg_read` | `<index00\|all> <reg_index> [wait_ms]` | 读取寄存器；`all` 按默认烧录配置逐台发送 |
 | `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | 写入寄存器；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
