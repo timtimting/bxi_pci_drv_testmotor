@@ -52,6 +52,10 @@ state_patterns:
     pattern: READY
   - label: boot_menu
     pattern: "Boot menu:"
+  - label: boot_menu
+    pattern: "u - Update firmware"
+  - label: boot_menu
+    pattern: "a - Jump to the app"
   - label: motor_menu
     pattern: "Motor main menu:"
   - label: motor_menu
