@@ -145,10 +145,14 @@ static bool console_read_motor_register(flash_state *state,
         /* can_dbg 前置寄存器探测不应阻塞太久，保持响应比较快。 */
         REGISTER_READ_WAIT_MS = 300u,
     };
+    /* 保存当前 bus，函数退出时恢复，避免影响终端后续命令目标。 */
+    unsigned int old_bus = state->bus;
+    /* 保存当前目标 id，函数退出时恢复，避免影响终端后续命令目标。 */
+    unsigned int old_id = state->boot_id;
     /* 寄存器读请求的数据区是 4 字节小端寄存器地址。 */
     uint8_t data[4] = {0u};
-    /* 寄存器 CAN ID 格式是 (command << 4) | motor_id。 */
-    unsigned int frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_READ);
+    /* 寄存器 CAN ID 格式是 (command << 4) | motor_id，切换目标后再计算。 */
+    unsigned int frame_id;
     /* 等待匹配寄存器回复的绝对超时时间。 */
     uint64_t deadline;
     /* 保存调试发送模式；寄存器协议需要使用 classic CAN。 */
@@ -164,6 +168,10 @@ static bool console_read_motor_register(flash_state *state,
     if (!reg_address_is_valid(reg)) {
         return false;
     }
+    /* 切换到本次要探测的电机；否则批量版本扫描会一直使用上一个目标。 */
+    console_use_motor(state, motor);
+    /* 按本次目标 id 生成寄存器 CAN ID，例如 id=2 -> 0x172。 */
+    frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_READ);
     /* 将目标寄存器地址写入 4 字节读请求。 */
     u32_to_data(reg & CAN_REG_REQUEST_ADDRESS_MASK, data);
     /* 寄存器协议使用 classic CAN，不使用 CAN-FD/BRS 的 MIT 帧。 */
@@ -179,6 +187,8 @@ static bool console_read_motor_register(flash_state *state,
     /* 向指定电机发送寄存器读请求。 */
     if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
         /* 发送失败也必须恢复终端/调试状态。 */
+        state->bus = old_bus;
+        set_target_id(state, old_id);
         state->debug_use_canfd = old_canfd;
         state->show_motor_input = old_input;
         return false;
@@ -246,6 +256,8 @@ static bool console_read_motor_register(flash_state *state,
                 *value = reply_value;
             }
             /* 成功读取后恢复终端/调试状态。 */
+            state->bus = old_bus;
+            set_target_id(state, old_id);
             state->debug_use_canfd = old_canfd;
             state->show_motor_input = old_input;
             return true;
@@ -263,6 +275,8 @@ static bool console_read_motor_register(flash_state *state,
     }
 
     /* 超时或未匹配到回复时，也要先恢复状态再返回失败。 */
+    state->bus = old_bus;
+    set_target_id(state, old_id);
     state->debug_use_canfd = old_canfd;
     state->show_motor_input = old_input;
     return false;
