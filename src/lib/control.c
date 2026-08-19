@@ -1019,8 +1019,11 @@ static int console_reg_send_one(flash_state *state,
     const reg_config_meta *meta = reg_config_meta_for_motor(state, motor, reg);
     reg_value_type value_type = meta != NULL ? meta->type : REG_VALUE_UINT;
     unsigned int value = 0u;
+    bool has_version_info = console_motor_has_version_info(state, motor);
+    bool is_version_probe = cmd == CAN_CMD_REG_READ &&
+                            (reg & CAN_REG_REQUEST_ADDRESS_MASK) == 0x7cu;
 
-    if (!console_motor_has_version_info(state, motor)) {
+    if (!has_version_info && !is_version_probe && cmd != CAN_CMD_REG_INFO) {
         printf("[motor%02u]: failed bus=%u id=%u reason=no_version_info\n",
                motor->index, motor->bus, motor->id);
         return -2;
