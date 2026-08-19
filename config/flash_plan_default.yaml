@@ -8,7 +8,11 @@
 # 使用方式：
 #   power_on
 #   mit_disable_all
-#   flash_plan config/flash_plan_default.yaml
+#   flash_all config/flash_plan_default.yaml
+#
+# 注意：
+#   如果程序已经从电机上电输出中识别到实际型号，flash_all/flash_single
+#   会优先使用识别型号对应的固件；未识别时才使用下面的 version。
 
 # 固件目录；version 会优先在该目录下查找。
 # 例如 version: 50L 会尝试 firmware/bxi_motor_50L.bin。

@@ -109,7 +109,9 @@ mit_kd_max: 5.0
 # -----------------------------------------------------------------------------
 # 电机型号配置
 # 每个型号独立配置：
-#   firmware : 该型号对应的固件文件名；启动预拉取和烧录都会使用这个名字
+#   firmware    : 识别不到具体固件主版本时使用的默认固件
+#   firmware_v0 : 已识别当前电机为 0.x 程序/配置版本时使用的固件
+#   firmware_v1 : 已识别当前电机为 1.x 程序/配置版本时使用的固件
 #   mit_*    : 该型号的 MIT 打包/解包范围
 #
 # 目前主要使用 50、50L、70、85 四个型号：
@@ -122,6 +124,8 @@ mit_kd_max: 5.0
 motor_types:
   - type: "50"
     firmware: bxi_motor_50.bin
+    firmware_v0: bxi_motor_50_v0.1.2.bin
+    firmware_v1: bxi_motor_50_v1.1.2_new.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -132,6 +136,8 @@ motor_types:
     mit_kd_max: 5.0
   - type: "50L"
     firmware: bxi_motor_50L.bin
+    firmware_v0: bxi_motor_50L_v0.1.2.bin
+    firmware_v1: bxi_motor_50L_v1.1.2_new.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -142,6 +148,8 @@ motor_types:
     mit_kd_max: 5.0
   - type: "70"
     firmware: bxi_motor_70.bin
+    firmware_v0: bxi_motor_70_v0.1.2.bin
+    firmware_v1: bxi_motor_70_v1.1.2_new.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -152,6 +160,8 @@ motor_types:
     mit_kd_max: 5.0
   - type: "85"
     firmware: bxi_motor_85.bin
+    firmware_v0: bxi_motor_85_v0.1.2.bin
+    firmware_v1: bxi_motor_85_v1.1.2_new.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0

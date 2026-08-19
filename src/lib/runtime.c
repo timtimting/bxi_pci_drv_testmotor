@@ -125,6 +125,8 @@ typedef struct
 {
     char type[MOTOR_TYPE_LEN];
     char firmware[FIRMWARE_NAME_MAX];
+    char firmware_v0[FIRMWARE_NAME_MAX];
+    char firmware_v1[FIRMWARE_NAME_MAX];
     bxi_motor_limits limits;
 } motor_type_config;
 
@@ -202,6 +204,13 @@ typedef struct
     float aux_value[16];
     uint16_t aux_payload[16];
     bool mit_aux_enabled;
+    bool fw_version_valid;
+    unsigned int fw_version_major;
+    unsigned int fw_version_minor;
+    bool config_version_valid;
+    uint32_t config_version;
+    bool detected_type_valid;
+    char detected_type[MOTOR_TYPE_LEN];
     unsigned int rx_count;
     unsigned int timeout_count;
     char state_label[MOTOR_STATE_LEN];
@@ -686,16 +695,98 @@ static bool motor_state_marker_from_line(const motor_map_config *config,
     return true;
 }
 
+static int normalize_detected_motor_type(const char *text, char *out, size_t out_len)
+{
+    char compact[MOTOR_TYPE_LEN];
+    size_t n = 0u;
+    size_t i;
+
+    if (text == NULL || out == NULL || out_len == 0u) {
+        return -1;
+    }
+    while (*text != '\0' &&
+           !isdigit((unsigned char)*text) &&
+           strncmp(text, "J3505", 5u) != 0 &&
+           strncmp(text, "J3510", 5u) != 0) {
+        text++;
+    }
+    if (*text == '\0') {
+        return -1;
+    }
+    for (i = 0u; text[i] != '\0' && n + 1u < sizeof(compact); i++) {
+        unsigned char ch = (unsigned char)text[i];
+
+        if (isalnum(ch)) {
+            compact[n++] = (char)toupper(ch);
+        }
+    }
+    compact[n] = '\0';
+    if (n == 0u || n >= out_len) {
+        return -1;
+    }
+    snprintf(out, out_len, "%s", compact);
+    return 0;
+}
+
+static void update_motor_detected_type_from_line(motor_runtime *runtime,
+                                                 const char *line)
+{
+    static const char *const markers[] = {
+        "PRO   :",
+        "PRO:",
+        "HW    :",
+        "HW:",
+        "Program for",
+        "Bxi_motor_",
+    };
+    size_t i;
+
+    if (runtime == NULL || line == NULL) {
+        return;
+    }
+    for (i = 0u; i < sizeof(markers) / sizeof(markers[0]); i++) {
+        const char *p = strstr(line, markers[i]);
+        char detected[MOTOR_TYPE_LEN];
+
+        if (p == NULL) {
+            continue;
+        }
+        p += strlen(markers[i]);
+        if (normalize_detected_motor_type(p, detected, sizeof(detected)) == 0) {
+            snprintf(runtime->detected_type, sizeof(runtime->detected_type),
+                     "%s", detected);
+            runtime->detected_type_valid = true;
+            return;
+        }
+    }
+}
+
 static void update_motor_state_from_boot_line(flash_state *state,
                                               motor_runtime *runtime,
                                               const char *line)
 {
     const motor_map_config *config;
     const char *state_from_marker = NULL;
+    unsigned int fw_major;
+    unsigned int fw_minor;
+    unsigned int fw_patch;
+    unsigned int cfg_major;
+    unsigned int cfg_minor;
 
     if (state == NULL || runtime == NULL || line == NULL) {
         return;
     }
+    if (sscanf(line, "VER : code=%u.%u.%u config=%u.%u",
+               &fw_major, &fw_minor, &fw_patch, &cfg_major, &cfg_minor) == 5 ||
+        sscanf(line, "VER   : code=%u.%u.%u config=%u.%u",
+               &fw_major, &fw_minor, &fw_patch, &cfg_major, &cfg_minor) == 5) {
+        runtime->fw_version_valid = true;
+        runtime->fw_version_major = fw_major;
+        runtime->fw_version_minor = fw_minor;
+        runtime->config_version_valid = true;
+        runtime->config_version = ((cfg_major & 0xffu) << 8) | (cfg_minor & 0xffu);
+    }
+    update_motor_detected_type_from_line(runtime, line);
     config = &state->config;
     if (motor_state_marker_from_line(config, line, &state_from_marker)) {
         motor_runtime_set_state(runtime, state_from_marker);
@@ -1218,6 +1309,9 @@ typedef enum
 } reg_value_type;
 
 enum {
+    CAN_REG_REQUEST_ADDRESS_MASK = 0xffu,
+    CAN_REG_REQUEST_TYPE_SHIFT = 8u,
+    CAN_REG_REQUEST_TYPE_MASK = 0x07u,
     CAN_REG_STATUS_OK = 0u,
     CAN_REG_STATUS_INVALID_ADDR = 1u,
     CAN_REG_STATUS_READ_ONLY = 2u,
@@ -1227,7 +1321,6 @@ enum {
     CAN_REG_REPLY_STATUS_MASK = 0xffu,
     CAN_REG_REPLY_TYPE_SHIFT = 8u,
     CAN_REG_REPLY_TYPE_MASK = 0x07u,
-    CAN_REG_REQUEST_TYPE_SHIFT = 8u,
 };
 
 typedef struct
@@ -1237,7 +1330,7 @@ typedef struct
     reg_value_type type;
 } reg_config_meta;
 
-static const reg_config_meta reg_config_table[] = {
+static const reg_config_meta reg_config_table_v0[] = {
     {0x01u, "motor_pole_pairs", REG_VALUE_INT},
     {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
     {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
@@ -1246,13 +1339,15 @@ static const reg_config_meta reg_config_table[] = {
     {0x10u, "encoder_dir_rev", REG_VALUE_INT},
     {0x11u, "encoder_offset", REG_VALUE_INT},
     {0x12u, "calib_valid", REG_VALUE_INT},
-    {0x13u, "ldc1614_calib_valid", REG_VALUE_INT},
+    {0x13u, "enco_calib_valid", REG_VALUE_INT},
     {0x14u, "usr_enc1_offset", REG_VALUE_INT},
     {0x15u, "usr_enc2_offset", REG_VALUE_FLOAT},
+    {0x16u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
     {0x17u, "ldc1614_dir", REG_VALUE_INT},
     {0x18u, "ldc1614_offset", REG_VALUE_FLOAT},
     {0x20u, "calib_current", REG_VALUE_FLOAT},
     {0x21u, "calib_max_voltage", REG_VALUE_FLOAT},
+    {0x22u, "current_test_enable", REG_VALUE_BOOL},
     {0x30u, "control_mode", REG_VALUE_INT},
     {0x31u, "pos_gain", REG_VALUE_FLOAT},
     {0x32u, "vel_gain", REG_VALUE_FLOAT},
@@ -1291,16 +1386,127 @@ static const reg_config_meta reg_config_table[] = {
     {0x7cu, "config_version", REG_VALUE_VERSION},
 };
 
-static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
+static const reg_config_meta reg_config_table_v1[] = {
+    {0x01u, "motor_pole_pairs", REG_VALUE_INT},
+    {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
+    {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
+    {0x04u, "inertia", REG_VALUE_FLOAT},
+    {0x05u, "reduction_ratio", REG_VALUE_FLOAT},
+    {0x10u, "encoder_dir_rev", REG_VALUE_INT},
+    {0x11u, "encoder_offset", REG_VALUE_INT},
+    {0x12u, "calib_valid", REG_VALUE_INT},
+    {0x13u, "enco_calib_valid", REG_VALUE_INT},
+    {0x14u, "usr_enc1_offset", REG_VALUE_INT},
+    {0x15u, "usr_enc2_offset", REG_VALUE_FLOAT},
+    {0x16u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
+    {0x20u, "calib_current", REG_VALUE_FLOAT},
+    {0x21u, "calib_max_voltage", REG_VALUE_FLOAT},
+    {0x22u, "current_test_enable", REG_VALUE_BOOL},
+    {0x23u, "backlash_test_enable", REG_VALUE_BOOL},
+    {0x30u, "control_mode", REG_VALUE_INT},
+    {0x31u, "pos_gain", REG_VALUE_FLOAT},
+    {0x32u, "vel_gain", REG_VALUE_FLOAT},
+    {0x33u, "vel_integrator_gain", REG_VALUE_FLOAT},
+    {0x34u, "vel_limit", REG_VALUE_FLOAT},
+    {0x35u, "current_limit", REG_VALUE_FLOAT},
+    {0x36u, "torquet_limit", REG_VALUE_FLOAT},
+    {0x37u, "current_ramp_rate", REG_VALUE_FLOAT},
+    {0x38u, "vel_ramp_rate", REG_VALUE_FLOAT},
+    {0x39u, "traj_vel", REG_VALUE_FLOAT},
+    {0x3au, "traj_accel", REG_VALUE_FLOAT},
+    {0x3bu, "traj_decel", REG_VALUE_FLOAT},
+    {0x3cu, "field_weaken_mode", REG_VALUE_BOOL},
+    {0x40u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
+    {0x41u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
+    {0x42u, "current_ctrl_bandwidth", REG_VALUE_INT},
+    {0x50u, "protect_under_voltage", REG_VALUE_FLOAT},
+    {0x51u, "protect_over_voltage", REG_VALUE_FLOAT},
+    {0x52u, "protect_over_speed", REG_VALUE_FLOAT},
+    {0x53u, "protect_temperature_low", REG_VALUE_FLOAT},
+    {0x54u, "protect_temperature_high", REG_VALUE_FLOAT},
+    {0x55u, "protect_i_abc_error", REG_VALUE_FLOAT},
+    {0x60u, "can_id", REG_VALUE_INT},
+    {0x61u, "master_id", REG_VALUE_INT},
+    {0x62u, "sync_boot_id_flag", REG_VALUE_BOOL},
+    {0x63u, "can_timeout_ms", REG_VALUE_INT},
+    {0x64u, "can_sync_target_enable", REG_VALUE_BOOL},
+    {0x65u, "can_mode_switch", REG_VALUE_BOOL},
+    {0x66u, "mit_mode", REG_VALUE_BOOL},
+    {0x67u, "max_pos", REG_VALUE_FLOAT},
+    {0x68u, "max_vel", REG_VALUE_FLOAT},
+    {0x69u, "max_tor", REG_VALUE_FLOAT},
+    {0x6au, "kp_max", REG_VALUE_FLOAT},
+    {0x6bu, "kd_max", REG_VALUE_FLOAT},
+    {0x6du, "mit_aux_enable", REG_VALUE_BOOL},
+    {0x7cu, "config_version", REG_VALUE_VERSION},
+};
+
+static const reg_config_meta *reg_config_meta_find(const reg_config_meta *table,
+                                                   size_t count,
+                                                   uint32_t addr)
 {
     size_t i;
 
-    for (i = 0u; i < sizeof(reg_config_table) / sizeof(reg_config_table[0]); i++) {
-        if (reg_config_table[i].addr == addr) {
-            return &reg_config_table[i];
+    for (i = 0u; i < count; i++) {
+        if (table[i].addr == addr) {
+            return &table[i];
         }
     }
     return NULL;
+}
+
+static bool motor_uses_v0_register_map(const flash_state *state,
+                                       const motor_map_entry *entry)
+{
+    size_t i;
+
+    if (state == NULL || entry == NULL || !state->config_loaded) {
+        return false;
+    }
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *m = &state->config.entries[i];
+        const motor_runtime *r = &state->motors[i];
+
+        if (m->bus != entry->bus || m->id != entry->id) {
+            continue;
+        }
+        if (r->fw_version_valid) {
+            return r->fw_version_major == 0u;
+        }
+        if (r->config_version_valid) {
+            return ((r->config_version >> 8) & 0xffu) == 0u;
+        }
+        return false;
+    }
+    return false;
+}
+
+static bool reg_address_is_valid(uint32_t reg)
+{
+    return (reg & ~CAN_REG_REQUEST_ADDRESS_MASK) == 0u;
+}
+
+static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
+{
+    return reg_config_meta_find(reg_config_table_v1,
+                                sizeof(reg_config_table_v1) / sizeof(reg_config_table_v1[0]),
+                                addr);
+}
+
+static const reg_config_meta *reg_config_meta_for_motor(const flash_state *state,
+                                                        const motor_map_entry *entry,
+                                                        uint32_t addr)
+{
+    if (motor_uses_v0_register_map(state, entry)) {
+        return reg_config_meta_find(reg_config_table_v0,
+                                    sizeof(reg_config_table_v0) /
+                                    sizeof(reg_config_table_v0[0]),
+                                    addr);
+    }
+    return reg_config_meta_find(reg_config_table_v1,
+                                sizeof(reg_config_table_v1) /
+                                sizeof(reg_config_table_v1[0]),
+                                addr);
 }
 
 static const char *reg_cmd_name(unsigned int cmd)
@@ -1381,7 +1587,8 @@ static uint32_t reg_request_header(uint32_t reg, reg_value_type type)
     if (type == REG_VALUE_UNKNOWN) {
         type = REG_VALUE_UINT;
     }
-    return (reg & 0xffu) | (((uint32_t)type & CAN_REG_REPLY_TYPE_MASK) << CAN_REG_REQUEST_TYPE_SHIFT);
+    return (reg & CAN_REG_REQUEST_ADDRESS_MASK) |
+           (((uint32_t)type & CAN_REG_REQUEST_TYPE_MASK) << CAN_REG_REQUEST_TYPE_SHIFT);
 }
 
 static unsigned int reg_reply_status(uint32_t reply_header)
@@ -1427,7 +1634,7 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
         reg_value_type wire_type = reg_reply_value_type(reply_header);
         uint32_t reg = state->pending_register_valid ? state->pending_register_addr : 0xffffffffu;
         uint32_t value = data_to_u32(&frame->data[4]);
-        const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+        const reg_config_meta *meta = reg_config_meta_for_motor(state, entry, reg);
         reg_value_type value_type = wire_type != REG_VALUE_UNKNOWN ? wire_type :
                                     (meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
 
@@ -1488,6 +1695,54 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
                status, reg_status_name(status), reg_value_type_name(value_type));
         print_register_value(value, value_type);
         printf("\n  bus=%u id=%u can_id=0x%03x cmd=%s raw=0x%08x\n",
+               frame->bus, node_id, frame->can_id, reg_cmd_name(cmd), value);
+        fflush(stdout);
+        return 1;
+    }
+    if (cmd == CAN_CMD_REG_INFO && frame->len >= 8u) {
+        uint32_t reply_header = data_to_u32(&frame->data[0]);
+        unsigned int status = reg_reply_status(reply_header);
+        reg_value_type value_type = reg_reply_value_type(reply_header);
+        uint32_t value = data_to_u32(&frame->data[4]);
+        unsigned int total_count = value & 0xffffu;
+        unsigned int writable_count = (value >> 16) & 0xffffu;
+
+        if (state->brief_register_output) {
+            if (entry != NULL) {
+                printf("[motor%02u]: rx kind=reg_info bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       entry->index,
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
+            } else {
+                printf("[motor??]: rx kind=reg_info bus=%u id=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                       frame->bus,
+                       node_id,
+                       frame->can_id,
+                       frame->len,
+                       frame->flags);
+            }
+            print_data(frame->data, frame->len);
+            printf(" status=%u(%s) type=%s total=%u writable=%u\n",
+                   status, reg_status_name(status), reg_value_type_name(value_type),
+                   total_count, writable_count);
+            fflush(stdout);
+            return 1;
+        }
+        if (entry != NULL) {
+            printf("\n%s index=%02u",
+                   state->config.chinese_ui ? "[寄存器信息]" : "[REGISTER INFO]",
+                   entry->index);
+        } else {
+            printf("\n%s index=??",
+                   state->config.chinese_ui ? "[寄存器信息]" : "[REGISTER INFO]");
+        }
+        printf(" status=%u(%s) type=%s total=%u writable=%u\n"
+               "  bus=%u id=%u can_id=0x%03x cmd=%s raw=0x%08x\n",
+               status, reg_status_name(status), reg_value_type_name(value_type),
+               total_count, writable_count,
                frame->bus, node_id, frame->can_id, reg_cmd_name(cmd), value);
         fflush(stdout);
         return 1;
@@ -2256,6 +2511,8 @@ static float *motor_limit_field(bxi_motor_limits *limits, const char *key)
 static int add_motor_type_config(motor_map_config *config,
                                  const char *type,
                                  const char *firmware,
+                                 const char *firmware_v0,
+                                 const char *firmware_v1,
                                  const bxi_motor_limits *limits,
                                  const char *map_path,
                                  unsigned int line_no)
@@ -2266,6 +2523,10 @@ static int add_motor_type_config(motor_map_config *config,
     if (normalize_firmware_type(type, normalized, sizeof(normalized)) != 0 ||
         (firmware != NULL && firmware[0] != '\0' &&
          (!firmware_filename_is_safe(firmware) || strlen(firmware) >= FIRMWARE_NAME_MAX)) ||
+        (firmware_v0 != NULL && firmware_v0[0] != '\0' &&
+         (!firmware_filename_is_safe(firmware_v0) || strlen(firmware_v0) >= FIRMWARE_NAME_MAX)) ||
+        (firmware_v1 != NULL && firmware_v1[0] != '\0' &&
+         (!firmware_filename_is_safe(firmware_v1) || strlen(firmware_v1) >= FIRMWARE_NAME_MAX)) ||
         !motor_limits_are_valid(limits)) {
         fprintf(stderr, "%s:%u: invalid motor type config: %s\n",
                 map_path, line_no, type != NULL ? type : "");
@@ -2287,6 +2548,10 @@ static int add_motor_type_config(motor_map_config *config,
              MOTOR_TYPE_LEN, "%s", normalized);
     snprintf(config->type_configs[config->type_config_count].firmware,
              FIRMWARE_NAME_MAX, "%s", firmware != NULL ? firmware : "");
+    snprintf(config->type_configs[config->type_config_count].firmware_v0,
+             FIRMWARE_NAME_MAX, "%s", firmware_v0 != NULL ? firmware_v0 : "");
+    snprintf(config->type_configs[config->type_config_count].firmware_v1,
+             FIRMWARE_NAME_MAX, "%s", firmware_v1 != NULL ? firmware_v1 : "");
     config->type_configs[config->type_config_count].limits = *limits;
     config->type_config_count++;
     return 0;
@@ -2544,6 +2809,42 @@ static int configured_firmware_name(const motor_map_config *config,
     return 0;
 }
 
+static int configured_firmware_name_for_major(const motor_map_config *config,
+                                              const char *type,
+                                              unsigned int major,
+                                              char *filename,
+                                              size_t filename_len)
+{
+    char normalized[MOTOR_TYPE_LEN];
+    const motor_type_config *type_config;
+    const char *configured = NULL;
+    int written;
+
+    if (normalize_firmware_type(type, normalized, sizeof(normalized)) != 0 ||
+        filename == NULL || filename_len == 0u) {
+        return -1;
+    }
+    type_config = find_type_config(config, normalized);
+    if (type_config != NULL) {
+        if (major == 0u && type_config->firmware_v0[0] != '\0') {
+            configured = type_config->firmware_v0;
+        } else if (major == 1u && type_config->firmware_v1[0] != '\0') {
+            configured = type_config->firmware_v1;
+        }
+    }
+    if (configured == NULL) {
+        return configured_firmware_name(config, normalized, filename, filename_len);
+    }
+    written = snprintf(filename, filename_len, "%s", configured);
+    if (written < 0 || (size_t)written >= filename_len ||
+        !firmware_filename_is_safe(filename)) {
+        fprintf(stderr, "invalid firmware filename for type %s major=%u\n",
+                normalized, major);
+        return -1;
+    }
+    return 0;
+}
+
 static int firmware_inventory_has_type(const firmware_inventory *inventory, const char *type)
 {
     char normalized[MOTOR_TYPE_LEN];
@@ -2789,6 +3090,8 @@ static int yaml_finalize_type_config(const char *map_path,
                                      int fields,
                                      const char *type,
                                      const char *firmware,
+                                     const char *firmware_v0,
+                                     const char *firmware_v1,
                                      const bxi_motor_limits *limits)
 {
     if (fields == 0) {
@@ -2799,7 +3102,8 @@ static int yaml_finalize_type_config(const char *map_path,
                 map_path, line_no);
         return -1;
     }
-    return add_motor_type_config(config, type, firmware, limits, map_path, line_no);
+    return add_motor_type_config(config, type, firmware, firmware_v0, firmware_v1,
+                                 limits, map_path, line_no);
 }
 
 static int yaml_finalize_state_pattern(const char *map_path,
@@ -2863,6 +3167,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     unsigned int type_entry_line = 0u;
     char type_entry[MOTOR_TYPE_LEN] = "";
     char type_firmware[FIRMWARE_NAME_MAX] = "";
+    char type_firmware_v0[FIRMWARE_NAME_MAX] = "";
+    char type_firmware_v1[FIRMWARE_NAME_MAX] = "";
     bxi_motor_limits type_limits = config->mit_limits;
     int type_fields = 0;
     unsigned int state_pattern_line = 0u;
@@ -2906,7 +3212,9 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             }
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                          type_entry, type_firmware, &type_limits) != 0) {
+                                          type_entry, type_firmware,
+                                          type_firmware_v0, type_firmware_v1,
+                                          &type_limits) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -2936,6 +3244,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 type_entry_line = line_no;
                 type_entry[0] = '\0';
                 type_firmware[0] = '\0';
+                type_firmware_v0[0] = '\0';
+                type_firmware_v1[0] = '\0';
                 type_limits = config->mit_limits;
                 type_fields = 0;
             } else if (section == YAML_SECTION_STATE_PATTERNS) {
@@ -3117,7 +3427,9 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (strcmp(key, "motor_types") == 0) {
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                          type_entry, type_firmware, &type_limits) != 0) {
+                                          type_entry, type_firmware,
+                                          type_firmware_v0, type_firmware_v1,
+                                          &type_limits) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -3137,11 +3449,18 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             }
             section = YAML_SECTION_MOTOR_TYPES;
             type_entry_line = 0u;
+            type_entry[0] = '\0';
+            type_firmware[0] = '\0';
+            type_firmware_v0[0] = '\0';
+            type_firmware_v1[0] = '\0';
+            type_limits = config->mit_limits;
             type_fields = 0;
         } else if (strcmp(key, "state_patterns") == 0) {
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                          type_entry, type_firmware, &type_limits) != 0) {
+                                          type_entry, type_firmware,
+                                          type_firmware_v0, type_firmware_v1,
+                                          &type_limits) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -3158,7 +3477,9 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (strcmp(key, "state_codes") == 0) {
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                          type_entry, type_firmware, &type_limits) != 0) {
+                                          type_entry, type_firmware,
+                                          type_firmware_v0, type_firmware_v1,
+                                          &type_limits) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -3175,7 +3496,9 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (strcmp(key, "motors") == 0) {
             if (section == YAML_SECTION_MOTOR_TYPES &&
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                          type_entry, type_firmware, &type_limits) != 0) {
+                                          type_entry, type_firmware,
+                                          type_firmware_v0, type_firmware_v1,
+                                          &type_limits) != 0) {
                 fclose(fp);
                 return -1;
             }
@@ -3202,14 +3525,23 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 return -1;
             }
         } else if (section == YAML_SECTION_MOTOR_TYPES &&
-                   strcmp(key, "firmware") == 0) {
-            if (!firmware_filename_is_safe(value) || strlen(value) >= sizeof(type_firmware)) {
+                   (strcmp(key, "firmware") == 0 ||
+                    strcmp(key, "firmware_v0") == 0 ||
+                    strcmp(key, "firmware_v1") == 0)) {
+            char *target_firmware = type_firmware;
+
+            if (strcmp(key, "firmware_v0") == 0) {
+                target_firmware = type_firmware_v0;
+            } else if (strcmp(key, "firmware_v1") == 0) {
+                target_firmware = type_firmware_v1;
+            }
+            if (!firmware_filename_is_safe(value) || strlen(value) >= FIRMWARE_NAME_MAX) {
                 fprintf(stderr, "%s:%u: invalid firmware filename: %s\n",
                         map_path, line_no, value);
                 fclose(fp);
                 return -1;
             }
-            snprintf(type_firmware, sizeof(type_firmware), "%s", value);
+            snprintf(target_firmware, FIRMWARE_NAME_MAX, "%s", value);
             if (type_entry_line == 0u) {
                 type_entry_line = line_no;
             }
@@ -3305,7 +3637,9 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
 
     if (section == YAML_SECTION_MOTOR_TYPES &&
         yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
-                                  type_entry, type_firmware, &type_limits) != 0) {
+                                  type_entry, type_firmware,
+                                  type_firmware_v0, type_firmware_v1,
+                                  &type_limits) != 0) {
         fclose(fp);
         return -1;
     }
@@ -3963,9 +4297,13 @@ static int run_debug_reg_read(flash_state *state, int argc, char **argv)
         printf("invalid wait_ms: %s\n", argv[1]);
         return -1;
     }
+    if (!reg_address_is_valid(reg)) {
+        printf("invalid register address: 0x%08x (range 0x00..0xff)\n", reg);
+        return -1;
+    }
 
     frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_READ);
-    u32_to_data(reg, data);
+    u32_to_data(reg & CAN_REG_REQUEST_ADDRESS_MASK, data);
     frame_ring_clear(&state->frames);
     if (send_debug_packet(state, frame_id, data, sizeof(data)) != 0) {
         return -1;
@@ -3991,6 +4329,10 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
     }
     if (argc > 2 && parse_uint_arg(argv[2], &wait_ms) != 0) {
         printf("invalid wait_ms: %s\n", argv[2]);
+        return -1;
+    }
+    if (!reg_address_is_valid(reg)) {
+        printf("invalid register address: 0x%08x (range 0x00..0xff)\n", reg);
         return -1;
     }
 

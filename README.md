@@ -169,12 +169,15 @@ help all
 2. 按 `power_on_wait_ms` 等待软启动。
 3. 被动监听电机上电输出，识别已在线电机。
 4. 只向已确认在线电机发送 `can_warmup_count` 次零 MIT 帧，让 CAN TX error 通过成功 ACK 逐步恢复。
-5. 如果被动监听没有发现电机，再进入主动扫描；空总线可能产生 CAN TX error。
+5. 对已在线电机识别程序/配置版本；版本读取失败只提示，不阻塞上电。
+6. 如果被动监听没有发现电机，再进入主动扫描；空总线可能产生 CAN TX error。
 
 典型输出：
 
 ```text
 power_on: start 电源已开启 wait=2s
+version_scan: start total=31
+version_scan: done total=31 success=31 failed=0
 power_on: done total=31 success=31 failed=0
 ```
 
@@ -368,6 +371,19 @@ firmware/bxi_motor_70.bin
 firmware/bxi_motor_85.bin
 ```
 
+如果需要按电机程序主版本区分固件，也可以放置：
+
+```text
+firmware/bxi_motor_50_v0.1.2.bin
+firmware/bxi_motor_50L_v0.1.2.bin
+firmware/bxi_motor_70_v0.1.2.bin
+firmware/bxi_motor_85_v0.1.2.bin
+firmware/bxi_motor_50_v1.1.2_new.bin
+firmware/bxi_motor_50L_v1.1.2_new.bin
+firmware/bxi_motor_70_v1.1.2_new.bin
+firmware/bxi_motor_85_v1.1.2_new.bin
+```
+
 如果固件经常更新，也可以把固件放在内网下载站中，不必提交到项目里。
 在 `config/motor_console.yaml` 中配置下载站地址：
 
@@ -386,13 +402,16 @@ firmware_cache_dir: firmware_cache
 - 任意固件拉取失败：本次运行自动回退项目自带 `firmware_dir`
 - `firmware_base_url` 留空：不联网，直接使用项目自带 `firmware_dir`
 
-下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` 决定。
+下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` /
+`firmware_v0` / `firmware_v1` 决定。
 例如：
 
 ```yaml
 motor_types:
   - type: "50L"
     firmware: bxi_motor_50L.bin
+    firmware_v0: bxi_motor_50L_v0.1.2.bin
+    firmware_v1: bxi_motor_50L_v1.1.2_new.bin
 ```
 
 当烧录配置里写 `version: 50L` 时，会下载：
@@ -400,6 +419,9 @@ motor_types:
 ```text
 http://your-download-server/motor/bxi_motor_50L.bin
 ```
+
+如果运行时已经识别出当前电机是 0.x 或 1.x 程序/配置版本，烧录时会优先使用
+`firmware_v0` 或 `firmware_v1` 对应文件。
 
 下载成功后缓存为：
 
@@ -430,10 +452,12 @@ flash_single 08 50L
 flash_single 08 test.bin
 ```
 
-`flash_single` 不写固件参数时，使用 `config/flash_plan_default.yaml` 中该 index
-对应的 `version`。如果程序启动时远程固件全部拉取成功，会优先使用
-`firmware_cache_dir`；否则使用 `firmware_dir`。`50L` 会自动解析为
-`motor_types.firmware` 中配置的文件名。
+`flash_single` 不写固件参数时，会优先使用运行时从电机输出中识别到的型号
+（例如 `PRO/HW/Bxi_motor_50L` -> `50L`）选择固件；没有识别到时，回退使用
+`config/flash_plan_default.yaml` 中该 index 对应的 `version`。如果程序启动时远程
+固件全部拉取成功，会优先使用 `firmware_cache_dir`；否则使用 `firmware_dir`。
+`50L` 会根据当前电机版本优先解析为 `motor_types.firmware_v0` 或
+`motor_types.firmware_v1`；没有版本信息时使用 `motor_types.firmware`。
 
 ### 9.3 按烧录策略文件烧录多个电机
 
@@ -484,10 +508,13 @@ flash_all config/flash_plan_debug.yaml
 说明：
 
 - 烧录配置描述固件路径和烧录目标：`firmware_dir`、`index`、`bus`、`id`、`version`。
+- `flash_all` 会按目标逐个烧录；如果某台电机已经从上电输出中识别到实际型号，
+  会优先使用识别型号对应的固件，否则使用烧录配置里的 `version`。
+  同时会根据已识别到的 0.x/1.x 程序或配置版本，在
+  `firmware_v0` / `firmware_v1` 中选择文件；未识别版本时使用 `firmware`。
 - `firmware_base_url` 可选；配置后，程序启动时会尝试把默认烧录计划所需固件下载到
   `firmware_cache_dir`。
-- `version` 支持型号简写，例如 `50L` 会下载/查找 `motor_types.firmware`
-  中配置的文件名。
+- `version` 支持型号简写，例如 `50L` 会下载/查找 `motor_types` 中配置的文件名。
 - `version` 也可以写完整文件名，例如 `bxi_motor_50.bin`、`test.bin`。
 - 安全限制：`firmware_dir` / `firmware_cache_dir` 必须是相对目录，不能包含绝对路径或
   `..`；`firmware_base_url` 必须是 `http://` 或 `https://`；`version`
@@ -503,7 +530,8 @@ flash_all
 ```
 
 烧录前程序会预检所有目标及固件文件。任何文件缺失时，整个批次会在操作第一台电机
-之前停止。
+之前停止。已经识别到实际型号的电机，会自动覆盖默认烧录配置中的 `version` 来选择
+对应固件；手动输入固件参数时，以手动参数为准。
 
 如果普通烧录无法进入升级状态，可以增加 `cycle`：
 
@@ -553,10 +581,10 @@ config/motor_console.yaml
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `help` / `-h` / `?` | `[all]` | 显示终端帮助；带 `all` 显示详细说明 |
-| `power_on` | 无 | 电机上电、等待软启动、扫描全部电机 |
+| `power_on` | 无 | 电机上电、等待软启动、扫描全部电机，并读取在线电机版本 |
 | `power_off` | 无 | 失能已知使能电机并关闭总电源 |
 | `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
-| `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态和最后反馈 |
+| `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态、程序/配置版本和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `quit` / `exit` / `q` / `qq` | 无 | 退出终端；电源开启时会先自动下电 |
@@ -576,14 +604,20 @@ config/motor_console.yaml
 | `reg_read` | `<index00\|all> <reg_index> [wait_ms]` | 读取寄存器；`all` 按默认烧录配置逐台发送 |
 | `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | 写入寄存器；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
 | `reg_save` | `<index00\|all> [wait_ms]` | 保存寄存器配置；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
+| `reg_info` | `<index00\|all> [wait_ms]` | 读取该电机支持的寄存器总数和可写数量 |
 
-寄存器命令按底层电机程序的新版 CAN 配置协议发送：
+寄存器命令会根据上电识别到的程序/配置版本，自动选择 0.x 旧版或 1.x 新版寄存器表：
 `reg_read` 使用 `CAN_CMD_REG_READ=0x17`，`reg_write` 使用
-`CAN_CMD_REG_WRITE=0x18`，`reg_save` 使用 `CAN_CMD_REG_SAVE=0x19`。
+`CAN_CMD_REG_WRITE=0x18`，`reg_save` 使用 `CAN_CMD_REG_SAVE=0x19`，
+`reg_info` 使用 `CAN_CMD_REG_INFO=0x1A`。寄存器地址范围是 `0x00..0xFF`。
+`reg_read` 请求 `data[0..3]=address`；`reg_write` 请求
+`data[0..3]=address | (value_type << 8)`、`data[4..7]=value_raw`。
 `reg_write` 会根据寄存器地址自动填充 `value_type`，回复会解析
 `status`、`value_type` 和 value；`value_type` 使用 `bit8..10`，
 目前 `0=int`、`1=bool`、`2=float`、`3=uint32`、`4=version`。
-这些命令需要电机配置版本非 0 才会响应。
+`reg_info` 回复的 `value_raw` 低 16 位是寄存器总数，高 16 位是可写数量。
+如果某台电机尚未识别到版本信息，寄存器命令会拒绝向该电机发送，
+避免使用错误寄存器表误写配置。
 
 常用寄存器示例：
 
@@ -594,6 +628,7 @@ reg_write 00 0x6d 1  # 本次上电周期启用 MIT AUX 轮询回复
 reg_write 00 0x6d 0  # 切回旧版 NTC 回复
 reg_read 00 0x01     # 读取 motor_pole_pairs
 reg_write 00 0x01 10 # 写入 motor_pole_pairs
+reg_info 00          # 读取寄存器数量信息
 reg_save 00          # 保存配置到电机 Flash
 ```
 
@@ -604,8 +639,8 @@ reg_save 00          # 保存配置到电机 Flash
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
-| `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；可省略固件使用默认 version |
-| `flash_all` | `[plan.yaml] [cycle]` | 按烧录配置烧录多个目标；省略配置时使用默认配置 |
+| `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；不写固件时优先按识别型号选固件，否则使用默认 version |
+| `flash_all` | `[plan.yaml] [cycle]` | 按烧录配置逐台烧录；已识别型号会优先覆盖 plan version |
 | `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | 两位数按 index；一位 bus+一位 id 按 bus/id 调试烧录 |
 
 旧 `flash_plan <plan.yaml>` 合并为 `flash_all <plan.yaml>`。
@@ -669,11 +704,13 @@ flash_all config/flash_plan_debug.yaml
 | 函数 | 位置 | 说明 |
 |---|---|---|
 | `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x6d mit_aux_enable` |
+| `console_scan_online_versions` | `src/lib/control.c` | `power_on` 后读取在线电机版本，并缓存到运行时状态 |
+| `reg_config_meta_for_motor` | `src/lib/runtime.c` | 根据电机版本选择 0.x/1.x 寄存器名称和 `value_type` |
 | `reg_value_type_from_wire` | `src/lib/runtime.c` | 从 `reply_header` 解析 `value_type` |
 | `reg_request_header` | `src/lib/runtime.c` | 生成写寄存器请求头：`address | value_type << 8` |
 | `reg_reply_status` | `src/lib/runtime.c` | 从 `reply_header` 解析寄存器返回状态 |
 | `reg_reply_value_type` | `src/lib/runtime.c` | 从 `reply_header` 解析 `bit8..10` 的 `value_type` |
 | `print_register_value` | `src/lib/runtime.c` | 按 `value_type` 打印 int/bool/float/uint32/version |
-| `print_register_debug_frame` | `src/lib/runtime.c` | 寄存器回复的主要解析和输出函数 |
-| `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save` 对单台电机的实际发送函数 |
+| `print_register_debug_frame` | `src/lib/runtime.c` | `reg_read/reg_write/reg_save/reg_info` 回复的主要解析和输出函数 |
+| `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save/reg_info` 对单台电机的实际发送函数 |
 | `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按寄存器类型转成 32 位 raw value |

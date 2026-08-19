@@ -18,7 +18,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("             reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
-            printf("             reg_save <index00|all> [wait_ms]\n\n");
+            printf("             reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
             printf("  烧录：      flash_single <index00> [version|firmware.bin] [cycle]\n");
             printf("             flash_all [plan.yaml] [cycle]\n");
             printf("             flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n\n");
@@ -35,7 +35,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("                reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
-            printf("                reg_save <index00|all> [wait_ms]\n\n");
+            printf("                reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
             printf("  Flash:        flash_single <index00> [version|firmware.bin] [cycle]\n");
             printf("                flash_all [plan.yaml] [cycle]\n");
             printf("                flash_debug <index00>|<bus0-4 id0-7> <version|firmware.bin> [cycle]\n\n");
@@ -79,6 +79,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      写入寄存器；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
         printf("  reg_save <index00|all> [wait_ms]\n");
         printf("      保存寄存器配置；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
+        printf("  reg_info <index00|all> [wait_ms]\n");
+        printf("      读取电机支持的寄存器总数和可写寄存器数量。\n");
         printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
         printf("      烧录单台电机；不写固件时使用默认烧录配置里的 version。\n");
         printf("  flash_all [plan.yaml] [cycle]\n");
@@ -134,6 +136,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Write registers. all uses the default flash plan. Refused while any motor is enabled.\n");
     printf("  reg_save <index00|all> [wait_ms]\n");
     printf("      Save register configs. all uses the default flash plan. Refused while any motor is enabled.\n");
+    printf("  reg_info <index00|all> [wait_ms]\n");
+    printf("      Read supported register count and writable register count.\n");
     printf("  flash_single <index00> [version|firmware.bin] [cycle]\n");
     printf("      Flash one motor. Without firmware, use the version from the default plan.\n");
     printf("  flash_all [plan.yaml] [cycle]\n");
@@ -197,11 +201,15 @@ static void console_print_config(const flash_state *state)
     for (i = 0u; i < state->config.type_config_count; i++) {
         const motor_type_config *type_config = &state->config.type_configs[i];
 
-        printf("  %s type=%s%s%s p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
+        printf("  %s type=%s%s%s%s%s%s%s p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
                console_text(state, "型号", "type"),
                type_config->type,
                type_config->firmware[0] != '\0' ? " file=" : "",
                type_config->firmware[0] != '\0' ? type_config->firmware : "",
+               type_config->firmware_v0[0] != '\0' ? " v0=" : "",
+               type_config->firmware_v0[0] != '\0' ? type_config->firmware_v0 : "",
+               type_config->firmware_v1[0] != '\0' ? " v1=" : "",
+               type_config->firmware_v1[0] != '\0' ? type_config->firmware_v1 : "",
                type_config->limits.p_min, type_config->limits.p_max,
                type_config->limits.v_min, type_config->limits.v_max,
                type_config->limits.t_min, type_config->limits.t_max,
@@ -224,9 +232,9 @@ static void console_print_motors(const flash_state *state)
            console_text(state, "配置电机数", "configured motors"),
            state->config.entry_count);
     if (state->config.chinese_ui) {
-        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
+        printf("idx bus id type state      on en fw    cfg   age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
     } else {
-        printf("idx bus id type state      on en age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
+        printf("idx bus id type state      on en fw    cfg   age(ms) pos(rad)   vel(rad/s) torque     ntc1(C) ntc2(C) vbus(V) hb\n");
     }
     for (i = 0u; i < state->config.entry_count; i++) {
         const motor_map_entry *m = &state->config.entries[i];
@@ -235,6 +243,22 @@ static void console_print_motors(const flash_state *state)
                                   "--" : motor_runtime_state(r);
         const char *online = r->online ? "Y" : "N";
         const char *enabled = r->enabled ? "Y" : "N";
+        char fw_version[16];
+        char config_version[16];
+
+        if (r->fw_version_valid) {
+            snprintf(fw_version, sizeof(fw_version), "%u.%u",
+                     r->fw_version_major, r->fw_version_minor);
+        } else {
+            snprintf(fw_version, sizeof(fw_version), "--");
+        }
+        if (r->config_version_valid) {
+            snprintf(config_version, sizeof(config_version), "%u.%u",
+                     (unsigned int)((r->config_version >> 8) & 0xffu),
+                     (unsigned int)(r->config_version & 0xffu));
+        } else {
+            snprintf(config_version, sizeof(config_version), "--");
+        }
 
         if (i != 0u && m->bus != last_bus) {
             printf("\n");
@@ -242,18 +266,22 @@ static void console_print_motors(const flash_state *state)
         last_bus = m->bus;
 
         if (r->last_reply_us == 0u) {
-            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s --      --         --         --         --      --      --      --\n",
+            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-5s %-5s --      --         --         --         --      --      --      --\n",
                    m->index, m->bus, m->id, m->type,
                    state_label,
                    online,
-                   enabled);
+                   enabled,
+                   fw_version,
+                   config_version);
             continue;
         }
-        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-7llu % .5f  % .5f  % .5f",
+        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-5s %-5s %-7llu % .5f  % .5f  % .5f",
                m->index, m->bus, m->id, m->type,
                state_label,
                online,
                enabled,
+               fw_version,
+               config_version,
                (unsigned long long)((now - r->last_reply_us) / 1000ULL),
                r->last_reply.position,
                r->last_reply.velocity,

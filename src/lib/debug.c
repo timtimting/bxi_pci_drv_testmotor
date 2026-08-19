@@ -160,8 +160,12 @@ static bool console_read_motor_register(flash_state *state,
     if (value != NULL) {
         *value = 0u;
     }
+    /* 电机端只接受 8 bit 寄存器地址，超过 0xFF 时不发送，避免误判回复。 */
+    if (!reg_address_is_valid(reg)) {
+        return false;
+    }
     /* 将目标寄存器地址写入 4 字节读请求。 */
-    u32_to_data(reg, data);
+    u32_to_data(reg & CAN_REG_REQUEST_ADDRESS_MASK, data);
     /* 寄存器协议使用 classic CAN，不使用 CAN-FD/BRS 的 MIT 帧。 */
     state->debug_use_canfd = false;
     /* 避免本次一次性寄存器探测和电机文本输出混在一起。 */

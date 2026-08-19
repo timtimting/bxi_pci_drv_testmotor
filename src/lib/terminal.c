@@ -151,6 +151,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_reg_command(state, argc, argv, CAN_CMD_REG_WRITE);
     } else if (strcmp(cmd, "reg_save") == 0) {
         return console_reg_command(state, argc, argv, CAN_CMD_REG_SAVE);
+    } else if (strcmp(cmd, "reg_info") == 0) {
+        return console_reg_command(state, argc, argv, CAN_CMD_REG_INFO);
     } else if (strcmp(cmd, "flash_single") == 0) {
         return console_flash(state, argc, argv, false);
     } else if (strcmp(cmd, "flash_all") == 0) {

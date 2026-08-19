@@ -31,6 +31,13 @@ static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
                                                        unsigned int bus,
                                                        unsigned int id,
                                                        size_t *slot);
+static bool console_read_motor_register(flash_state *state,
+                                        const motor_map_entry *motor,
+                                        uint32_t reg,
+                                        uint32_t *value);
+static int console_parse_register_value_arg(reg_value_type type,
+                                            const char *text,
+                                            unsigned int *raw_value);
 static size_t console_print_motor_offline_rows(const flash_state *state);
 static size_t console_update_online_from_rx_delta(flash_state *state,
                                                   const unsigned int *before);
@@ -427,6 +434,91 @@ static size_t console_update_online_from_rx_delta(flash_state *state,
     return found;
 }
 
+static void console_scan_online_versions(flash_state *state)
+{
+    enum {
+        CONFIG_VERSION_REG = 0x7cu,
+    };
+    unsigned int old_bus = state->bus;
+    unsigned int old_id = state->boot_id;
+    bool old_monitor = state->show_can_output;
+    bool old_input = state->show_motor_input;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    bool output_silenced = false;
+    size_t total = 0u;
+    size_t succeeded = 0u;
+    size_t failed = 0u;
+    size_t i;
+
+    for (i = 0u; i < state->config.entry_count; i++) {
+        if (state->motors[i].online) {
+            total++;
+        }
+    }
+    if (total == 0u) {
+        return;
+    }
+
+    printf("version_scan: start total=%zu\n", total);
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    if (console_silence_process_output(&saved_stdout, &saved_stderr) == 0) {
+        output_silenced = true;
+    }
+
+    for (i = 0u; i < state->config.entry_count && !stop_requested; i++) {
+        const motor_map_entry *m = &state->config.entries[i];
+        motor_runtime *r = &state->motors[i];
+        uint32_t config_version = 0u;
+        bool config_ok;
+
+        if (!r->online) {
+            continue;
+        }
+        config_ok = console_read_motor_register(state, m, CONFIG_VERSION_REG, &config_version);
+        r->config_version_valid = config_ok;
+        if (config_ok) {
+            r->config_version = config_version;
+        }
+        if (!r->fw_version_valid && config_ok) {
+            r->fw_version_valid = true;
+            r->fw_version_major = (config_version >> 8) & 0xffu;
+            r->fw_version_minor = config_version & 0xffu;
+        }
+        if (r->fw_version_valid && r->config_version_valid) {
+            succeeded++;
+        } else {
+            failed++;
+        }
+    }
+
+    if (output_silenced) {
+        console_restore_process_output(saved_stdout, saved_stderr);
+    }
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *m = &state->config.entries[i];
+        const motor_runtime *r = &state->motors[i];
+
+        if (!r->online || (r->fw_version_valid && r->config_version_valid)) {
+            continue;
+        }
+        printf("[motor%02u]: failed bus=%u id=%u reason=%s%s%s\n",
+               m->index, m->bus, m->id,
+               !r->fw_version_valid ? "fw_version" : "",
+               (!r->fw_version_valid && !r->config_version_valid) ? "," : "",
+               !r->config_version_valid ? "config_version" : "");
+    }
+    printf("version_scan: done total=%zu success=%zu failed=%zu\n",
+           total, succeeded, failed);
+
+    state->bus = old_bus;
+    state->boot_id = old_id;
+    update_boot_ids(state);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+}
+
 static int console_power_on(flash_state *state)
 {
     bool old_monitor = state->show_can_output;
@@ -481,6 +573,7 @@ static int console_power_on(flash_state *state)
                            state->config.can_warmup_count,
                            state->config.can_warmup_period_ms,
                            true);
+        console_scan_online_versions(state);
         printf("power_on: done total=%zu success=%zu failed=%zu\n",
                state->config.entry_count, success, state->config.entry_count - success);
         state->show_can_output = old_monitor;
@@ -495,6 +588,7 @@ static int console_power_on(flash_state *state)
                            state->config.can_warmup_count,
                            state->config.can_warmup_period_ms,
                            true);
+        console_scan_online_versions(state);
     }
     {
         size_t online = 0u;
@@ -844,14 +938,76 @@ static const char *console_reg_command_name(unsigned int cmd)
     if (cmd == CAN_CMD_REG_SAVE) {
         return "reg_save";
     }
+    if (cmd == CAN_CMD_REG_INFO) {
+        return "reg_info";
+    }
     return "reg";
+}
+
+static bool console_motor_has_version_info(const flash_state *state,
+                                           const motor_map_entry *motor)
+{
+    size_t i;
+
+    if (state == NULL || motor == NULL || !state->config_loaded) {
+        return false;
+    }
+    for (i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *entry = &state->config.entries[i];
+        const motor_runtime *runtime = &state->motors[i];
+
+        if (entry->bus == motor->bus && entry->id == motor->id) {
+            return runtime->fw_version_valid || runtime->config_version_valid;
+        }
+    }
+    return false;
+}
+
+static int console_wait_register_reply(flash_state *state,
+                                       unsigned int frame_id,
+                                       unsigned int wait_ms)
+{
+    uint64_t deadline = time_us() + (uint64_t)wait_ms * 1000ULL;
+
+    while (!stop_requested && time_us() < deadline) {
+        rx_can_frame frame;
+        uint64_t now = time_us();
+        unsigned int step_ms = 20u;
+
+        if (deadline > now) {
+            uint64_t remain_ms = (deadline - now) / 1000ULL;
+            if (remain_ms < step_ms) {
+                step_ms = (unsigned int)remain_ms;
+            }
+        }
+        if (step_ms == 0u) {
+            step_ms = 1u;
+        }
+        if (!frame_ring_pop(&state->frames, &frame, step_ms)) {
+            continue;
+        }
+        if (!debug_frame_matches(state, &frame, frame_id, false)) {
+            continue;
+        }
+        print_debug_frame(state, &frame);
+        if (is_reg_cmd_id(frame.can_id) && frame.len >= 4u) {
+            unsigned int status = reg_reply_status(data_to_u32(&frame.data[0]));
+
+            return status == CAN_REG_STATUS_OK ? 0 : -3;
+        }
+        return -3;
+    }
+    if (!state->brief_register_output) {
+        printf("no debug reply received in %u ms\n", wait_ms);
+    }
+    return 1;
 }
 
 static int console_reg_send_one(flash_state *state,
                                 const motor_map_entry *motor,
                                 unsigned int cmd,
                                 unsigned int reg,
-                                unsigned int value,
+                                const char *value_text,
                                 unsigned int wait_ms)
 {
     unsigned int frame_id;
@@ -860,9 +1016,27 @@ static int console_reg_send_one(flash_state *state,
     bool old_input;
     int ret;
     unsigned int tx_len = 4u;
-    const reg_config_meta *meta = reg_config_meta_for_addr(reg);
+    const reg_config_meta *meta = reg_config_meta_for_motor(state, motor, reg);
     reg_value_type value_type = meta != NULL ? meta->type : REG_VALUE_UINT;
+    unsigned int value = 0u;
 
+    if (!console_motor_has_version_info(state, motor)) {
+        printf("[motor%02u]: failed bus=%u id=%u reason=no_version_info\n",
+               motor->index, motor->bus, motor->id);
+        return -2;
+    }
+    if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) &&
+        !reg_address_is_valid(reg)) {
+        printf("[motor%02u]: failed bus=%u id=%u reason=invalid_reg_addr reg=0x%08x range=0x00..0xff\n",
+               motor->index, motor->bus, motor->id, reg);
+        return -2;
+    }
+    if (cmd == CAN_CMD_REG_WRITE && meta == NULL) {
+        printf("[motor%02u]: failed bus=%u id=%u reason=unknown_reg_type reg=0x%02x\n",
+               motor->index, motor->bus, motor->id,
+               reg & CAN_REG_REQUEST_ADDRESS_MASK);
+        return -2;
+    }
     console_use_motor(state, motor);
     frame_id = (unsigned int)reg_frame_id(state, cmd);
     frame_ring_clear(&state->frames);
@@ -871,13 +1045,21 @@ static int console_reg_send_one(flash_state *state,
     state->debug_use_canfd = false;
     state->show_motor_input = false;
     if (cmd == CAN_CMD_REG_READ) {
-        u32_to_data(reg, data);
+        u32_to_data(reg & CAN_REG_REQUEST_ADDRESS_MASK, data);
         if (!state->brief_register_output) {
             printf("%s index=%02u bus=%u id=%u reg=0x%08x\n",
                    console_text(state, "读取寄存器", "reading register"),
                    motor->index, motor->bus, motor->id, reg);
         }
     } else if (cmd == CAN_CMD_REG_WRITE) {
+        if (console_parse_register_value_arg(value_type, value_text, &value) != 0) {
+            printf("[motor%02u]: failed bus=%u id=%u reason=invalid_value type=%s\n",
+                   motor->index, motor->bus, motor->id,
+                   reg_value_type_name(value_type));
+            state->debug_use_canfd = old_canfd;
+            state->show_motor_input = old_input;
+            return -2;
+        }
         u32_to_data(reg_request_header(reg, value_type), &data[0]);
         u32_to_data(value, &data[4]);
         tx_len = 8u;
@@ -887,25 +1069,39 @@ static int console_reg_send_one(flash_state *state,
                    motor->index, motor->bus, motor->id, reg,
                    reg_value_type_name(value_type), value);
         }
-    } else {
+    } else if (cmd == CAN_CMD_REG_SAVE) {
         tx_len = 0u;
         if (!state->brief_register_output) {
             printf("%s index=%02u bus=%u id=%u\n",
                    console_text(state, "保存寄存器配置", "saving register config"),
                    motor->index, motor->bus, motor->id);
         }
+    } else if (cmd == CAN_CMD_REG_INFO) {
+        tx_len = 0u;
+        if (!state->brief_register_output) {
+            printf("%s index=%02u bus=%u id=%u\n",
+                   console_text(state, "读取寄存器信息", "reading register info"),
+                   motor->index, motor->bus, motor->id);
+        }
+    } else {
+        state->debug_use_canfd = old_canfd;
+        state->show_motor_input = old_input;
+        return -1;
     }
     console_print_motor_tx_frame(motor, "reg", motor->bus, frame_id, tx_len, 0u, data);
     state->pending_register_valid = (cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE);
-    state->pending_register_addr = reg;
+    state->pending_register_addr = reg & CAN_REG_REQUEST_ADDRESS_MASK;
     ret = send_debug_packet(state, frame_id, data, tx_len);
     state->debug_use_canfd = old_canfd;
     state->show_motor_input = old_input;
 
     if (ret == 0) {
-        ret = wait_debug_reply(state, frame_id, wait_ms);
+        ret = console_wait_register_reply(state, frame_id, wait_ms);
         state->pending_register_valid = false;
         if (ret != 0) {
+            if (ret == -3) {
+                return ret;
+            }
             printf("%s\n", console_text(state,
                    "提示：底层电机固件在 mit_mode=1 时会把 CAN 帧交给 MIT 回调，"
                    "不会处理 0x17/0x18/0x19 配置寄存器命令；需要固件支持或切换 mit_mode 后才会回复。",
@@ -922,7 +1118,7 @@ static int console_reg_send_one(flash_state *state,
 static int console_reg_command_all(flash_state *state,
                                    unsigned int cmd,
                                    unsigned int reg,
-                                   unsigned int value,
+                                   const char *value_text,
                                    unsigned int wait_ms)
 {
     flash_plan_config plan;
@@ -931,6 +1127,7 @@ static int console_reg_command_all(flash_state *state,
     bool old_monitor = state->show_can_output;
     bool old_input = state->show_motor_input;
     bool old_brief_register_output = state->brief_register_output;
+    int ret;
     size_t i;
     size_t succeeded = 0u;
     size_t failed = 0u;
@@ -961,11 +1158,14 @@ static int console_reg_command_all(flash_state *state,
             motor = &temporary_motor;
         }
 
-        if (console_reg_send_one(state, motor, cmd, reg, value, wait_ms) == 0) {
+        ret = console_reg_send_one(state, motor, cmd, reg, value_text, wait_ms);
+        if (ret == 0) {
             succeeded++;
         } else {
-            printf("[motor%02u]: failed bus=%u id=%u reason=no_reply\n",
-                   motor->index, motor->bus, motor->id);
+            if (ret != -2 && ret != -3) {
+                printf("[motor%02u]: failed bus=%u id=%u reason=no_reply\n",
+                       motor->index, motor->bus, motor->id);
+            }
             failed++;
         }
     }
@@ -981,13 +1181,10 @@ static int console_reg_command_all(flash_state *state,
     return failed == 0u && succeeded == plan.target_count ? 0 : -1;
 }
 
-static int console_parse_register_value_arg(unsigned int reg,
+static int console_parse_register_value_arg(reg_value_type type,
                                             const char *text,
                                             unsigned int *raw_value)
 {
-    const reg_config_meta *meta = reg_config_meta_for_addr(reg);
-    reg_value_type type = meta != NULL ? meta->type : REG_VALUE_UINT;
-
     if (raw_value == NULL || text == NULL) {
         return -1;
     }
@@ -1017,8 +1214,8 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
 {
     unsigned int index;
     unsigned int reg = 0u;
-    unsigned int value = 0u;
     unsigned int wait_ms = 1000u;
+    const char *value_text = NULL;
     unsigned int old_bus;
     unsigned int old_id;
     bool old_brief_register_output;
@@ -1038,17 +1235,22 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
     } else if (cmd == CAN_CMD_REG_WRITE) {
         if (argc < 4 || argc > 5 ||
             parse_uint_arg(argv[2], &reg) != 0 ||
-            console_parse_register_value_arg(reg, argv[3], &value) != 0 ||
             (argc == 5 && parse_uint_arg(argv[4], &wait_ms) != 0)) {
             printf("%s: reg_write <index00|all> <reg_index> <value> [wait_ms]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-    } else if (cmd == CAN_CMD_REG_SAVE) {
+        value_text = argv[3];
+    } else if (cmd == CAN_CMD_REG_SAVE || cmd == CAN_CMD_REG_INFO) {
         if (argc < 2 || argc > 3 ||
             (argc == 3 && parse_uint_arg(argv[2], &wait_ms) != 0)) {
-            printf("%s: reg_save <index00|all> [wait_ms]\n",
-                   console_text(state, "用法", "usage"));
+            if (cmd == CAN_CMD_REG_SAVE) {
+                printf("%s: reg_save <index00|all> [wait_ms]\n",
+                       console_text(state, "用法", "usage"));
+            } else {
+                printf("%s: reg_info <index00|all> [wait_ms]\n",
+                       console_text(state, "用法", "usage"));
+            }
             return -1;
         }
     } else {
@@ -1075,7 +1277,7 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
         return -1;
     }
     if (all_targets) {
-        return console_reg_command_all(state, cmd, reg, value, wait_ms);
+        return console_reg_command_all(state, cmd, reg, value_text, wait_ms);
     }
 
     motor = console_motor_by_index(state, index, &slot);
@@ -1092,8 +1294,8 @@ static int console_reg_command(flash_state *state, int argc, char **argv, unsign
     state->brief_register_output = true;
     printf("%s: start total=1 index=%02u bus=%u id=%u\n",
            console_reg_command_name(cmd), motor->index, motor->bus, motor->id);
-    ret = console_reg_send_one(state, motor, cmd, reg, value, wait_ms);
-    if (ret != 0) {
+    ret = console_reg_send_one(state, motor, cmd, reg, value_text, wait_ms);
+    if (ret != 0 && ret != -2 && ret != -3) {
         printf("[motor%02u]: failed bus=%u id=%u reason=no_reply\n",
                motor->index, motor->bus, motor->id);
     }
