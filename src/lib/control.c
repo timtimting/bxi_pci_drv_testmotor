@@ -611,18 +611,11 @@ static int console_power_on(flash_state *state)
 static int console_power_off(flash_state *state)
 {
     size_t i;
-    bool any_enabled = false;
 
     printf("power_off: start total=1\n");
     if (!state->motor_power_on) {
         printf("power_off: done total=1 success=1 failed=0 already_off\n");
         return 0;
-    }
-    for (i = 0u; i < state->config.entry_count; i++) {
-        any_enabled |= state->motors[i].enabled;
-    }
-    if (any_enabled) {
-        console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, "mit_disable_all");
     }
     if (motor_pwr_set(0u) < 0) {
         fprintf(stderr, "[power]: failed reason=motor_pwr_set_off\n");

@@ -48,9 +48,7 @@ static int console_reload_config(flash_state *state, const char *path)
 static int console_run_command(flash_state *state, int argc, char **argv)
 {
     const char *cmd;
-    unsigned int index;
     unsigned int timeout_ms;
-    size_t slot;
 
     if (argc == 0) {
         return 0;
@@ -77,17 +75,23 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                "界面语言已切换为中文" :
                "Console language switched to English");
     } else if (strcmp(cmd, "power_on") == 0) {
-        if (argc != 1) {
-            printf("%s: power_on\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_power_on(state);
+        return console_maita_power_on(state, argc, argv);
     } else if (strcmp(cmd, "power_off") == 0) {
-        if (argc != 1) {
-            printf("%s: power_off\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_power_off(state);
+        return console_maita_power_off(state, argc, argv);
+    } else if (strcmp(cmd, "maita_power_on") == 0) {
+        return console_maita_power_on(state, argc, argv);
+    } else if (strcmp(cmd, "maita_power_off") == 0) {
+        return console_maita_power_off(state, argc, argv);
+    } else if (strcmp(cmd, "maita_info") == 0) {
+        return console_maita_info(state, argc, argv);
+    } else if (strcmp(cmd, "maita_enable") == 0) {
+        return console_maita_enable(state, argc, argv);
+    } else if (strcmp(cmd, "maita_disable") == 0) {
+        return console_maita_disable(state, argc, argv);
+    } else if (strcmp(cmd, "maita_torque") == 0) {
+        return console_maita_torque(state, argc, argv);
+    } else if (strcmp(cmd, "maita_zero") == 0) {
+        return console_maita_zero(state, argc, argv);
     } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
             printf("%s: motor_probe\n", console_text(state, "用法", "usage"));
@@ -107,58 +111,29 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_print_motors(state);
-    } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
-        if (argc != 1) {
-            printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_send_special(state, -1, BXI_MOTOR_CMD_ZERO, "mit_zero_set_all");
-    } else if (strcmp(cmd, "mit_zero_set_single") == 0 ||
-               strcmp(cmd, "mit_enable_single") == 0 ||
-               strcmp(cmd, "mit_disable_single") == 0) {
-        uint8_t special = strcmp(cmd, "mit_zero_set_single") == 0 ? BXI_MOTOR_CMD_ZERO :
-                          (strcmp(cmd, "mit_enable_single") == 0 ? BXI_MOTOR_CMD_ENABLE :
-                           BXI_MOTOR_CMD_DISABLE);
-        if (argc != 2 || console_parse_index_arg(argv[1], &index) != 0 ||
-            console_motor_by_index(state, index, &slot) == NULL) {
-            printf("%s: %s <index00>\n", console_text(state, "用法", "usage"), cmd);
-            return -1;
-        }
-        return console_send_special(state, (int)slot, special, cmd);
-    } else if (strcmp(cmd, "mit_enable_all") == 0) {
-        if (argc != 1) {
-            printf("%s: mit_enable_all\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_send_special(state, -1, BXI_MOTOR_CMD_ENABLE, cmd);
-    } else if (strcmp(cmd, "mit_disable_all") == 0) {
-        if (argc != 1) {
-            printf("%s: mit_disable_all\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
     } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
-        return console_motor_set(state, argc, argv);
-    } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
-        if (argc != 1) {
-            printf("%s: stand_up\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_move_zero(state);
+        return console_maita_mit_set(state, argc, argv);
     } else if (strcmp(cmd, "reg_read") == 0) {
-        return console_reg_command(state, argc, argv, CAN_CMD_REG_READ);
+        printf("reg_read disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "reg_write") == 0) {
-        return console_reg_command(state, argc, argv, CAN_CMD_REG_WRITE);
+        printf("reg_write disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "reg_save") == 0) {
-        return console_reg_command(state, argc, argv, CAN_CMD_REG_SAVE);
+        printf("reg_save disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "reg_info") == 0) {
-        return console_reg_command(state, argc, argv, CAN_CMD_REG_INFO);
+        printf("reg_info disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "flash_single") == 0) {
-        return console_flash(state, argc, argv, false);
+        printf("flash disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "flash_all") == 0) {
-        return console_flash_all(state, argc, argv);
+        printf("flash disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "flash_debug") == 0) {
-        return console_flash_debug(state, argc, argv);
+        printf("flash disabled on maita_motor branch\n");
+        return -1;
     } else if (strcmp(cmd, "motor_dbg") == 0) {
         return console_motor_dbg(state, argc, argv);
     } else if (strcmp(cmd, "can_dbg") == 0 ||

@@ -37,12 +37,10 @@ typedef struct
 } flash_plan_config;
 
 static const char *const console_command_words[] = {
-    "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
-    "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
-    "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
-    "reg_read", "reg_write", "reg_save", "reg_info",
-    "flash_single", "flash_all", "flash_debug",
-    "motor_dbg", "can_dbg",
+    "help", "-h", "?", "power_on", "power_off",
+    "mit_set",
+    "maita_power_on", "maita_power_off", "maita_info", "maita_enable", "maita_disable",
+    "maita_torque", "maita_zero",
     "can_status",
     "language", "lang", "quit", "exit", "q", "qq",
 };
@@ -50,6 +48,7 @@ static const char *const console_command_words[] = {
 #include "lib/core.c"
 #include "lib/display.c"
 #include "lib/control.c"
+#include "lib/maita.c"
 #include "lib/flash.c"
 #include "lib/debug.c"
 #include "lib/terminal.c"
@@ -139,8 +138,6 @@ int main(int argc, char **argv)
                "configuration check passed; no PCI/CAN initialization performed"));
         return 0;
     }
-    console_prefetch_firmware(&state);
-
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     if (bxi_pci_init(can_rx_callback, &state, -1) == -1) {
