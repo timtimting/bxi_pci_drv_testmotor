@@ -251,7 +251,14 @@ static int maita_wait_reply(flash_state *state,
         if (!frame_ring_pop(&state->frames, &frame, step_ms)) {
             continue;
         }
-        if (frame.bus != bus || frame.can_id != expected_id) {
+        if (frame.bus != bus) {
+            continue;
+        }
+        if (frame.can_id != expected_id) {
+            printf("[maita]: rx_other bus=%u can_id=0x%03x len=%u flags=0x%02x data:",
+                   frame.bus, frame.can_id, frame.len, frame.flags);
+            maita_print_data(frame.data, frame.len);
+            printf("\n");
             continue;
         }
         maita_print_rx(&frame);
