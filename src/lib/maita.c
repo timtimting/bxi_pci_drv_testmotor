@@ -23,6 +23,7 @@ enum {
     MAITA_SEND_BASE = 0x140u,
     MAITA_REPLY_BASE = 0x240u,
     MAITA_MIT_BASE = 0x400u,
+    MAITA_MIT_REPLY_BASE = 0x500u,
     MAITA_CMD_FUNC = 0x20u,
     MAITA_CMD_ZERO_CURRENT = 0x64u,
     MAITA_CMD_SHUTDOWN = 0x80u,
@@ -31,6 +32,13 @@ enum {
     MAITA_CMD_SW_VERSION = 0xb2u,
     MAITA_CMD_MODEL = 0xb5u,
 };
+
+#define MAITA_POS_MIN_RAD (-12.566f)
+#define MAITA_POS_MAX_RAD (12.566f)
+#define MAITA_VEL_MIN_RAD_S (-45.0f)
+#define MAITA_VEL_MAX_RAD_S (45.0f)
+#define MAITA_KP_MAX (500.0f)
+#define MAITA_KD_MAX (50.0f)
 
 static float maita_clamp_float(float value, float min_value, float max_value)
 {
@@ -91,10 +99,10 @@ static void maita_pack_mit(uint8_t data[8],
                            float torque_nm,
                            float torque_max_nm)
 {
-    uint32_t p = maita_float_to_uint(position_rad, -12.566f, 12.566f, 16u);
-    uint32_t v = maita_float_to_uint(velocity_rad_s, -45.0f, 45.0f, 12u);
-    uint32_t kp_raw = maita_float_to_uint(kp, 0.0f, 500.0f, 12u);
-    uint32_t kd_raw = maita_float_to_uint(kd, 0.0f, 5.0f, 12u);
+    uint32_t p = maita_float_to_uint(position_rad, MAITA_POS_MIN_RAD, MAITA_POS_MAX_RAD, 16u);
+    uint32_t v = maita_float_to_uint(velocity_rad_s, MAITA_VEL_MIN_RAD_S, MAITA_VEL_MAX_RAD_S, 12u);
+    uint32_t kp_raw = maita_float_to_uint(kp, 0.0f, MAITA_KP_MAX, 12u);
+    uint32_t kd_raw = maita_float_to_uint(kd, 0.0f, MAITA_KD_MAX, 12u);
     uint32_t t = maita_float_to_uint(torque_nm, -torque_max_nm, torque_max_nm, 12u);
 
     data[0] = (uint8_t)(p >> 8);
@@ -117,7 +125,7 @@ static int maita_unpack_mit_reply(const rx_can_frame *frame,
     uint32_t t;
 
     if (frame == NULL || reply == NULL || frame->len < 8u ||
-        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->can_id != MAITA_MIT_REPLY_BASE + id ||
         frame->data[0] != (uint8_t)id) {
         return -1;
     }
@@ -126,8 +134,8 @@ static int maita_unpack_mit_reply(const rx_can_frame *frame,
     t = (((uint32_t)frame->data[4] & 0x0fu) << 8) | frame->data[5];
     memset(reply, 0, sizeof(*reply));
     reply->id = id;
-    reply->position_rad = maita_uint_to_float(p, -12.566f, 12.566f, 16u);
-    reply->velocity_rad_s = maita_uint_to_float(v, -45.0f, 45.0f, 12u);
+    reply->position_rad = maita_uint_to_float(p, MAITA_POS_MIN_RAD, MAITA_POS_MAX_RAD, 16u);
+    reply->velocity_rad_s = maita_uint_to_float(v, MAITA_VEL_MIN_RAD_S, MAITA_VEL_MAX_RAD_S, 12u);
     reply->torque_nm = maita_uint_to_float(t, -torque_max_nm, torque_max_nm, 12u);
     return 0;
 }
@@ -229,12 +237,11 @@ static int maita_send_frame(flash_state *state,
 
 static int maita_wait_reply(flash_state *state,
                             unsigned int bus,
-                            unsigned int id,
+                            unsigned int expected_id,
                             unsigned int timeout_ms,
                             rx_can_frame *out)
 {
     uint64_t deadline = time_us() + (uint64_t)timeout_ms * 1000ULL;
-    unsigned int expected_id = MAITA_REPLY_BASE + id;
 
     while (!stop_requested && time_us() < deadline) {
         rx_can_frame frame;
@@ -268,6 +275,24 @@ static int maita_wait_reply(flash_state *state,
     return -1;
 }
 
+static int maita_wait_status_reply(flash_state *state,
+                                   unsigned int bus,
+                                   unsigned int id,
+                                   unsigned int timeout_ms,
+                                   rx_can_frame *out)
+{
+    return maita_wait_reply(state, bus, MAITA_REPLY_BASE + id, timeout_ms, out);
+}
+
+static int maita_wait_mit_reply(flash_state *state,
+                                unsigned int bus,
+                                unsigned int id,
+                                unsigned int timeout_ms,
+                                rx_can_frame *out)
+{
+    return maita_wait_reply(state, bus, MAITA_MIT_REPLY_BASE + id, timeout_ms, out);
+}
+
 static int maita_send_command_wait(flash_state *state,
                                    const char *name,
                                    unsigned int bus,
@@ -295,7 +320,7 @@ static int maita_send_command_wait(flash_state *state,
         printf("%s: done success=0 failed=1\n", name);
         goto out;
     }
-    if (maita_wait_reply(state, bus, id, timeout_ms, &frame) != 0) {
+    if (maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0) {
         printf("[maita%02u]: failed reason=no_reply timeout_ms=%u\n", id, timeout_ms);
         printf("%s: done success=0 failed=1\n", name);
         goto out;
@@ -388,7 +413,7 @@ static int console_maita_info(flash_state *state, int argc, char **argv)
     frame_ring_clear(&state->frames);
     printf("maita_info: start bus=%u id=%u\n", bus, id);
     if (maita_send_frame(state, bus, MAITA_MIT_BASE + id, data) != 0 ||
-        maita_wait_reply(state, bus, id, timeout_ms, &frame) != 0) {
+        maita_wait_mit_reply(state, bus, id, timeout_ms, &frame) != 0) {
         printf("[maita%02u]: failed reason=no_reply timeout_ms=%u\n", id, timeout_ms);
         printf("maita_info: done success=0 failed=1\n");
         goto out;
@@ -407,17 +432,18 @@ out:
     return ret;
 }
 
-static int console_maita_mit_set(flash_state *state, int argc, char **argv)
+static int maita_send_mit_wait(flash_state *state,
+                               const char *name,
+                               unsigned int bus,
+                               unsigned int id,
+                               float pos,
+                               float torque,
+                               float vel,
+                               float kp,
+                               float kd,
+                               unsigned int timeout_ms,
+                               float torque_max_nm)
 {
-    unsigned int bus;
-    unsigned int id;
-    unsigned int timeout_ms = 1000u;
-    float pos;
-    float torque;
-    float vel;
-    float kp;
-    float kd;
-    float torque_max_nm = 18.0f;
     uint8_t data[8];
     rx_can_frame frame;
     maita_reply reply;
@@ -425,19 +451,6 @@ static int console_maita_mit_set(flash_state *state, int argc, char **argv)
     bool old_input;
     int ret = -1;
 
-    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
-        argc < 8 || argc > 10 ||
-        parse_float_arg(argv[3], &pos) != 0 ||
-        parse_float_arg(argv[4], &torque) != 0 ||
-        parse_float_arg(argv[5], &vel) != 0 ||
-        parse_float_arg(argv[6], &kp) != 0 ||
-        parse_float_arg(argv[7], &kd) != 0 ||
-        (argc >= 9 && parse_uint_arg(argv[8], &timeout_ms) != 0) ||
-        (argc == 10 && parse_float_arg(argv[9], &torque_max_nm) != 0)) {
-        printf("%s: mit_set <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n",
-               console_text(state, "用法", "usage"));
-        return -1;
-    }
     if (!isfinite(pos) || !isfinite(torque) || !isfinite(vel) ||
         !isfinite(kp) || !isfinite(kd) || !isfinite(torque_max_nm) ||
         torque_max_nm <= 0.0f) {
@@ -453,23 +466,80 @@ static int console_maita_mit_set(flash_state *state, int argc, char **argv)
     state->show_motor_input = false;
     maita_pack_mit(data, pos, vel, kp, kd, torque, torque_max_nm);
     frame_ring_clear(&state->frames);
-    printf("mit_set: start bus=%u id=%u\n", bus, id);
+    printf("%s: start bus=%u id=%u\n", name, bus, id);
+    printf("[maita%02u]: set pos=%.5frad vel=%.5frad/s torque=%.5fNm kp=%.3f kd=%.3f torque_max=%.3fNm\n",
+           id, pos, vel, torque, kp, kd, torque_max_nm);
     if (maita_send_frame(state, bus, MAITA_MIT_BASE + id, data) != 0 ||
-        maita_wait_reply(state, bus, id, timeout_ms, &frame) != 0) {
+        maita_wait_mit_reply(state, bus, id, timeout_ms, &frame) != 0) {
         printf("[maita%02u]: failed reason=no_reply timeout_ms=%u\n", id, timeout_ms);
-        printf("mit_set: done success=0 failed=1\n");
+        printf("%s: done success=0 failed=1\n", name);
         goto out;
     }
     if (maita_unpack_mit_reply(&frame, id, torque_max_nm, &reply) == 0) {
         printf("[maita%02u]: pos=%.5frad vel=%.5frad/s torque=%.5fNm\n",
                id, reply.position_rad, reply.velocity_rad_s, reply.torque_nm);
     }
-    printf("mit_set: done success=1 failed=0\n");
+    printf("%s: done success=1 failed=0\n", name);
     ret = 0;
 out:
     state->show_can_output = old_monitor;
     state->show_motor_input = old_input;
     return ret;
+}
+
+static int console_maita_mit_set(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int timeout_ms = 1000u;
+    float pos;
+    float torque;
+    float vel;
+    float kp;
+    float kd;
+    float torque_max_nm = 18.0f;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc < 8 || argc > 10 ||
+        parse_float_arg(argv[3], &pos) != 0 ||
+        parse_float_arg(argv[4], &torque) != 0 ||
+        parse_float_arg(argv[5], &vel) != 0 ||
+        parse_float_arg(argv[6], &kp) != 0 ||
+        parse_float_arg(argv[7], &kd) != 0 ||
+        (argc >= 9 && parse_uint_arg(argv[8], &timeout_ms) != 0) ||
+        (argc == 10 && parse_float_arg(argv[9], &torque_max_nm) != 0)) {
+        printf("%s: %s <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n",
+               console_text(state, "用法", "usage"),
+               argv[0]);
+        return -1;
+    }
+    return maita_send_mit_wait(state, argv[0], bus, id, pos, torque, vel, kp, kd,
+                               timeout_ms, torque_max_nm);
+}
+
+static int console_maita_pos(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int timeout_ms = 1000u;
+    float pos;
+    float kp = 20.0f;
+    float kd = 1.0f;
+    float torque_max_nm = 18.0f;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc < 4 || argc > 8 ||
+        parse_float_arg(argv[3], &pos) != 0 ||
+        (argc >= 5 && parse_float_arg(argv[4], &kp) != 0) ||
+        (argc >= 6 && parse_float_arg(argv[5], &kd) != 0) ||
+        (argc >= 7 && parse_uint_arg(argv[6], &timeout_ms) != 0) ||
+        (argc == 8 && parse_float_arg(argv[7], &torque_max_nm) != 0)) {
+        printf("%s: maita_pos <bus> <id> <pos_rad> [kp] [kd] [timeout_ms] [torque_max_nm]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    return maita_send_mit_wait(state, "maita_pos", bus, id, pos, 0.0f, 0.0f, kp, kd,
+                               timeout_ms, torque_max_nm);
 }
 
 static int console_maita_enable(flash_state *state, int argc, char **argv)

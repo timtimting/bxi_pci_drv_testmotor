@@ -38,9 +38,9 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off",
-    "mit_set",
+    "mit_set", "maita_mit",
     "maita_power_on", "maita_power_off", "maita_info", "maita_enable", "maita_disable",
-    "maita_torque", "maita_zero",
+    "maita_torque", "maita_zero", "maita_pos",
     "can_status",
     "language", "lang", "quit", "exit", "q", "qq",
 };

@@ -92,6 +92,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_maita_torque(state, argc, argv);
     } else if (strcmp(cmd, "maita_zero") == 0) {
         return console_maita_zero(state, argc, argv);
+    } else if (strcmp(cmd, "maita_pos") == 0) {
+        return console_maita_pos(state, argc, argv);
     } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
             printf("%s: motor_probe\n", console_text(state, "用法", "usage"));
@@ -111,7 +113,9 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_print_motors(state);
-    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
+    } else if (strcmp(cmd, "mit_set") == 0 ||
+               strcmp(cmd, "maita_mit") == 0 ||
+               strcmp(cmd, "motor_set") == 0) {
         return console_maita_mit_set(state, argc, argv);
     } else if (strcmp(cmd, "reg_read") == 0) {
         printf("reg_read disabled on maita_motor branch\n");

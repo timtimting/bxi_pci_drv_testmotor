@@ -13,8 +13,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  电源/状态： power_on [wait_ms]    power_off    can_status [reset]\n\n");
             printf("  脉塔调试：  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
             printf("             maita_enable <bus> <id>    maita_disable <bus> <id>\n");
-            printf("             maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>\n\n");
-            printf("  MIT控制：   mit_set <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
+            printf("             maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>\n");
+            printf("             maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
+            printf("  MIT控制：   mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
             printf("  退出：      quit | exit | q | qq\n");
         } else {
             printf("Unified motor console commands (details: help all or -h all):\n");
@@ -22,8 +23,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  Power/status: power_on [wait_ms]    power_off    can_status [reset]\n\n");
             printf("  Maita debug:   maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
             printf("                 maita_enable <bus> <id>    maita_disable <bus> <id>\n");
-            printf("                 maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>\n\n");
-            printf("  MIT control:  mit_set <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
+            printf("                 maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>\n");
+            printf("                 maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
+            printf("  MIT control:  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
             printf("  Exit:         quit | exit | q | qq\n");
         }
         return;
@@ -40,7 +42,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  power_off\n");
         printf("      关闭电机总电源，不发送 BXI 失能帧。\n");
         printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
-        printf("      通过 0x400+ID 发送一帧脉塔运动模式零命令，并解析 0x240+ID 回复。\n");
+        printf("      通过 0x400+ID 发送一帧脉塔运动模式零命令，并解析 0x500+ID 回复。\n");
         printf("  maita_enable <bus> <id>\n");
         printf("      发送 0x81 Stop/Hold 指令，测试电机进入保持状态。\n");
         printf("  maita_disable <bus> <id>\n");
@@ -49,8 +51,10 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      发送 0xA1 转矩电流闭环指令，iq_A 单位 A，协议单位 0.01A/LSB。\n");
         printf("  maita_zero <bus> <id> [timeout_ms]\n");
         printf("      发送 0x64，将当前多圈位置写入 ROM 作为零点；手册要求失能状态执行，复位后生效。\n");
-        printf("  mit_set <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
-        printf("      发送一帧 0x400+ID 脉塔运动模式控制帧，并解析 0x240+ID 回复。\n");
+        printf("  maita_pos <bus> <id> <pos_rad> [kp] [kd] [timeout_ms] [torque_max_nm]\n");
+        printf("      使用 MIT 运动模式做位置闭环，默认 vel=0、torque=0、kp=20、kd=1。\n");
+        printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
+        printf("      发送一帧 0x400+ID 脉塔运动模式控制帧，并解析 0x500+ID 回复。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -69,7 +73,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  power_off\n");
     printf("      Turn motor power off without sending BXI disable frames.\n");
     printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
-    printf("      Send one 0x400+ID motion-mode zero frame and decode the 0x240+ID reply.\n");
+    printf("      Send one 0x400+ID motion-mode zero frame and decode the 0x500+ID reply.\n");
     printf("  maita_enable <bus> <id>\n");
     printf("      Send 0x81 Stop/Hold to test holding state.\n");
     printf("  maita_disable <bus> <id>\n");
@@ -78,8 +82,10 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Send 0xA1 torque-current command. iq_A is in A; protocol scale is 0.01A/LSB.\n");
     printf("  maita_zero <bus> <id> [timeout_ms]\n");
     printf("      Send 0x64 to write current multi-turn position as zero; run disabled, reset to apply.\n");
-    printf("  mit_set <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
-    printf("      Send one 0x400+ID Maita motion-mode frame and decode the 0x240+ID reply.\n");
+    printf("  maita_pos <bus> <id> <pos_rad> [kp] [kd] [timeout_ms] [torque_max_nm]\n");
+    printf("      Run MIT motion-mode position control; defaults: vel=0, torque=0, kp=20, kd=1.\n");
+    printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
+    printf("      Send one 0x400+ID Maita motion-mode frame and decode the 0x500+ID reply.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");
