@@ -1321,192 +1321,13 @@ enum {
     CAN_REG_REPLY_STATUS_MASK = 0xffu,
     CAN_REG_REPLY_TYPE_SHIFT = 8u,
     CAN_REG_REPLY_TYPE_MASK = 0x07u,
+    CAN_CONFIG_VERSION_REG = 0x7cu,
+    CAN_MIT_AUX_ENABLE_REG = 0x6du,
 };
-
-typedef struct
-{
-    uint32_t addr;
-    const char *name;
-    reg_value_type type;
-} reg_config_meta;
-
-static const reg_config_meta reg_config_table_v0[] = {
-    {0x01u, "motor_pole_pairs", REG_VALUE_INT},
-    {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
-    {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
-    {0x04u, "inertia", REG_VALUE_FLOAT},
-    {0x05u, "reduction_ratio", REG_VALUE_FLOAT},
-    {0x10u, "encoder_dir_rev", REG_VALUE_INT},
-    {0x11u, "encoder_offset", REG_VALUE_INT},
-    {0x12u, "calib_valid", REG_VALUE_INT},
-    {0x13u, "enco_calib_valid", REG_VALUE_INT},
-    {0x14u, "usr_enc1_offset", REG_VALUE_INT},
-    {0x15u, "usr_enc2_offset", REG_VALUE_FLOAT},
-    {0x16u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
-    {0x17u, "ldc1614_dir", REG_VALUE_INT},
-    {0x18u, "ldc1614_offset", REG_VALUE_FLOAT},
-    {0x20u, "calib_current", REG_VALUE_FLOAT},
-    {0x21u, "calib_max_voltage", REG_VALUE_FLOAT},
-    {0x22u, "current_test_enable", REG_VALUE_BOOL},
-    {0x30u, "control_mode", REG_VALUE_INT},
-    {0x31u, "pos_gain", REG_VALUE_FLOAT},
-    {0x32u, "vel_gain", REG_VALUE_FLOAT},
-    {0x33u, "vel_integrator_gain", REG_VALUE_FLOAT},
-    {0x34u, "vel_limit", REG_VALUE_FLOAT},
-    {0x35u, "current_limit", REG_VALUE_FLOAT},
-    {0x36u, "torquet_limit", REG_VALUE_FLOAT},
-    {0x37u, "current_ramp_rate", REG_VALUE_FLOAT},
-    {0x38u, "vel_ramp_rate", REG_VALUE_FLOAT},
-    {0x39u, "traj_vel", REG_VALUE_FLOAT},
-    {0x3au, "traj_accel", REG_VALUE_FLOAT},
-    {0x3bu, "traj_decel", REG_VALUE_FLOAT},
-    {0x3cu, "field_weaken_mode", REG_VALUE_BOOL},
-    {0x40u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
-    {0x41u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
-    {0x42u, "current_ctrl_bandwidth", REG_VALUE_INT},
-    {0x50u, "protect_under_voltage", REG_VALUE_FLOAT},
-    {0x51u, "protect_over_voltage", REG_VALUE_FLOAT},
-    {0x52u, "protect_over_speed", REG_VALUE_FLOAT},
-    {0x53u, "protect_temperature_low", REG_VALUE_FLOAT},
-    {0x54u, "protect_temperature_high", REG_VALUE_FLOAT},
-    {0x55u, "protect_i_abc_error", REG_VALUE_FLOAT},
-    {0x60u, "can_id", REG_VALUE_INT},
-    {0x61u, "master_id", REG_VALUE_INT},
-    {0x62u, "sync_boot_id_flag", REG_VALUE_BOOL},
-    {0x63u, "can_timeout_ms", REG_VALUE_INT},
-    {0x64u, "can_sync_target_enable", REG_VALUE_BOOL},
-    {0x65u, "can_mode_switch", REG_VALUE_BOOL},
-    {0x66u, "mit_mode", REG_VALUE_BOOL},
-    {0x67u, "max_pos", REG_VALUE_FLOAT},
-    {0x68u, "max_vel", REG_VALUE_FLOAT},
-    {0x69u, "max_tor", REG_VALUE_FLOAT},
-    {0x6au, "kp_max", REG_VALUE_FLOAT},
-    {0x6bu, "kd_max", REG_VALUE_FLOAT},
-    {0x6du, "mit_aux_enable", REG_VALUE_BOOL},
-    {0x7cu, "config_version", REG_VALUE_VERSION},
-};
-
-static const reg_config_meta reg_config_table_v1[] = {
-    {0x01u, "motor_pole_pairs", REG_VALUE_INT},
-    {0x02u, "motor_phase_resistance", REG_VALUE_FLOAT},
-    {0x03u, "motor_phase_inductance", REG_VALUE_FLOAT},
-    {0x04u, "inertia", REG_VALUE_FLOAT},
-    {0x05u, "reduction_ratio", REG_VALUE_FLOAT},
-    {0x10u, "encoder_dir_rev", REG_VALUE_INT},
-    {0x11u, "encoder_offset", REG_VALUE_INT},
-    {0x12u, "calib_valid", REG_VALUE_INT},
-    {0x13u, "enco_calib_valid", REG_VALUE_INT},
-    {0x14u, "usr_enc1_offset", REG_VALUE_INT},
-    {0x15u, "usr_enc2_offset", REG_VALUE_FLOAT},
-    {0x16u, "enc2_closed_loop_enable", REG_VALUE_BOOL},
-    {0x20u, "calib_current", REG_VALUE_FLOAT},
-    {0x21u, "calib_max_voltage", REG_VALUE_FLOAT},
-    {0x22u, "current_test_enable", REG_VALUE_BOOL},
-    {0x23u, "backlash_test_enable", REG_VALUE_BOOL},
-    {0x30u, "control_mode", REG_VALUE_INT},
-    {0x31u, "pos_gain", REG_VALUE_FLOAT},
-    {0x32u, "vel_gain", REG_VALUE_FLOAT},
-    {0x33u, "vel_integrator_gain", REG_VALUE_FLOAT},
-    {0x34u, "vel_limit", REG_VALUE_FLOAT},
-    {0x35u, "current_limit", REG_VALUE_FLOAT},
-    {0x36u, "torquet_limit", REG_VALUE_FLOAT},
-    {0x37u, "current_ramp_rate", REG_VALUE_FLOAT},
-    {0x38u, "vel_ramp_rate", REG_VALUE_FLOAT},
-    {0x39u, "traj_vel", REG_VALUE_FLOAT},
-    {0x3au, "traj_accel", REG_VALUE_FLOAT},
-    {0x3bu, "traj_decel", REG_VALUE_FLOAT},
-    {0x3cu, "field_weaken_mode", REG_VALUE_BOOL},
-    {0x40u, "current_ctrl_p_gain", REG_VALUE_FLOAT},
-    {0x41u, "current_ctrl_i_gain", REG_VALUE_FLOAT},
-    {0x42u, "current_ctrl_bandwidth", REG_VALUE_INT},
-    {0x50u, "protect_under_voltage", REG_VALUE_FLOAT},
-    {0x51u, "protect_over_voltage", REG_VALUE_FLOAT},
-    {0x52u, "protect_over_speed", REG_VALUE_FLOAT},
-    {0x53u, "protect_temperature_low", REG_VALUE_FLOAT},
-    {0x54u, "protect_temperature_high", REG_VALUE_FLOAT},
-    {0x55u, "protect_i_abc_error", REG_VALUE_FLOAT},
-    {0x60u, "can_id", REG_VALUE_INT},
-    {0x61u, "master_id", REG_VALUE_INT},
-    {0x62u, "sync_boot_id_flag", REG_VALUE_BOOL},
-    {0x63u, "can_timeout_ms", REG_VALUE_INT},
-    {0x64u, "can_sync_target_enable", REG_VALUE_BOOL},
-    {0x65u, "can_mode_switch", REG_VALUE_BOOL},
-    {0x66u, "mit_mode", REG_VALUE_BOOL},
-    {0x67u, "max_pos", REG_VALUE_FLOAT},
-    {0x68u, "max_vel", REG_VALUE_FLOAT},
-    {0x69u, "max_tor", REG_VALUE_FLOAT},
-    {0x6au, "kp_max", REG_VALUE_FLOAT},
-    {0x6bu, "kd_max", REG_VALUE_FLOAT},
-    {0x6du, "mit_aux_enable", REG_VALUE_BOOL},
-    {0x7cu, "config_version", REG_VALUE_VERSION},
-};
-
-static const reg_config_meta *reg_config_meta_find(const reg_config_meta *table,
-                                                   size_t count,
-                                                   uint32_t addr)
-{
-    size_t i;
-
-    for (i = 0u; i < count; i++) {
-        if (table[i].addr == addr) {
-            return &table[i];
-        }
-    }
-    return NULL;
-}
-
-static bool motor_uses_v0_register_map(const flash_state *state,
-                                       const motor_map_entry *entry)
-{
-    size_t i;
-
-    if (state == NULL || entry == NULL || !state->config_loaded) {
-        return false;
-    }
-    for (i = 0u; i < state->config.entry_count; i++) {
-        const motor_map_entry *m = &state->config.entries[i];
-        const motor_runtime *r = &state->motors[i];
-
-        if (m->bus != entry->bus || m->id != entry->id) {
-            continue;
-        }
-        if (r->fw_version_valid) {
-            return r->fw_version_major == 0u;
-        }
-        if (r->config_version_valid) {
-            return ((r->config_version >> 8) & 0xffu) == 0u;
-        }
-        return false;
-    }
-    return false;
-}
 
 static bool reg_address_is_valid(uint32_t reg)
 {
     return (reg & ~CAN_REG_REQUEST_ADDRESS_MASK) == 0u;
-}
-
-static const reg_config_meta *reg_config_meta_for_addr(uint32_t addr)
-{
-    return reg_config_meta_find(reg_config_table_v1,
-                                sizeof(reg_config_table_v1) / sizeof(reg_config_table_v1[0]),
-                                addr);
-}
-
-static const reg_config_meta *reg_config_meta_for_motor(const flash_state *state,
-                                                        const motor_map_entry *entry,
-                                                        uint32_t addr)
-{
-    if (motor_uses_v0_register_map(state, entry)) {
-        return reg_config_meta_find(reg_config_table_v0,
-                                    sizeof(reg_config_table_v0) /
-                                    sizeof(reg_config_table_v0[0]),
-                                    addr);
-    }
-    return reg_config_meta_find(reg_config_table_v1,
-                                sizeof(reg_config_table_v1) /
-                                sizeof(reg_config_table_v1[0]),
-                                addr);
 }
 
 static const char *reg_cmd_name(unsigned int cmd)
@@ -1562,6 +1383,42 @@ static const char *reg_value_type_name(reg_value_type type)
     default:
         return "unknown";
     }
+}
+
+static int parse_reg_value_type_arg(const char *text, reg_value_type *type)
+{
+    unsigned int numeric;
+
+    if (text == NULL || type == NULL) {
+        return -1;
+    }
+    if (strcmp(text, "int") == 0 || strcmp(text, "int32") == 0 ||
+        strcmp(text, "i32") == 0) {
+        *type = REG_VALUE_INT;
+        return 0;
+    }
+    if (strcmp(text, "bool") == 0 || strcmp(text, "boolean") == 0) {
+        *type = REG_VALUE_BOOL;
+        return 0;
+    }
+    if (strcmp(text, "float") == 0 || strcmp(text, "f32") == 0) {
+        *type = REG_VALUE_FLOAT;
+        return 0;
+    }
+    if (strcmp(text, "uint") == 0 || strcmp(text, "uint32") == 0 ||
+        strcmp(text, "u32") == 0) {
+        *type = REG_VALUE_UINT;
+        return 0;
+    }
+    if (strcmp(text, "version") == 0 || strcmp(text, "ver") == 0) {
+        *type = REG_VALUE_VERSION;
+        return 0;
+    }
+    if (parse_uint_arg(text, &numeric) == 0 && numeric <= 4u) {
+        *type = (reg_value_type)numeric;
+        return 0;
+    }
+    return -1;
 }
 
 static reg_value_type reg_value_type_from_wire(unsigned int wire_type)
@@ -1631,15 +1488,34 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
     if ((cmd == CAN_CMD_REG_READ || cmd == CAN_CMD_REG_WRITE) && frame->len >= 8u) {
         uint32_t reply_header = data_to_u32(&frame->data[0]);
         unsigned int status = reg_reply_status(reply_header);
-        reg_value_type wire_type = reg_reply_value_type(reply_header);
+        reg_value_type value_type = reg_reply_value_type(reply_header);
         uint32_t reg = state->pending_register_valid ? state->pending_register_addr : 0xffffffffu;
         uint32_t value = data_to_u32(&frame->data[4]);
-        const reg_config_meta *meta = reg_config_meta_for_motor(state, entry, reg);
-        reg_value_type value_type = wire_type != REG_VALUE_UNKNOWN ? wire_type :
-                                    (meta != NULL ? meta->type : REG_VALUE_UNKNOWN);
 
-        if (status == CAN_REG_STATUS_OK && reg == 0x6du && entry != NULL) {
+        if (status == CAN_REG_STATUS_OK && reg == CAN_MIT_AUX_ENABLE_REG && entry != NULL) {
             motor_runtime_set_mit_aux_enabled(state, entry, value != 0u);
+        }
+        if (status == CAN_REG_STATUS_OK && reg == CAN_CONFIG_VERSION_REG && entry != NULL) {
+            motor_runtime *runtime = NULL;
+            size_t i;
+
+            for (i = 0u; state != NULL && i < state->config.entry_count; i++) {
+                const motor_map_entry *m = &state->config.entries[i];
+
+                if (m->bus == entry->bus && m->id == entry->id) {
+                    runtime = &state->motors[i];
+                    break;
+                }
+            }
+            if (runtime != NULL) {
+                runtime->config_version_valid = true;
+                runtime->config_version = value;
+                if (!runtime->fw_version_valid) {
+                    runtime->fw_version_valid = true;
+                    runtime->fw_version_major = (value >> 8) & 0xffu;
+                    runtime->fw_version_minor = value & 0xffu;
+                }
+            }
         }
 
         if (state->brief_register_output) {
@@ -1665,8 +1541,8 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
             } else {
                 printf(" reg=unknown");
             }
-            if (meta != NULL) {
-                printf(" %s", meta->name);
+            if (reg == CAN_CONFIG_VERSION_REG) {
+                printf(" config_version");
             }
             printf(" status=%u(%s) type=%s value=",
                    status, reg_status_name(status), reg_value_type_name(value_type));
@@ -1688,8 +1564,8 @@ static int print_register_debug_frame(flash_state *state, const rx_can_frame *fr
         } else {
             printf(" reg=unknown");
         }
-        if (meta != NULL) {
-            printf(" %s", meta->name);
+        if (reg == CAN_CONFIG_VERSION_REG) {
+            printf(" config_version");
         }
         printf(" status=%u(%s) type=%s value=",
                status, reg_status_name(status), reg_value_type_name(value_type));
@@ -4318,17 +4194,17 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
     unsigned int wait_ms = 1000u;
     uint8_t data[8];
     unsigned int frame_id;
-    const reg_config_meta *meta;
     reg_value_type value_type;
 
-    if (argc < 2 ||
+    if (argc < 3 ||
         parse_uint_arg(argv[0], &reg) != 0 ||
-        parse_uint_arg(argv[1], &value) != 0) {
-        printf("usage: reg-write <index> <u32_value> [wait_ms]\n");
+        parse_reg_value_type_arg(argv[1], &value_type) != 0 ||
+        parse_uint_arg(argv[2], &value) != 0) {
+        printf("usage: reg-write <reg> <type> <u32_value> [wait_ms]\n");
         return -1;
     }
-    if (argc > 2 && parse_uint_arg(argv[2], &wait_ms) != 0) {
-        printf("invalid wait_ms: %s\n", argv[2]);
+    if (argc > 3 && parse_uint_arg(argv[3], &wait_ms) != 0) {
+        printf("invalid wait_ms: %s\n", argv[3]);
         return -1;
     }
     if (!reg_address_is_valid(reg)) {
@@ -4337,8 +4213,6 @@ static int run_debug_reg_write(flash_state *state, int argc, char **argv)
     }
 
     frame_id = (unsigned int)reg_frame_id(state, CAN_CMD_REG_WRITE);
-    meta = reg_config_meta_for_addr(reg);
-    value_type = meta != NULL ? meta->type : REG_VALUE_UINT;
     u32_to_data(reg_request_header(reg, value_type), &data[0]);
     u32_to_data(value, &data[4]);
     frame_ring_clear(&state->frames);

@@ -17,7 +17,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
-            printf("             reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+            printf("             reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("             reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
             printf("  烧录：      flash_single <index00> [version|firmware.bin] [cycle]\n");
             printf("             flash_all [plan.yaml] [cycle]\n");
@@ -34,7 +34,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
-            printf("                reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
+            printf("                reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("                reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
             printf("  Flash:        flash_single <index00> [version|firmware.bin] [cycle]\n");
             printf("                flash_all [plan.yaml] [cycle]\n");
@@ -75,8 +75,9 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
         printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
         printf("      读取寄存器；all 按默认烧录配置逐台发送。\n");
-        printf("  reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
-        printf("      写入寄存器；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
+        printf("  reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
+        printf("      写入寄存器；type 由用户指定，支持 int/bool/float/uint/version 或 0..4；\n");
+        printf("      电机端负责校验地址和类型是否匹配；all 按默认烧录配置逐台发送。\n");
         printf("  reg_save <index00|all> [wait_ms]\n");
         printf("      保存寄存器配置；all 按默认烧录配置逐台发送；要求没有已知使能电机。\n");
         printf("  reg_info <index00|all> [wait_ms]\n");
@@ -132,8 +133,9 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
     printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
     printf("      Read registers. all sends to every target in the default flash plan.\n");
-    printf("  reg_write <index00|all> <reg_index> <value> [wait_ms]\n");
-    printf("      Write registers. all uses the default flash plan. Refused while any motor is enabled.\n");
+    printf("  reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
+    printf("      Write registers. type is provided by the user: int/bool/float/uint/version or 0..4.\n");
+    printf("      The motor validates address/type matching. all uses the default flash plan.\n");
     printf("  reg_save <index00|all> [wait_ms]\n");
     printf("      Save register configs. all uses the default flash plan. Refused while any motor is enabled.\n");
     printf("  reg_info <index00|all> [wait_ms]\n");

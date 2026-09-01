@@ -602,32 +602,32 @@ config/motor_console.yaml
 | `mit_set` | `<index00> <pos> <torque> <vel> <kp> <kd>` | 给单台电机发送一次 MIT 控制帧 |
 | `stand_up` | 无 | 全部在线且已使能电机软启动回零 |
 | `reg_read` | `<index00\|all> <reg_index> [wait_ms]` | 读取寄存器；`all` 按默认烧录配置逐台发送 |
-| `reg_write` | `<index00\|all> <reg_index> <value> [wait_ms]` | 写入寄存器；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
+| `reg_write` | `<index00\|all> <reg_index> <type> <value> [wait_ms]` | 写入寄存器；`type` 由用户指定；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
 | `reg_save` | `<index00\|all> [wait_ms]` | 保存寄存器配置；`all` 按默认烧录配置逐台发送；要求没有已知使能电机 |
 | `reg_info` | `<index00\|all> [wait_ms]` | 读取该电机支持的寄存器总数和可写数量 |
 
-寄存器命令会根据上电识别到的程序/配置版本，自动选择 0.x 旧版或 1.x 新版寄存器表：
+寄存器命令只做通用协议收发和解析，不在上位机保存“寄存器地址对应参数名/类型”的完整表：
 `reg_read` 使用 `CAN_CMD_REG_READ=0x17`，`reg_write` 使用
 `CAN_CMD_REG_WRITE=0x18`，`reg_save` 使用 `CAN_CMD_REG_SAVE=0x19`，
 `reg_info` 使用 `CAN_CMD_REG_INFO=0x1A`。寄存器地址范围是 `0x00..0xFF`。
 `reg_read` 请求 `data[0..3]=address`；`reg_write` 请求
 `data[0..3]=address | (value_type << 8)`、`data[4..7]=value_raw`。
-`reg_write` 会根据寄存器地址自动填充 `value_type`，回复会解析
-`status`、`value_type` 和 value；`value_type` 使用 `bit8..10`，
-目前 `0=int`、`1=bool`、`2=float`、`3=uint32`、`4=version`。
+`reg_write` 的 `value_type` 由用户通过命令参数指定，电机端负责校验地址和类型是否匹配；
+如果不匹配，回复 `status=5(TYPE_MISMATCH)`。回复会解析 `status`、`value_type` 和 value；
+`value_type` 使用 `bit8..10`，目前 `0=int`、`1=bool`、`2=float`、`3=uint32`、`4=version`。
 `reg_info` 回复的 `value_raw` 低 16 位是寄存器总数，高 16 位是可写数量。
-如果某台电机尚未识别到版本信息，寄存器命令会拒绝向该电机发送，
-避免使用错误寄存器表误写配置。
+配置版本地址 `0x7C` 仍由上位机固定识别，用于上电后的版本扫描；如果没有版本回复，
+该电机按最老版本/无版本信息处理，但普通寄存器命令仍可发送，由电机端返回实际状态。
 
 常用寄存器示例：
 
 ```text
 reg_read 00 0x7c     # 读取配置版本
 reg_read 00 0x6d     # 读取 MIT AUX 轮询开关，0=旧版 NTC，1=AUX 轮询
-reg_write 00 0x6d 1  # 本次上电周期启用 MIT AUX 轮询回复
-reg_write 00 0x6d 0  # 切回旧版 NTC 回复
-reg_read 00 0x01     # 读取 motor_pole_pairs
-reg_write 00 0x01 10 # 写入 motor_pole_pairs
+reg_write 00 0x6d bool 1  # 本次上电周期启用 MIT AUX 轮询回复
+reg_write 00 0x6d bool 0  # 切回旧版 NTC 回复
+reg_read 00 0x01          # 读取 0x01，类型和值以电机回复为准
+reg_write 00 0x01 int 10  # 按 int 类型写入 0x01；类型是否正确由电机回复确认
 reg_info 00          # 读取寄存器数量信息
 reg_save 00          # 保存配置到电机 Flash
 ```
@@ -703,9 +703,8 @@ flash_all config/flash_plan_debug.yaml
 
 | 函数 | 位置 | 说明 |
 |---|---|---|
-| `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x6d mit_aux_enable` |
+| `console_read_motor_register` | `src/lib/debug.c` | `can_dbg` 前置读取 `0x6d` 的 MIT AUX 开关 |
 | `console_scan_online_versions` | `src/lib/control.c` | `power_on` 后读取在线电机版本，并缓存到运行时状态 |
-| `reg_config_meta_for_motor` | `src/lib/runtime.c` | 根据电机版本选择 0.x/1.x 寄存器名称和 `value_type` |
 | `reg_value_type_from_wire` | `src/lib/runtime.c` | 从 `reply_header` 解析 `value_type` |
 | `reg_request_header` | `src/lib/runtime.c` | 生成写寄存器请求头：`address | value_type << 8` |
 | `reg_reply_status` | `src/lib/runtime.c` | 从 `reply_header` 解析寄存器返回状态 |
@@ -713,4 +712,5 @@ flash_all config/flash_plan_debug.yaml
 | `print_register_value` | `src/lib/runtime.c` | 按 `value_type` 打印 int/bool/float/uint32/version |
 | `print_register_debug_frame` | `src/lib/runtime.c` | `reg_read/reg_write/reg_save/reg_info` 回复的主要解析和输出函数 |
 | `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save/reg_info` 对单台电机的实际发送函数 |
-| `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按寄存器类型转成 32 位 raw value |
+| `console_parse_register_type_arg` | `src/lib/control.c` | 解析用户输入的 `type`：int/bool/float/uint/version 或 0..4 |
+| `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按用户指定类型转成 32 位 raw value |
