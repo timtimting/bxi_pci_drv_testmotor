@@ -26,6 +26,7 @@ enum {
     MAITA_MIT_REPLY_BASE = 0x500u,
     MAITA_CMD_FUNC = 0x20u,
     MAITA_CMD_ZERO_CURRENT = 0x64u,
+    MAITA_CMD_RESET = 0x76u,
     MAITA_CMD_SHUTDOWN = 0x80u,
     MAITA_CMD_STOP = 0x81u,
     MAITA_CMD_TORQUE = 0xa1u,
@@ -163,6 +164,41 @@ static int maita_unpack_status_reply(const rx_can_frame *frame,
     reply->current_a = (float)iq * 0.01f;
     reply->speed_dps = (float)speed;
     reply->angle_deg = angle;
+    return 0;
+}
+
+static int maita_unpack_zero_reply(const rx_can_frame *frame,
+                                   unsigned int id,
+                                   int32_t *encoder_offset)
+{
+    uint32_t raw;
+
+    if (frame == NULL || encoder_offset == NULL || frame->len < 8u ||
+        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->data[0] != MAITA_CMD_ZERO_CURRENT) {
+        return -1;
+    }
+    raw = (uint32_t)frame->data[4] |
+          ((uint32_t)frame->data[5] << 8) |
+          ((uint32_t)frame->data[6] << 16) |
+          ((uint32_t)frame->data[7] << 24);
+    *encoder_offset = (int32_t)raw;
+    return 0;
+}
+
+static int maita_unpack_version_reply(const rx_can_frame *frame,
+                                      unsigned int id,
+                                      uint32_t *version_date)
+{
+    if (frame == NULL || version_date == NULL || frame->len < 8u ||
+        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->data[0] != MAITA_CMD_SW_VERSION) {
+        return -1;
+    }
+    *version_date = (uint32_t)frame->data[4] |
+                    ((uint32_t)frame->data[5] << 8) |
+                    ((uint32_t)frame->data[6] << 16) |
+                    ((uint32_t)frame->data[7] << 24);
     return 0;
 }
 
@@ -305,6 +341,7 @@ static int maita_send_command_wait(flash_state *state,
     bool old_input;
     rx_can_frame frame;
     maita_reply reply;
+    bool parsed = false;
     int ret = -1;
 
     if (console_require_power(state) != 0) {
@@ -325,9 +362,32 @@ static int maita_send_command_wait(flash_state *state,
         printf("%s: done success=0 failed=1\n", name);
         goto out;
     }
-    if (maita_unpack_status_reply(&frame, id, expected_cmd, &reply) == 0) {
+    if (expected_cmd == MAITA_CMD_ZERO_CURRENT) {
+        int32_t encoder_offset;
+
+        if (maita_unpack_zero_reply(&frame, id, &encoder_offset) == 0) {
+            printf("[maita%02u]: encoder_offset=%d raw=0x%08x note=reset_required\n",
+                   id, encoder_offset, (uint32_t)encoder_offset);
+            parsed = true;
+        }
+    } else if (expected_cmd == MAITA_CMD_SW_VERSION) {
+        uint32_t version_date;
+
+        if (maita_unpack_version_reply(&frame, id, &version_date) == 0) {
+            printf("[maita%02u]: version_date=%08u raw=0x%08x\n",
+                   id, version_date, version_date);
+            parsed = true;
+        }
+    } else if (maita_unpack_status_reply(&frame, id, expected_cmd, &reply) == 0) {
         printf("[maita%02u]: temp=%dC iq=%.2fA speed=%.0fdps angle=%ddeg\n",
                id, reply.temperature_c, reply.current_a, reply.speed_dps, reply.angle_deg);
+        parsed = true;
+    }
+    if (!parsed) {
+        printf("[maita%02u]: failed reason=parse_failed expected_cmd=0x%02x\n",
+               id, expected_cmd);
+        printf("%s: done success=0 failed=1\n", name);
+        goto out;
     }
     printf("%s: done success=1 failed=0\n", name);
     ret = 0;
@@ -619,4 +679,63 @@ static int console_maita_zero(flash_state *state, int argc, char **argv)
     }
     return maita_send_command_wait(state, "maita_zero", bus, id, data, timeout_ms,
                                    MAITA_CMD_ZERO_CURRENT);
+}
+
+static int console_maita_reset(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int wait_ms = 1000u;
+    uint8_t data[8] = {MAITA_CMD_RESET, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    bool old_monitor;
+    bool old_input;
+    int ret = -1;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 4 ||
+        (argc == 4 && parse_uint_arg(argv[3], &wait_ms) != 0)) {
+        printf("%s: maita_reset <bus> <id> [wait_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    frame_ring_clear(&state->frames);
+    printf("maita_reset: start bus=%u id=%u wait_ms=%u\n", bus, id, wait_ms);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, data) != 0) {
+        printf("maita_reset: done success=0 failed=1\n");
+        goto out;
+    }
+    console_quiet_sleep_ms(wait_ms);
+    printf("[maita%02u]: reset sent note=no_reply_expected\n", id);
+    printf("maita_reset: done success=1 failed=0\n");
+    ret = 0;
+out:
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return ret;
+}
+
+static int console_maita_version(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int timeout_ms = 1000u;
+    uint8_t data[8] = {MAITA_CMD_SW_VERSION, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 4 ||
+        (argc == 4 && parse_uint_arg(argv[3], &timeout_ms) != 0)) {
+        printf("%s: maita_version <bus> <id> [timeout_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    return maita_send_command_wait(state, "maita_version", bus, id, data, timeout_ms,
+                                   MAITA_CMD_SW_VERSION);
 }
