@@ -22,6 +22,7 @@ enum {
     MAITA_CAN_ID_MAX = 32u,
     MAITA_SEND_BASE = 0x140u,
     MAITA_REPLY_BASE = 0x240u,
+    MAITA_BROADCAST_ID = 0x280u,
     MAITA_MIT_BASE = 0x400u,
     MAITA_MIT_REPLY_BASE = 0x500u,
     MAITA_CMD_FUNC = 0x20u,
@@ -324,6 +325,28 @@ static int maita_parse_bus_id(flash_state *state,
         printf("%s: <bus> <id1-32>\n", console_text(state, "用法", "usage"));
         return -1;
     }
+    return 0;
+}
+
+static int maita_parse_bus(flash_state *state, const char *arg, unsigned int *bus)
+{
+    if (parse_uint_arg(arg, bus) != 0 || *bus >= CANFD_DEVICE_NUM) {
+        printf("%s: <bus0-%u>\n",
+               console_text(state, "用法", "usage"),
+               (unsigned int)CANFD_DEVICE_NUM - 1u);
+        return -1;
+    }
+    return 0;
+}
+
+static int maita_parse_byte(const char *arg, uint8_t *value)
+{
+    unsigned int parsed;
+
+    if (parse_uint_arg(arg, &parsed) != 0 || parsed > 0xffu) {
+        return -1;
+    }
+    *value = (uint8_t)parsed;
     return 0;
 }
 
@@ -1066,6 +1089,90 @@ static int console_maita_temp(flash_state *state, int argc, char **argv)
     printf("[maita%02u]: temp=%dC voltage=%.1fV brake=%s error=0x%04x\n",
            id, temperature_c, voltage_v, brake_released ? "release" : "lock", error);
     printf("maita_temp: done success=1 failed=0\n");
+    ret = 0;
+out:
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return ret;
+}
+
+static int console_maita_broadcast(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int wait_ms = 200u;
+    uint8_t data[8] = {0u};
+    bool old_monitor;
+    bool old_input;
+    uint64_t deadline;
+    unsigned int replies = 0u;
+    int ret = -1;
+    int i;
+
+    if (argc < 3 || argc > 11 ||
+        maita_parse_bus(state, argv[1], &bus) != 0 ||
+        maita_parse_byte(argv[2], &data[0]) != 0) {
+        printf("%s: maita_broadcast <bus> <cmd> [d1 d2 d3 d4 d5 d6 d7] [wait_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    for (i = 3; i < argc && i < 10; i++) {
+        if (maita_parse_byte(argv[i], &data[i - 2]) != 0) {
+            printf("%s: maita_broadcast <bus> <cmd> [d1 d2 d3 d4 d5 d6 d7] [wait_ms]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+    }
+    if (argc == 11 && parse_uint_arg(argv[10], &wait_ms) != 0) {
+        printf("%s: maita_broadcast <bus> <cmd> [d1 d2 d3 d4 d5 d6 d7] [wait_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    frame_ring_clear(&state->frames);
+    printf("maita_broadcast: start bus=%u can_id=0x%03x wait_ms=%u\n",
+           bus, MAITA_BROADCAST_ID, wait_ms);
+    if (maita_send_frame(state, bus, MAITA_BROADCAST_ID, data) != 0) {
+        printf("maita_broadcast: done sent=0 replies=0\n");
+        goto out;
+    }
+
+    deadline = time_us() + (uint64_t)wait_ms * 1000ULL;
+    while (!stop_requested && time_us() < deadline) {
+        rx_can_frame frame;
+        uint64_t now = time_us();
+        unsigned int step_ms = 20u;
+        unsigned int reply_id;
+
+        if (deadline > now) {
+            uint64_t remain_ms = (deadline - now) / 1000ULL;
+
+            if (remain_ms < step_ms) {
+                step_ms = (unsigned int)remain_ms + 1u;
+            }
+        }
+        if (!frame_ring_pop(&state->frames, &frame, step_ms)) {
+            continue;
+        }
+        if (frame.bus != bus ||
+            frame.can_id < MAITA_REPLY_BASE + MAITA_CAN_ID_MIN ||
+            frame.can_id > MAITA_REPLY_BASE + MAITA_CAN_ID_MAX) {
+            continue;
+        }
+        reply_id = frame.can_id - MAITA_REPLY_BASE;
+        printf("[maita%02u]: broadcast_rx can_id=0x%03x len=%u flags=0x%02x data:",
+               reply_id, frame.can_id, frame.len, frame.flags);
+        maita_print_data(frame.data, frame.len);
+        printf("\n");
+        replies++;
+    }
+    printf("maita_broadcast: done sent=1 replies=%u\n", replies);
     ret = 0;
 out:
     state->show_can_output = old_monitor;

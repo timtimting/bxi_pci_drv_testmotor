@@ -15,7 +15,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             maita_enable <bus> <id>    maita_disable <bus> <id>\n");
             printf("             maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>    maita_reset <bus> <id>\n");
             printf("             maita_version <bus> <id>    maita_pid <bus> <id> [index]    maita_accel <bus> <id> [index]\n");
-            printf("             maita_temp <bus> <id>\n");
+            printf("             maita_temp <bus> <id>    maita_broadcast <bus> <cmd> [d1..d7]\n");
             printf("             maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
             printf("  MIT控制：   mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
             printf("  退出：      quit | exit | q | qq\n");
@@ -27,7 +27,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                 maita_enable <bus> <id>    maita_disable <bus> <id>\n");
             printf("                 maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>    maita_reset <bus> <id>\n");
             printf("                 maita_version <bus> <id>    maita_pid <bus> <id> [index]    maita_accel <bus> <id> [index]\n");
-            printf("                 maita_temp <bus> <id>\n");
+            printf("                 maita_temp <bus> <id>    maita_broadcast <bus> <cmd> [d1..d7]\n");
             printf("                 maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
             printf("  MIT control:  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
             printf("  Exit:         quit | exit | q | qq\n");
@@ -65,6 +65,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      发送 0x42 读取加减速度；不填 index 时读取位置/速度规划加速度和减速度。\n");
         printf("  maita_temp <bus> <id> [timeout_ms]\n");
         printf("      发送 0x9A 读取电机温度、电压、抱闸状态和错误码。\n");
+        printf("  maita_broadcast <bus> <cmd> [d1 d2 d3 d4 d5 d6 d7] [wait_ms]\n");
+        printf("      按手册第 148 页发送 CAN 多电机广播 0x280，数据内容和单电机命令一致；默认收集回复 200ms。\n");
         printf("  maita_pos <bus> <id> <pos_rad> [kp] [kd] [timeout_ms] [torque_max_nm]\n");
         printf("      使用 MIT 运动模式做位置闭环，默认 vel=0、torque=0、kp=20、kd=1。\n");
         printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
@@ -106,6 +108,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Send 0x42 to read acceleration values; without index reads position/speed accel/decel.\n");
     printf("  maita_temp <bus> <id> [timeout_ms]\n");
     printf("      Send 0x9A to read motor temperature, voltage, brake state and error flags.\n");
+    printf("  maita_broadcast <bus> <cmd> [d1 d2 d3 d4 d5 d6 d7] [wait_ms]\n");
+    printf("      Send CAN multi-motor broadcast 0x280 as documented on page 148; default reply collection is 200ms.\n");
     printf("  maita_pos <bus> <id> <pos_rad> [kp] [kd] [timeout_ms] [torque_max_nm]\n");
     printf("      Run MIT motion-mode position control; defaults: vel=0, torque=0, kp=20, kd=1.\n");
     printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
