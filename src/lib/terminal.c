@@ -100,6 +100,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_maita_pid(state, argc, argv);
     } else if (strcmp(cmd, "maita_accel") == 0) {
         return console_maita_accel(state, argc, argv);
+    } else if (strcmp(cmd, "maita_temp") == 0) {
+        return console_maita_temp(state, argc, argv);
     } else if (strcmp(cmd, "maita_pos") == 0) {
         return console_maita_pos(state, argc, argv);
     } else if (strcmp(cmd, "motor_probe") == 0) {
