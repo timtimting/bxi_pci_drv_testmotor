@@ -4795,7 +4795,8 @@ static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_le
     for (i = 0u; i < match_count; i++) {
         printf("%s%s", matches[i], (i + 1u == match_count) ? "\n" : "  ");
     }
-    redraw_prompt_cursor(prompt, line, *len, *cursor);
+    printf("%s%s", prompt, line);
+    fflush(stdout);
 }
 
 static int read_line_with_completion(const char *prompt, char *line, size_t max_len)
