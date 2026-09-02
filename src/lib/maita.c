@@ -25,6 +25,8 @@ enum {
     MAITA_MIT_BASE = 0x400u,
     MAITA_MIT_REPLY_BASE = 0x500u,
     MAITA_CMD_FUNC = 0x20u,
+    MAITA_CMD_PID_READ = 0x30u,
+    MAITA_CMD_ACCEL_READ = 0x42u,
     MAITA_CMD_ZERO_CURRENT = 0x64u,
     MAITA_CMD_RESET = 0x76u,
     MAITA_CMD_SHUTDOWN = 0x80u,
@@ -200,6 +202,86 @@ static int maita_unpack_version_reply(const rx_can_frame *frame,
                     ((uint32_t)frame->data[5] << 8) |
                     ((uint32_t)frame->data[6] << 16) |
                     ((uint32_t)frame->data[7] << 24);
+    return 0;
+}
+
+static const char *maita_pid_name(unsigned int index)
+{
+    switch (index) {
+    case 0x01u:
+        return "current_kp";
+    case 0x02u:
+        return "current_ki";
+    case 0x04u:
+        return "speed_kp";
+    case 0x05u:
+        return "speed_ki";
+    case 0x07u:
+        return "position_kp";
+    case 0x08u:
+        return "position_ki";
+    case 0x09u:
+        return "position_kd";
+    default:
+        return "unknown";
+    }
+}
+
+static int maita_unpack_pid_reply(const rx_can_frame *frame,
+                                  unsigned int id,
+                                  unsigned int index,
+                                  float *value)
+{
+    uint32_t raw;
+
+    if (frame == NULL || value == NULL || frame->len < 8u ||
+        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->data[0] != MAITA_CMD_PID_READ ||
+        frame->data[1] != (uint8_t)index) {
+        return -1;
+    }
+    raw = (uint32_t)frame->data[4] |
+          ((uint32_t)frame->data[5] << 8) |
+          ((uint32_t)frame->data[6] << 16) |
+          ((uint32_t)frame->data[7] << 24);
+    memcpy(value, &raw, sizeof(*value));
+    return 0;
+}
+
+static const char *maita_accel_name(unsigned int index)
+{
+    switch (index) {
+    case 0x00u:
+        return "pos_accel";
+    case 0x01u:
+        return "pos_decel";
+    case 0x02u:
+        return "speed_accel";
+    case 0x03u:
+        return "speed_decel";
+    default:
+        return "unknown";
+    }
+}
+
+static int maita_unpack_accel_reply(const rx_can_frame *frame,
+                                    unsigned int id,
+                                    unsigned int index,
+                                    int32_t *value)
+{
+    uint32_t raw;
+
+    if (frame == NULL || value == NULL || frame->len < 8u ||
+        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->data[0] != MAITA_CMD_ACCEL_READ ||
+        frame->data[1] != (uint8_t)index) {
+        return -1;
+    }
+    raw = (uint32_t)frame->data[4] |
+          ((uint32_t)frame->data[5] << 8) |
+          ((uint32_t)frame->data[6] << 16) |
+          ((uint32_t)frame->data[7] << 24);
+    *value = (int32_t)raw;
     return 0;
 }
 
@@ -739,4 +821,172 @@ static int console_maita_version(flash_state *state, int argc, char **argv)
     }
     return maita_send_command_wait(state, "maita_version", bus, id, data, timeout_ms,
                                    MAITA_CMD_SW_VERSION);
+}
+
+static int maita_read_one_pid(flash_state *state,
+                              unsigned int bus,
+                              unsigned int id,
+                              unsigned int index,
+                              unsigned int timeout_ms)
+{
+    uint8_t data[8] = {MAITA_CMD_PID_READ, (uint8_t)index, 0u, 0u, 0u, 0u, 0u, 0u};
+    rx_can_frame frame;
+    float value;
+
+    frame_ring_clear(&state->frames);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, data) != 0) {
+        printf("[maita%02u]: pid index=0x%02x %s failed reason=send\n",
+               id, index, maita_pid_name(index));
+        return -1;
+    }
+    if (maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0) {
+        printf("[maita%02u]: pid index=0x%02x %s failed reason=no_reply timeout_ms=%u\n",
+               id, index, maita_pid_name(index), timeout_ms);
+        return -1;
+    }
+    if (maita_unpack_pid_reply(&frame, id, index, &value) != 0) {
+        printf("[maita%02u]: pid index=0x%02x %s failed reason=parse_failed\n",
+               id, index, maita_pid_name(index));
+        return -1;
+    }
+    printf("[maita%02u]: pid index=0x%02x %-11s value=%g\n",
+           id, index, maita_pid_name(index), value);
+    return 0;
+}
+
+static int console_maita_pid(flash_state *state, int argc, char **argv)
+{
+    static const unsigned int all_indices[] = {
+        0x01u, 0x02u, 0x04u, 0x05u, 0x07u, 0x08u, 0x09u,
+    };
+    unsigned int bus;
+    unsigned int id;
+    unsigned int index = 0u;
+    unsigned int timeout_ms = 1000u;
+    bool old_monitor;
+    bool old_input;
+    size_t i;
+    unsigned int success = 0u;
+    unsigned int failed = 0u;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 5 ||
+        (argc >= 4 && parse_uint_arg(argv[3], &index) != 0) ||
+        (argc == 5 && parse_uint_arg(argv[4], &timeout_ms) != 0)) {
+        printf("%s: maita_pid <bus> <id> [index] [timeout_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    printf("maita_pid: start bus=%u id=%u\n", bus, id);
+    if (argc >= 4) {
+        if (maita_read_one_pid(state, bus, id, index, timeout_ms) == 0) {
+            success++;
+        } else {
+            failed++;
+        }
+    } else {
+        for (i = 0u; i < sizeof(all_indices) / sizeof(all_indices[0]); i++) {
+            if (maita_read_one_pid(state, bus, id, all_indices[i], timeout_ms) == 0) {
+                success++;
+            } else {
+                failed++;
+            }
+        }
+    }
+    printf("maita_pid: done success=%u failed=%u\n", success, failed);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return failed == 0u ? 0 : -1;
+}
+
+static int maita_read_one_accel(flash_state *state,
+                                unsigned int bus,
+                                unsigned int id,
+                                unsigned int index,
+                                unsigned int timeout_ms)
+{
+    uint8_t data[8] = {MAITA_CMD_ACCEL_READ, (uint8_t)index, 0u, 0u, 0u, 0u, 0u, 0u};
+    rx_can_frame frame;
+    int32_t value;
+
+    frame_ring_clear(&state->frames);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, data) != 0) {
+        printf("[maita%02u]: accel index=0x%02x %s failed reason=send\n",
+               id, index, maita_accel_name(index));
+        return -1;
+    }
+    if (maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0) {
+        printf("[maita%02u]: accel index=0x%02x %s failed reason=no_reply timeout_ms=%u\n",
+               id, index, maita_accel_name(index), timeout_ms);
+        return -1;
+    }
+    if (maita_unpack_accel_reply(&frame, id, index, &value) != 0) {
+        printf("[maita%02u]: accel index=0x%02x %s failed reason=parse_failed\n",
+               id, index, maita_accel_name(index));
+        return -1;
+    }
+    printf("[maita%02u]: accel index=0x%02x %-11s value=%d dps/s\n",
+           id, index, maita_accel_name(index), value);
+    return 0;
+}
+
+static int console_maita_accel(flash_state *state, int argc, char **argv)
+{
+    static const unsigned int all_indices[] = {
+        0x00u, 0x01u, 0x02u, 0x03u,
+    };
+    unsigned int bus;
+    unsigned int id;
+    unsigned int index = 0u;
+    unsigned int timeout_ms = 1000u;
+    bool old_monitor;
+    bool old_input;
+    size_t i;
+    unsigned int success = 0u;
+    unsigned int failed = 0u;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 5 ||
+        (argc >= 4 && parse_uint_arg(argv[3], &index) != 0) ||
+        (argc == 5 && parse_uint_arg(argv[4], &timeout_ms) != 0)) {
+        printf("%s: maita_accel <bus> <id> [index] [timeout_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    printf("maita_accel: start bus=%u id=%u\n", bus, id);
+    if (argc >= 4) {
+        if (maita_read_one_accel(state, bus, id, index, timeout_ms) == 0) {
+            success++;
+        } else {
+            failed++;
+        }
+    } else {
+        for (i = 0u; i < sizeof(all_indices) / sizeof(all_indices[0]); i++) {
+            if (maita_read_one_accel(state, bus, id, all_indices[i], timeout_ms) == 0) {
+                success++;
+            } else {
+                failed++;
+            }
+        }
+    }
+    printf("maita_accel: done success=%u failed=%u\n", success, failed);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return failed == 0u ? 0 : -1;
 }

@@ -96,6 +96,10 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_maita_reset(state, argc, argv);
     } else if (strcmp(cmd, "maita_version") == 0) {
         return console_maita_version(state, argc, argv);
+    } else if (strcmp(cmd, "maita_pid") == 0) {
+        return console_maita_pid(state, argc, argv);
+    } else if (strcmp(cmd, "maita_accel") == 0) {
+        return console_maita_accel(state, argc, argv);
     } else if (strcmp(cmd, "maita_pos") == 0) {
         return console_maita_pos(state, argc, argv);
     } else if (strcmp(cmd, "motor_probe") == 0) {
