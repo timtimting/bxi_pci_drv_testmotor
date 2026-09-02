@@ -40,7 +40,7 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off",
     "mit_set", "mit_stream", "maita_mit",
     "maita_power_on", "maita_power_off", "maita_info", "maita_enable", "maita_disable",
-    "maita_torque", "maita_zero", "maita_reset", "maita_version", "maita_pid",
+    "maita_torque", "maita_zero", "maita_zero_reset", "maita_reset", "maita_version", "maita_pid",
     "maita_accel", "maita_temp", "maita_state", "maita_broadcast", "maita_pos",
     "can_status",
     "language", "lang", "quit", "exit", "q", "qq",

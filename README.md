@@ -86,28 +86,40 @@ IqRef = kp * (p_des - p_actual) + kd * (v_des - v_actual) + t_ff
 
 ```text
 1. 电机上电
-2. 发送失能命令
+2. 发送使能 / 保持命令
 3. 发送当前零位设置命令
 4. 发送系统复位命令
 5. 复位后重新读取位置，确认零位是否生效
 ```
 
-### 3.1 失能命令：0x80
+组合调试命令：
 
-置零前先失能，避免电机带力矩写零位。
+```text
+maita_zero_reset <bus> <id>
+```
+
+该命令内部依次发送：
+
+```text
+0x81 -> 0x64 -> 0x76
+```
+
+### 3.1 使能 / 保持命令：0x81
+
+置零前先进入 Stop/Hold 状态。
 
 发送：
 
 ```text
 CAN ID = 0x140 + id
-DATA   = 80 00 00 00 00 00 00 00
+DATA   = 81 00 00 00 00 00 00 00
 ```
 
 回复：
 
 ```text
 CAN ID = 0x240 + id
-DATA[0] = 0x80
+DATA[0] = 0x81
 DATA[1] = temperature，int8，单位 ℃
 DATA[2..3] = iq，int16，小端，单位 0.01A/LSB
 DATA[4..5] = speed，int16，小端，单位 dps

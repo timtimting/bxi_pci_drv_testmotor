@@ -998,6 +998,78 @@ static int console_maita_zero(flash_state *state, int argc, char **argv)
                                    MAITA_CMD_ZERO_CURRENT);
 }
 
+static int console_maita_zero_reset(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int timeout_ms = 1000u;
+    unsigned int reset_wait_ms = 1000u;
+    uint8_t enable_data[8] = {MAITA_CMD_STOP, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    uint8_t zero_data[8] = {MAITA_CMD_ZERO_CURRENT, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    uint8_t reset_data[8] = {MAITA_CMD_RESET, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    rx_can_frame frame;
+    maita_reply reply;
+    int32_t encoder_offset;
+    bool old_monitor;
+    bool old_input;
+    int ret = -1;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 5 ||
+        (argc >= 4 && parse_uint_arg(argv[3], &timeout_ms) != 0) ||
+        (argc == 5 && parse_uint_arg(argv[4], &reset_wait_ms) != 0)) {
+        printf("%s: maita_zero_reset <bus> <id> [timeout_ms] [reset_wait_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    printf("maita_zero_reset: start bus=%u id=%u\n", bus, id);
+
+    frame_ring_clear(&state->frames);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, enable_data) != 0 ||
+        maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0 ||
+        maita_unpack_status_reply(&frame, id, MAITA_CMD_STOP, &reply) != 0) {
+        printf("[maita%02u]: enable failed timeout_ms=%u\n", id, timeout_ms);
+        printf("maita_zero_reset: done success=0 failed=1\n");
+        goto out;
+    }
+    printf("[maita%02u]: enable ok temp=%dC iq=%.2fA speed=%.0fdps angle=%ddeg\n",
+           id, reply.temperature_c, reply.current_a, reply.speed_dps, reply.angle_deg);
+
+    frame_ring_clear(&state->frames);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, zero_data) != 0 ||
+        maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0 ||
+        maita_unpack_zero_reply(&frame, id, &encoder_offset) != 0) {
+        printf("[maita%02u]: zero failed timeout_ms=%u\n", id, timeout_ms);
+        printf("maita_zero_reset: done success=0 failed=1\n");
+        goto out;
+    }
+    printf("[maita%02u]: zero ok encoder_offset=%d raw=0x%08x\n",
+           id, encoder_offset, (uint32_t)encoder_offset);
+
+    frame_ring_clear(&state->frames);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, reset_data) != 0) {
+        printf("[maita%02u]: reset failed\n", id);
+        printf("maita_zero_reset: done success=0 failed=1\n");
+        goto out;
+    }
+    console_quiet_sleep_ms(reset_wait_ms);
+    printf("[maita%02u]: reset sent wait_ms=%u\n", id, reset_wait_ms);
+    printf("maita_zero_reset: done success=1 failed=0\n");
+    ret = 0;
+out:
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return ret;
+}
+
 static int console_maita_reset(flash_state *state, int argc, char **argv)
 {
     unsigned int bus;

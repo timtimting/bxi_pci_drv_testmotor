@@ -92,6 +92,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_maita_torque(state, argc, argv);
     } else if (strcmp(cmd, "maita_zero") == 0) {
         return console_maita_zero(state, argc, argv);
+    } else if (strcmp(cmd, "maita_zero_reset") == 0) {
+        return console_maita_zero_reset(state, argc, argv);
     } else if (strcmp(cmd, "maita_reset") == 0) {
         return console_maita_reset(state, argc, argv);
     } else if (strcmp(cmd, "maita_version") == 0) {
