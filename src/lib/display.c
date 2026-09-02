@@ -17,7 +17,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             maita_version <bus> <id>    maita_pid <bus> <id> [index]    maita_accel <bus> <id> [index]\n");
             printf("             maita_temp <bus> <id>    maita_state <bus> <id>    maita_broadcast <bus> <cmd> [d1..d7]\n");
             printf("             maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
-            printf("  MIT控制：   mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
+            printf("  MIT控制：   mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n");
+            printf("             mit_stream <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> <hz> <duration_ms>\n\n");
             printf("  退出：      quit | exit | q | qq\n");
         } else {
             printf("Unified motor console commands (details: help all or -h all):\n");
@@ -29,7 +30,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                 maita_version <bus> <id>    maita_pid <bus> <id> [index]    maita_accel <bus> <id> [index]\n");
             printf("                 maita_temp <bus> <id>    maita_state <bus> <id>    maita_broadcast <bus> <cmd> [d1..d7]\n");
             printf("                 maita_pos <bus> <id> <pos_rad> [kp] [kd]\n\n");
-            printf("  MIT control:  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n\n");
+            printf("  MIT control:  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd>\n");
+            printf("                mit_stream <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> <hz> <duration_ms>\n\n");
             printf("  Exit:         quit | exit | q | qq\n");
         }
         return;
@@ -73,6 +75,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      使用 MIT 运动模式做位置闭环，默认 vel=0、torque=0、kp=20、kd=1。\n");
         printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
         printf("      发送一帧 0x400+ID 脉塔运动模式控制帧，并解析 0x500+ID 回复。\n");
+        printf("  mit_stream <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> <hz> <duration_ms> [torque_max_nm]\n");
+        printf("      按固定频率连续发送 MIT 帧，用于排查底层 MIT；默认使用原来的 ±18Nm 力矩通信量程。\n");
         printf("  can_status [reset]\n");
         printf("      显示各 Bus 的收发、发送失败、回复匹配、超时和估算丢包率；\n");
         printf("      reset 清零软件统计。公开驱动接口不提供硬件 TEC/REC。\n");
@@ -118,6 +122,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Run MIT motion-mode position control; defaults: vel=0, torque=0, kp=20, kd=1.\n");
     printf("  mit_set|maita_mit <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> [timeout_ms] [torque_max_nm]\n");
     printf("      Send one 0x400+ID Maita motion-mode frame and decode the 0x500+ID reply.\n");
+    printf("  mit_stream <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> <hz> <duration_ms> [torque_max_nm]\n");
+    printf("      Stream MIT frames at a fixed rate for firmware MIT tests; default torque range is original ±18Nm.\n");
     printf("  can_status [reset]\n");
     printf("      Show per-bus TX/RX, TX failures, expected replies and reply timeout rate.\n");
     printf("      These are software statistics; the public driver API exposes no TEC/REC.\n");

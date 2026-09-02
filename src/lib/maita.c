@@ -46,6 +46,10 @@ enum {
 #define MAITA_KP_MAX (500.0f)
 /* 供应商确认脉塔 MIT kd 通信范围为 0~5；手册 V4.4 修订记录写 0~50，与实际不一致。 */
 #define MAITA_KD_MAX (5.0f)
+/* x12 电机供应商确认 MIT 力矩通信范围为 ±320。 */
+#define MAITA_X12_TORQUE_MAX_NM (320.0f)
+/* mit_stream 用于排查底层 MIT，默认保留原来的力矩通信量程。 */
+#define MAITA_ORIGINAL_TORQUE_MAX_NM (18.0f)
 
 static float maita_clamp_float(float value, float min_value, float max_value)
 {
@@ -405,10 +409,25 @@ static void maita_print_rx(const rx_can_frame *frame)
     printf("\n");
 }
 
+static int maita_send_frame_logged(flash_state *state,
+                                   unsigned int bus,
+                                   unsigned int can_id,
+                                   const uint8_t data[8],
+                                   bool print_tx);
+
 static int maita_send_frame(flash_state *state,
                             unsigned int bus,
                             unsigned int can_id,
                             const uint8_t data[8])
+{
+    return maita_send_frame_logged(state, bus, can_id, data, true);
+}
+
+static int maita_send_frame_logged(flash_state *state,
+                                   unsigned int bus,
+                                   unsigned int can_id,
+                                   const uint8_t data[8],
+                                   bool print_tx)
 {
     unsigned int old_bus = state->bus;
     bool old_canfd = state->debug_use_canfd;
@@ -420,7 +439,9 @@ static int maita_send_frame(flash_state *state,
     state->debug_use_canfd = false;
     state->show_motor_input = false;
     state->quiet_tx = true;
-    maita_print_tx(bus, can_id, data, 8u);
+    if (print_tx) {
+        maita_print_tx(bus, can_id, data, 8u);
+    }
     ret = send_debug_packet(state, can_id, data, 8u);
     state->quiet_tx = old_quiet;
     state->show_motor_input = old_input;
@@ -604,7 +625,7 @@ static int console_maita_info(flash_state *state, int argc, char **argv)
     unsigned int bus;
     unsigned int id;
     unsigned int timeout_ms = 1000u;
-    float torque_max_nm = 18.0f;
+    float torque_max_nm = MAITA_X12_TORQUE_MAX_NM;
     uint8_t data[8];
     rx_can_frame frame;
     maita_reply reply;
@@ -705,6 +726,144 @@ out:
     return ret;
 }
 
+static void maita_collect_mit_replies(flash_state *state,
+                                      unsigned int bus,
+                                      unsigned int id,
+                                      uint64_t until_us,
+                                      float torque_max_nm,
+                                      maita_reply *last_reply,
+                                      bool *has_reply,
+                                      unsigned int *reply_count)
+{
+    while (!stop_requested && time_us() < until_us) {
+        rx_can_frame frame;
+        uint64_t now = time_us();
+        unsigned int step_ms = 2u;
+
+        if (until_us > now) {
+            uint64_t remain_ms = (until_us - now) / 1000ULL;
+
+            if (remain_ms < step_ms) {
+                step_ms = (unsigned int)remain_ms + 1u;
+            }
+        }
+        if (!frame_ring_pop(&state->frames, &frame, step_ms)) {
+            continue;
+        }
+        if (frame.bus != bus || frame.can_id != MAITA_MIT_REPLY_BASE + id) {
+            continue;
+        }
+        (*reply_count)++;
+        if (maita_unpack_mit_reply(&frame, id, torque_max_nm, last_reply) == 0) {
+            *has_reply = true;
+        }
+    }
+}
+
+static int console_maita_mit_stream(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int hz;
+    unsigned int duration_ms;
+    float pos;
+    float torque;
+    float vel;
+    float kp;
+    float kd;
+    float torque_max_nm = MAITA_ORIGINAL_TORQUE_MAX_NM;
+    uint8_t data[8];
+    bool old_monitor;
+    bool old_input;
+    uint64_t end_us;
+    uint64_t next_send_us;
+    uint64_t period_us;
+    unsigned int sent = 0u;
+    unsigned int send_failed = 0u;
+    unsigned int reply_count = 0u;
+    bool has_reply = false;
+    maita_reply last_reply;
+    int ret = -1;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc < 10 || argc > 11 ||
+        parse_float_arg(argv[3], &pos) != 0 ||
+        parse_float_arg(argv[4], &torque) != 0 ||
+        parse_float_arg(argv[5], &vel) != 0 ||
+        parse_float_arg(argv[6], &kp) != 0 ||
+        parse_float_arg(argv[7], &kd) != 0 ||
+        parse_uint_arg(argv[8], &hz) != 0 ||
+        parse_uint_arg(argv[9], &duration_ms) != 0 ||
+        (argc == 11 && parse_float_arg(argv[10], &torque_max_nm) != 0)) {
+        printf("%s: mit_stream <bus> <id> <pos_rad> <torque_Nm> <vel_rad_s> <kp> <kd> <hz> <duration_ms> [torque_max_nm]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (!isfinite(pos) || !isfinite(torque) || !isfinite(vel) ||
+        !isfinite(kp) || !isfinite(kd) || !isfinite(torque_max_nm) ||
+        torque_max_nm <= 0.0f || hz == 0u || hz > 1000u ||
+        duration_ms == 0u || duration_ms > 600000u ||
+        torque < -torque_max_nm || torque > torque_max_nm) {
+        printf("[maita%02u]: failed reason=out_of_range hz[1,1000] duration_ms[1,600000] torque[-%.3f,%.3f]\n",
+               id, torque_max_nm, torque_max_nm);
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    memset(&last_reply, 0, sizeof(last_reply));
+    maita_pack_mit(data, pos, vel, kp, kd, torque, torque_max_nm);
+    frame_ring_clear(&state->frames);
+
+    printf("mit_stream: start bus=%u id=%u hz=%u duration_ms=%u torque_max=%.3fNm\n",
+           bus, id, hz, duration_ms, torque_max_nm);
+    printf("[maita%02u]: set pos=%.5frad vel=%.5frad/s torque=%.5fNm kp=%.3f kd=%.3f\n",
+           id, pos, vel, torque, kp, kd);
+    maita_print_tx(bus, MAITA_MIT_BASE + id, data, 8u);
+
+    period_us = 1000000ULL / (uint64_t)hz;
+    if (period_us == 0ULL) {
+        period_us = 1ULL;
+    }
+    next_send_us = time_us();
+    end_us = next_send_us + (uint64_t)duration_ms * 1000ULL;
+    while (!stop_requested && time_us() < end_us) {
+        uint64_t now = time_us();
+
+        if (now < next_send_us) {
+            maita_collect_mit_replies(state, bus, id, next_send_us, torque_max_nm,
+                                      &last_reply, &has_reply, &reply_count);
+            continue;
+        }
+        if (maita_send_frame_logged(state, bus, MAITA_MIT_BASE + id, data, false) != 0) {
+            send_failed++;
+        } else {
+            sent++;
+        }
+        next_send_us += period_us;
+    }
+    maita_collect_mit_replies(state, bus, id, time_us() + 50000ULL, torque_max_nm,
+                              &last_reply, &has_reply, &reply_count);
+    if (has_reply) {
+        printf("[maita%02u]: last pos=%.5frad vel=%.5frad/s torque=%.5fNm replies=%u\n",
+               id, last_reply.position_rad, last_reply.velocity_rad_s,
+               last_reply.torque_nm, reply_count);
+    } else {
+        printf("[maita%02u]: failed reason=no_mit_reply replies=%u\n", id, reply_count);
+    }
+    printf("mit_stream: done sent=%u send_failed=%u replies=%u\n",
+           sent, send_failed, reply_count);
+    ret = send_failed == 0u && has_reply ? 0 : -1;
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return ret;
+}
+
 static int console_maita_mit_set(flash_state *state, int argc, char **argv)
 {
     unsigned int bus;
@@ -715,7 +874,7 @@ static int console_maita_mit_set(flash_state *state, int argc, char **argv)
     float vel;
     float kp;
     float kd;
-    float torque_max_nm = 18.0f;
+    float torque_max_nm = MAITA_X12_TORQUE_MAX_NM;
 
     if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
         argc < 8 || argc > 10 ||
@@ -743,7 +902,7 @@ static int console_maita_pos(flash_state *state, int argc, char **argv)
     float pos;
     float kp = 20.0f;
     float kd = 1.0f;
-    float torque_max_nm = 18.0f;
+    float torque_max_nm = MAITA_X12_TORQUE_MAX_NM;
 
     if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
         argc < 4 || argc > 8 ||

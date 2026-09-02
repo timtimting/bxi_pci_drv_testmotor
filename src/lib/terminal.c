@@ -131,6 +131,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                strcmp(cmd, "maita_mit") == 0 ||
                strcmp(cmd, "motor_set") == 0) {
         return console_maita_mit_set(state, argc, argv);
+    } else if (strcmp(cmd, "mit_stream") == 0) {
+        return console_maita_mit_stream(state, argc, argv);
     } else if (strcmp(cmd, "reg_read") == 0) {
         printf("reg_read disabled on maita_motor branch\n");
         return -1;
