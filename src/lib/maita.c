@@ -39,7 +39,8 @@ enum {
 #define MAITA_VEL_MIN_RAD_S (-45.0f)
 #define MAITA_VEL_MAX_RAD_S (45.0f)
 #define MAITA_KP_MAX (500.0f)
-#define MAITA_KD_MAX (50.0f)
+/* 供应商确认脉塔 MIT kd 通信范围为 0~5；手册 V4.4 修订记录写 0~50，与实际不一致。 */
+#define MAITA_KD_MAX (5.0f)
 
 static float maita_clamp_float(float value, float min_value, float max_value)
 {
