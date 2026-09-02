@@ -29,6 +29,7 @@ enum {
     MAITA_CMD_PID_READ = 0x30u,
     MAITA_CMD_ACCEL_READ = 0x42u,
     MAITA_CMD_ZERO_CURRENT = 0x64u,
+    MAITA_CMD_RUN_MODE = 0x70u,
     MAITA_CMD_RESET = 0x76u,
     MAITA_CMD_SHUTDOWN = 0x80u,
     MAITA_CMD_STOP = 0x81u,
@@ -307,6 +308,33 @@ static int maita_unpack_temp_reply(const rx_can_frame *frame,
     *brake_released = frame->data[3] != 0u ? 1u : 0u;
     *voltage_v = (float)voltage_raw * 0.1f;
     *error = (uint16_t)frame->data[6] | ((uint16_t)frame->data[7] << 8);
+    return 0;
+}
+
+static const char *maita_run_mode_name(unsigned int mode)
+{
+    switch (mode) {
+    case 0x01u:
+        return "current_loop";
+    case 0x02u:
+        return "speed_loop";
+    case 0x03u:
+        return "position_loop";
+    default:
+        return "unknown";
+    }
+}
+
+static int maita_unpack_run_mode_reply(const rx_can_frame *frame,
+                                       unsigned int id,
+                                       unsigned int *mode)
+{
+    if (frame == NULL || mode == NULL || frame->len < 8u ||
+        frame->can_id != MAITA_REPLY_BASE + id ||
+        frame->data[0] != MAITA_CMD_RUN_MODE) {
+        return -1;
+    }
+    *mode = frame->data[7];
     return 0;
 }
 
@@ -1089,6 +1117,60 @@ static int console_maita_temp(flash_state *state, int argc, char **argv)
     printf("[maita%02u]: temp=%dC voltage=%.1fV brake=%s error=0x%04x\n",
            id, temperature_c, voltage_v, brake_released ? "release" : "lock", error);
     printf("maita_temp: done success=1 failed=0\n");
+    ret = 0;
+out:
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    return ret;
+}
+
+static int console_maita_state(flash_state *state, int argc, char **argv)
+{
+    unsigned int bus;
+    unsigned int id;
+    unsigned int timeout_ms = 1000u;
+    uint8_t data[8] = {MAITA_CMD_RUN_MODE, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    rx_can_frame frame;
+    bool old_monitor;
+    bool old_input;
+    unsigned int mode;
+    int ret = -1;
+
+    if (maita_parse_bus_id(state, argc, argv, &bus, &id) != 0 ||
+        argc > 4 ||
+        (argc == 4 && parse_uint_arg(argv[3], &timeout_ms) != 0)) {
+        printf("%s: maita_state <bus> <id> [timeout_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    frame_ring_clear(&state->frames);
+    printf("maita_state: start bus=%u id=%u\n", bus, id);
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, data) != 0) {
+        printf("maita_state: done success=0 failed=1\n");
+        goto out;
+    }
+    if (maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0) {
+        printf("[maita%02u]: state failed reason=no_reply timeout_ms=%u\n",
+               id, timeout_ms);
+        printf("maita_state: done success=0 failed=1\n");
+        goto out;
+    }
+    if (maita_unpack_run_mode_reply(&frame, id, &mode) != 0) {
+        printf("[maita%02u]: state failed reason=parse_failed\n", id);
+        printf("maita_state: done success=0 failed=1\n");
+        goto out;
+    }
+    printf("[maita%02u]: run_mode=0x%02x %s\n",
+           id, mode, maita_run_mode_name(mode));
+    printf("maita_state: done success=1 failed=0\n");
     ret = 0;
 out:
     state->show_can_output = old_monitor;
