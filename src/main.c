@@ -39,7 +39,7 @@ typedef struct
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
-    "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
+    "mit_enable_single", "mit_disable_single", "mit_set", "mit_sine", "stand_up",
     "reg_read", "reg_write", "reg_save", "reg_info",
     "flash_single", "flash_all", "flash_debug",
     "motor_dbg", "can_dbg",

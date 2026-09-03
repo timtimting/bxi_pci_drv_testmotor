@@ -15,7 +15,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
-            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("             mit_sine <index00> <amplitude> <center_pos> <freq_hz>    stand_up\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("             reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("             reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
@@ -32,7 +33,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("                mit_enable_all    mit_disable_all\n");
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
-            printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("                mit_sine <index00> <amplitude> <center_pos> <freq_hz>    stand_up\n\n");
             printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("                reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("                reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
@@ -71,6 +73,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      使能或失能指定电机。\n");
         printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
+        printf("  mit_sine <index00> <amplitude> <center_pos> <freq_hz> [duration_ms] [kp] [kd]\n");
+        printf("      给指定电机按正弦位置轨迹连续发送 MIT 帧，力矩为 0；默认 10s，5ms 周期。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
         printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
@@ -128,6 +132,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Send MIT enable/disable to one motor.\n");
     printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
     printf("      Send one MIT control frame. The selected motor must be enabled.\n");
+    printf("  mit_sine <index00> <amplitude> <center_pos> <freq_hz> [duration_ms] [kp] [kd]\n");
+    printf("      Stream a sine-position MIT trajectory to one enabled motor; torque is 0, default 10s, 5ms period.\n");
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");

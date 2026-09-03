@@ -754,6 +754,168 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
     }
 }
 
+static int console_mit_sine(flash_state *state, int argc, char **argv)
+{
+    static const float two_pi = 6.2831853071795864769f;
+    const unsigned int period_ms = 5u;
+    const unsigned int default_duration_ms = 10000u;
+    unsigned int index;
+    unsigned int duration_ms = default_duration_ms;
+    float amplitude;
+    float center;
+    float freq_hz;
+    float kp;
+    float kd;
+    float velocity_peak;
+    size_t slot;
+    const motor_map_entry *motor;
+    const bxi_motor_limits *limits;
+    unsigned int old_bus;
+    unsigned int old_id;
+    bool old_monitor;
+    bool old_input;
+    unsigned int before_rx;
+    uint64_t start_us;
+    uint64_t end_us;
+    uint64_t next_us;
+    uint64_t pending_before;
+    unsigned int sent = 0u;
+    unsigned int send_failed = 0u;
+    unsigned int replies;
+
+    if (argc < 5 || argc > 8 ||
+        console_parse_index_arg(argv[1], &index) != 0 ||
+        parse_float_arg(argv[2], &amplitude) != 0 ||
+        parse_float_arg(argv[3], &center) != 0 ||
+        parse_float_arg(argv[4], &freq_hz) != 0 ||
+        (argc >= 6 && parse_uint_arg(argv[5], &duration_ms) != 0)) {
+        printf("%s: mit_sine <index00> <amplitude> <center_pos> <freq_hz> [duration_ms] [kp] [kd]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+    motor = console_motor_by_index(state, index, &slot);
+    if (motor == NULL) {
+        printf("%s: %u\n", console_text(state,
+               "未知的电机序号", "unknown motor index"), index);
+        return -1;
+    }
+    console_home_gains_for_motor(state, motor, &kp, &kd);
+    if ((argc >= 7 && parse_float_arg(argv[6], &kp) != 0) ||
+        (argc == 8 && parse_float_arg(argv[7], &kd) != 0)) {
+        printf("%s: mit_sine <index00> <amplitude> <center_pos> <freq_hz> [duration_ms] [kp] [kd]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (!state->motors[slot].enabled) {
+        printf("mit_sine: start total=1 index=%02u bus=%u id=%u\n",
+               motor->index, motor->bus, motor->id);
+        printf("[motor%02u]: failed bus=%u id=%u reason=not_enabled\n",
+               motor->index, motor->bus, motor->id);
+        printf("mit_sine: done total=1 success=0 failed=1\n");
+        return -1;
+    }
+    limits = limits_for_entry(state, motor);
+    amplitude = fabsf(amplitude);
+    velocity_peak = amplitude * two_pi * freq_hz;
+    if (!isfinite(amplitude) || !isfinite(center) || !isfinite(freq_hz) ||
+        !isfinite(kp) || !isfinite(kd) ||
+        freq_hz <= 0.0f || freq_hz > 20.0f ||
+        duration_ms == 0u || duration_ms > 600000u ||
+        center - amplitude < limits->p_min ||
+        center + amplitude > limits->p_max ||
+        velocity_peak > limits->v_max ||
+        -velocity_peak < limits->v_min ||
+        kp < limits->kp_min || kp > limits->kp_max ||
+        kd < limits->kd_min || kd > limits->kd_max) {
+        printf("mit_sine: start total=1 index=%02u bus=%u id=%u\n",
+               motor->index, motor->bus, motor->id);
+        printf("[motor%02u]: failed bus=%u id=%u reason=out_of_range "
+               "pos_range=[%g,%g] vel_peak=%g vel_range=[%g,%g] "
+               "kp[%g,%g] kd[%g,%g] freq_hz[0,20] duration_ms[1,600000]\n",
+               motor->index, motor->bus, motor->id,
+               center - amplitude, center + amplitude,
+               velocity_peak, limits->v_min, limits->v_max,
+               limits->kp_min, limits->kp_max,
+               limits->kd_min, limits->kd_max);
+        printf("mit_sine: done total=1 success=0 failed=1\n");
+        return -1;
+    }
+
+    old_bus = state->bus;
+    old_id = state->boot_id;
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    before_rx = state->motors[slot].rx_count;
+    pending_before = state->can_stats[motor->bus].outstanding_replies;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    console_use_motor(state, motor);
+    start_us = time_us();
+    end_us = start_us + (uint64_t)duration_ms * 1000ULL;
+    next_us = start_us;
+
+    printf("mit_sine: start total=1 index=%02u bus=%u id=%u amplitude=%g center=%g freq_hz=%g duration_ms=%u kp=%g kd=%g period_ms=%u\n",
+           motor->index, motor->bus, motor->id,
+           amplitude, center, freq_hz, duration_ms, kp, kd, period_ms);
+    while (!stop_requested && time_us() < end_us) {
+        uint64_t now = time_us();
+        float elapsed_s;
+        float phase;
+        float pos;
+        float vel;
+
+        if (now < next_us) {
+            uint64_t remain_us = next_us - now;
+            unsigned int sleep_step_ms = (unsigned int)(remain_us / 1000ULL);
+
+            if (sleep_step_ms == 0u) {
+                sleep_step_ms = 1u;
+            }
+            if (sleep_step_ms > period_ms) {
+                sleep_step_ms = period_ms;
+            }
+            sleep_ms(sleep_step_ms);
+            continue;
+        }
+
+        elapsed_s = (float)(now - start_us) / 1000000.0f;
+        phase = two_pi * freq_hz * elapsed_s;
+        pos = center + amplitude * sinf(phase);
+        vel = amplitude * two_pi * freq_hz * cosf(phase);
+        console_expect_reply(state, motor->bus);
+        if (send_debug_mit(state, pos, vel, kp, kd, 0.0f) != 0) {
+            send_failed++;
+        } else {
+            sent++;
+        }
+        next_us += (uint64_t)period_ms * 1000ULL;
+    }
+    sleep_ms(100u);
+    replies = state->motors[slot].rx_count - before_rx;
+    if (state->can_stats[motor->bus].outstanding_replies > pending_before) {
+        uint64_t lost = state->can_stats[motor->bus].outstanding_replies - pending_before;
+
+        state->can_stats[motor->bus].reply_timeouts += lost;
+        state->can_stats[motor->bus].outstanding_replies -= lost;
+    }
+    state->bus = old_bus;
+    state->boot_id = old_id;
+    update_boot_ids(state);
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    printf("[motor%02u]: replies=%u sent=%u send_failed=%u%s\n",
+           motor->index, replies, sent, send_failed,
+           stop_requested ? " interrupted" : "");
+    printf("mit_sine: done total=1 success=%u failed=%u%s\n",
+           send_failed == 0u && !stop_requested ? 1u : 0u,
+           send_failed == 0u && !stop_requested ? 0u : 1u,
+           stop_requested ? " interrupted" : "");
+    return send_failed == 0u && !stop_requested ? 0 : -1;
+}
+
 static int console_move_zero(flash_state *state)
 {
     unsigned int old_bus = state->bus;

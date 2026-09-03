@@ -139,6 +139,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
     } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
         return console_motor_set(state, argc, argv);
+    } else if (strcmp(cmd, "mit_sine") == 0) {
+        return console_mit_sine(state, argc, argv);
     } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
         if (argc != 1) {
             printf("%s: stand_up\n", console_text(state, "用法", "usage"));
