@@ -316,7 +316,7 @@ static void console_print_raw_motor_can_frame(flash_state *state,
                                               const rx_can_frame *frame,
                                               bool mit_aux_enabled)
 {
-#if 0
+// #if 0
     /* 默认类型为普通 CAN；后面根据 ID 逐步细分。 */
     const char *kind = "can";
 
@@ -341,7 +341,7 @@ static void console_print_raw_motor_can_frame(flash_state *state,
            frame->len,
            frame->flags);
     print_data(frame->data, frame->len);
-#endif
+// #endif
 
     /* 只有 MIT 回复才尝试解析位置、速度、力矩和扩展字段。 */
     if (mit_reply_frame_matches(frame, motor->id)) {
@@ -358,6 +358,36 @@ static void console_print_raw_motor_can_frame(flash_state *state,
                                                               &reply);
         /* 解析成功后，输出人能直接看的数值。 */
         if (decode_ret == 0) {
+            size_t slot = (size_t)(motor - state->config.entries);
+
+            /*
+             * can_dbg 不只负责打印：把本帧解析结果同步到 motor_list 使用的
+             * 运行时缓存。这样即使接收线程没有把该帧归类为普通 MIT 回复，
+             * 调试命令收到的有效反馈也不会丢失。
+             */
+            if (slot < state->config.entry_count) {
+                motor_runtime *runtime = &state->motors[slot];
+                float old_mos = runtime->last_reply.mos_temperature;
+                float old_motor = runtime->last_reply.motor_temperature;
+
+                runtime->online = true;
+                runtime->mit_aux_enabled = mit_aux_enabled;
+                runtime->last_reply = reply;
+                runtime->last_reply_us = frame->time_us != 0u ?
+                                         frame->time_us : time_us();
+                if (mit_aux_enabled) {
+                    /* AUX 模式每帧只携带一个扩展量，保留之前缓存的温度。 */
+                    runtime->last_reply.mos_temperature = old_mos;
+                    runtime->last_reply.motor_temperature = old_motor;
+                    motor_runtime_update_aux(&state->config, runtime, &reply);
+                }
+                if (strcmp(motor_runtime_state(runtime), "unknown") == 0 ||
+                    strcmp(motor_runtime_state(runtime), "boot") == 0 ||
+                    strcmp(motor_runtime_state(runtime), "boot_menu") == 0) {
+                    motor_runtime_set_state(runtime, "motor");
+                }
+            }
+
             printf("[motor%02u]: pos=% .5f vel=% .5f torque=% .5f",
                    motor->index,
                    reply.position,
