@@ -561,11 +561,16 @@ static bool mit_reply_frame_matches(const rx_can_frame *frame, unsigned int moto
         frame->len < BXI_MOTOR_MIT_LEN) {
         return false;
     }
-    /* 排除寄存器回复和 boot/debug 文本回复，避免调试帧被误解析为 MIT。 */
-    if (is_reg_cmd_id(frame->can_id) || boot_output_id_matches(frame->can_id, motor_id)) {
+    /* boot/debug 文本回复使用 0x7fX，明确排除。 */
+    if (boot_output_id_matches(frame->can_id, motor_id)) {
         return false;
     }
-    /* CAN ID 和 payload byte0 同时匹配 master_id，才认为是该电机 MIT 回复。 */
+    /*
+     * MIT 回复固定使用 0x010|id（例如 id=1 为 0x011）。
+     * 该范围与部分旧寄存器命令的低位编码重叠，因此这里必须先按
+     * 完整 CAN ID 和 payload 首字节精确匹配，不能再调用 is_reg_cmd_id()
+     * 过滤，否则合法 MIT 回复会被误判为寄存器帧。
+     */
     return frame->can_id == master_id && frame->data[0] == master_id;
 }
 
