@@ -571,7 +571,8 @@ static bool mit_reply_frame_matches(const rx_can_frame *frame, unsigned int moto
      * 完整 CAN ID 和 payload 首字节精确匹配，不能再调用 is_reg_cmd_id()
      * 过滤，否则合法 MIT 回复会被误判为寄存器帧。
      */
-    return frame->can_id == master_id && frame->data[0] == master_id;
+    /* 回复数据首字节是电机 ID（例如 id=1 为 0x01），不是 0x011。 */
+    return frame->can_id == master_id && frame->data[0] == (motor_id & 0xffu);
 }
 
 static char boot_log_lines[MOTOR_MAP_MAX][LINE_LEN];
