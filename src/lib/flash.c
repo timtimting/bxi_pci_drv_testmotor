@@ -806,7 +806,7 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
     } else if (argc >= 4 && argc <= 5) {
         if (!flash_debug_arg_is_one_digit_range(argv[1], 0u, CANFD_DEVICE_NUM - 1u, &bus) ||
             !flash_debug_arg_is_one_digit_range(argv[2], 0u, 7u, &id)) {
-            printf("%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+            printf("%s: flash_debug <bus0-6> <id0-7> <version|firmware.bin> [cycle]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
@@ -816,13 +816,13 @@ static int console_flash_debug(flash_state *state, int argc, char **argv)
                 cycle = true;
                 continue;
             }
-            printf("%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+        printf("%s: flash_debug <bus0-6> <id0-7> <version|firmware.bin> [cycle]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
     } else {
         printf("%s: flash_debug <index00> <version|firmware.bin> [cycle]\n"
-               "%s: flash_debug <bus0-4> <id0-7> <version|firmware.bin> [cycle]\n",
+               "%s: flash_debug <bus0-6> <id0-7> <version|firmware.bin> [cycle]\n",
                console_text(state, "用法", "usage"),
                console_text(state, "用法", "usage"));
         return -1;

@@ -570,6 +570,25 @@ config/motor_console.yaml
 | 左手 | `bus3/id1-7` | `15-21` |
 | 右手 | `bus4/id1-7` | `22-28` |
 | 头部 | `bus0/id4-5` | `29-30` |
+| 左手夹爪 | `bus5/id1` | `31` |
+| 右手夹爪 | `bus6/id1` | `32` |
+
+夹爪使用 `bxi_motor_50_hand.bin`（电机固件 `USE_ENC2=0`）并采用物理量 CAN
+通信：位置为 `0..90 mm`（实际机械行程约 `0..80.55 mm`），速度为
+`-641..641 mm/s`，力矩字段为夹爪力 `-16..16 N`。例如：
+
+```text
+power_on
+motor_list
+mit_enable_single 31
+motor_set 31 20 0 100 20 1
+motor_set 32 20 0 100 20 1
+mit_disable_single 31
+mit_disable_single 32
+power_off
+```
+
+首次调试建议只连接并操作一只夹爪，低速、低力矩开始，并保持急停可用。
 
 ## 11. 当前命令
 
@@ -641,7 +660,7 @@ reg_save 00          # 保存配置到电机 Flash
 |---|---|---|
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | 烧录单台；不写固件时优先按识别型号选固件，否则使用默认 version |
 | `flash_all` | `[plan.yaml] [cycle]` | 按烧录配置逐台烧录；已识别型号会优先覆盖 plan version |
-| `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | 两位数按 index；一位 bus+一位 id 按 bus/id 调试烧录 |
+| `flash_debug` | `<index00>\|<bus0-6 id0-7> <version\|firmware.bin> [cycle]` | 两位数按 index；一位 bus+一位 id 按 bus/id 调试烧录 |
 
 旧 `flash_plan <plan.yaml>` 合并为 `flash_all <plan.yaml>`。
 旧 `flash_file <index00> <version|firmware.bin>` 合并为

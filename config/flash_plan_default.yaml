@@ -193,3 +193,15 @@ targets:
     id: 5
     version: 50
     name: 头部pitch、y轴
+
+  # 夹爪：使用 USE_ENC2=0 的 50 型夹爪固件，逻辑 index 31-32
+  - index: 31
+    bus: 5
+    id: 1
+    version: 50_hand
+    name: 左手夹爪
+  - index: 32
+    bus: 6
+    id: 1
+    version: 50_hand
+    name: 右手夹爪

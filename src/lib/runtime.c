@@ -4327,7 +4327,7 @@ static void print_terminal_help(void)
     printf("  mode flash|debug         switch terminal state\n");
     printf("  debug [command...]       enter debug state or run one debug command\n");
     printf("  flash-mode               return to bootloader flashing state\n");
-    printf("  bus <0-4>                set CANFD bus\n");
+    printf("  bus <0-6>                set CANFD bus\n");
     printf("  id <1-8>                 select target motor/bootloader id\n");
     printf("  master-id <id>           set expected MIT feedback id\n");
     printf("  canfd | classic          set debug frame format, boot flashing stays classic\n");

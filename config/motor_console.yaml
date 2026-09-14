@@ -114,12 +114,13 @@ mit_kd_max: 5.0
 #   firmware_v1 : 已识别当前电机为 1.x 程序/配置版本时使用的固件
 #   mit_*    : 该型号的 MIT 打包/解包范围
 #
-# 目前主要使用 50、50L、70、85 四个型号：
+# 目前主要使用 50、50L、70、85 四个型号，另提供 50_hand 夹爪型号：
 #   50/50L/70 的 Kd 范围 [0,5]
 #   85 的 Kd 范围 [0,20]
 #   50/50L 的 t_ff 范围 [-40,40]
 #   70 的 t_ff 范围 [-80,80]
 #   85 的 t_ff 范围 [-160,160]
+#   50_hand 使用 USE_ENC2=0 的物理量通信：位置 [0,90] mm、速度 [-641,641] mm/s、力矩 [-16,16] N
 # -----------------------------------------------------------------------------
 motor_types:
   - type: "50"
@@ -132,6 +133,18 @@ motor_types:
     mit_v_max: 45.0
     mit_t_min: -40.0
     mit_t_max: 40.0
+    mit_kp_max: 500.0
+    mit_kd_max: 5.0
+  - type: "50_hand"
+    firmware: bxi_motor_50_hand.bin
+    firmware_v0: bxi_motor_50_hand.bin
+    firmware_v1: bxi_motor_50_hand.bin
+    mit_p_min: 0.0
+    mit_p_max: 90.0
+    mit_v_min: -641.0
+    mit_v_max: 641.0
+    mit_t_min: -16.0
+    mit_t_max: 16.0
     mit_kp_max: 500.0
     mit_kd_max: 5.0
   - type: "50L"
