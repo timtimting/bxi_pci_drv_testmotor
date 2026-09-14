@@ -573,9 +573,9 @@ config/motor_console.yaml
 | 左手夹爪 | `bus5/id1` | `31` |
 | 右手夹爪 | `bus6/id1` | `32` |
 
-夹爪使用 `bxi_motor_50_hand.bin`（电机固件 `USE_ENC2=0`）并采用物理量 CAN
+夹爪使用 `bxi_motor_50L_hand.bin`（电机固件 `USE_ENC2=0`）并采用物理量 CAN
 通信：位置为 `0..90 mm`（实际机械行程约 `0..80.55 mm`），速度为
-`-641..641 mm/s`，力矩字段为夹爪力 `-16..16 N`。例如：
+`-641..641 mm/s`，力矩字段为夹爪力 `-24..24 N`。例如：
 
 ```text
 power_on
