@@ -754,6 +754,99 @@ static int console_motor_set(flash_state *state, int argc, char **argv)
     }
 }
 
+static int console_stand_sine(flash_state *state, int argc, char **argv)
+{
+    const unsigned int period_ms = 10u;
+    unsigned int duration_ms = 10000u;
+    float amplitude = 0.1f;
+    float frequency = 0.05f;
+    size_t selected = 0u;
+    size_t failed = 0u;
+    unsigned int sent = 0u;
+    uint64_t start_us;
+    uint64_t end_us;
+    bool old_monitor;
+    bool old_input;
+
+    if (argc > 1 || (argc >= 2 && parse_float_arg(argv[1], &amplitude) != 0) ||
+        (argc >= 3 && parse_float_arg(argv[2], &frequency) != 0) ||
+        (argc >= 4 && parse_uint_arg(argv[3], &duration_ms) != 0)) {
+        printf("%s: stand_sine [amplitude] [freq_hz] [duration_ms]\n",
+               console_text(state, "用法", "usage"));
+        return -1;
+    }
+    if (console_require_power(state) != 0) {
+        return -1;
+    }
+    for (size_t i = 0u; i < state->config.entry_count; i++) {
+        const motor_map_entry *motor = &state->config.entries[i];
+        const bxi_motor_limits *limits = limits_for_entry(state, motor);
+
+        if (!state->motors[i].online || !state->motors[i].enabled ||
+            limits->p_min >= 0.0f) {
+            continue;
+        }
+        if (amplitude <= 0.0f || amplitude > limits->p_max ||
+            amplitude > -limits->p_min ||
+            amplitude * 2.0f * 3.14159265358979323846f * frequency > limits->v_max) {
+            printf("[motor%02u]: sine range invalid amplitude=%g position=[%g,%g] velocity=[%g,%g]\n",
+                   motor->index, amplitude, limits->p_min, limits->p_max,
+                   limits->v_min, limits->v_max);
+            failed++;
+            continue;
+        }
+        selected++;
+    }
+    if (!isfinite(amplitude) || !isfinite(frequency) || amplitude <= 0.0f ||
+        frequency <= 0.0f || frequency > 2.0f || duration_ms == 0u ||
+        duration_ms > 600000u || selected == 0u) {
+        printf("stand_sine: no valid enabled joints or invalid parameters\n");
+        return -1;
+    }
+
+    printf("stand_sine: start total=%zu amplitude=%g freq_hz=%g duration_ms=%u period_ms=%u\n",
+           selected, amplitude, frequency, duration_ms, period_ms);
+    old_monitor = state->show_can_output;
+    old_input = state->show_motor_input;
+    state->show_can_output = false;
+    state->show_motor_input = false;
+    start_us = time_us();
+    end_us = start_us + (uint64_t)duration_ms * 1000ULL;
+    while (!stop_requested && time_us() < end_us) {
+        uint64_t now = time_us();
+        float phase = (float)(now - start_us) / 1000000.0f * frequency *
+                      6.2831853071795864769f;
+        float position = amplitude * sinf(phase);
+        float velocity = amplitude * frequency *
+                         6.2831853071795864769f * cosf(phase);
+
+        for (size_t i = 0u; i < state->config.entry_count; i++) {
+            const motor_map_entry *motor = &state->config.entries[i];
+            const bxi_motor_limits *limits = limits_for_entry(state, motor);
+            float kp;
+            float kd;
+
+            if (!state->motors[i].online || !state->motors[i].enabled ||
+                limits->p_min >= 0.0f) {
+                continue;
+            }
+            console_home_gains_for_motor(state, motor, &kp, &kd);
+            console_use_motor(state, motor);
+            console_expect_reply(state, motor->bus);
+            if (send_debug_mit(state, position, velocity, kp, kd, 0.0f) != 0) {
+                failed++;
+            }
+            sent++;
+        }
+        sleep_ms(period_ms);
+    }
+    state->show_can_output = old_monitor;
+    state->show_motor_input = old_input;
+    printf("stand_sine: done total=%zu sent=%u failed=%zu%s\n",
+           selected, sent, failed, stop_requested ? " interrupted" : "");
+    return failed == 0u && !stop_requested ? 0 : -1;
+}
+
 static int console_move_zero(flash_state *state)
 {
     unsigned int old_bus = state->bus;
@@ -763,6 +856,7 @@ static int console_move_zero(flash_state *state)
     unsigned int step;
     unsigned int bus;
     size_t i;
+    size_t selected = 0u;
     size_t failed = 0u;
     bool old_monitor = state->show_can_output;
     bool send_failed[MOTOR_MAP_MAX];
@@ -772,23 +866,15 @@ static int console_move_zero(flash_state *state)
         return -1;
     }
     memset(send_failed, 0, sizeof(send_failed));
-    printf("stand_up: start total=%zu duration_ms=%u\n",
-           state->config.entry_count, state->config.home_soft_start_ms);
     for (i = 0u; i < state->config.entry_count; i++) {
-        if (!state->motors[i].online || !state->motors[i].enabled) {
-            const motor_map_entry *m = &state->config.entries[i];
-
-            printf("[motor%02u]: failed bus=%u id=%u reason=%s%s%s\n",
-                   m->index, m->bus, m->id,
-                   !state->motors[i].online ? "offline" : "",
-                   (!state->motors[i].online && !state->motors[i].enabled) ? "," : "",
-                   !state->motors[i].enabled ? "not_enabled" : "");
-            failed++;
+        if (state->motors[i].online && state->motors[i].enabled) {
+            selected++;
         }
     }
-    if (failed != 0u) {
-        printf("stand_up: done total=%zu success=%zu failed=%zu\n",
-               state->config.entry_count, state->config.entry_count - failed, failed);
+    printf("stand_up: start total=%zu duration_ms=%u\n",
+           selected, state->config.home_soft_start_ms);
+    if (selected == 0u) {
+        printf("stand_up: no online and enabled motors\n");
         return -1;
     }
     steps = state->config.home_soft_start_ms / period_ms;
@@ -807,6 +893,10 @@ static int console_move_zero(flash_state *state)
             float target_kp;
             float kd;
             float kp;
+
+            if (!state->motors[i].online || !state->motors[i].enabled) {
+                continue;
+            }
 
             console_home_gains_for_motor(state, m, &target_kp, &kd);
             kp = target_kp * (float)step / (float)steps;
@@ -851,11 +941,11 @@ static int console_move_zero(flash_state *state)
         }
     }
     if (stop_requested && failed == 0u) {
-        failed = state->config.entry_count;
+        failed = selected;
     }
     printf("stand_up: done total=%zu success=%zu failed=%zu%s\n",
-           state->config.entry_count,
-           state->config.entry_count - failed,
+           selected,
+           selected - failed,
            failed,
            stop_requested ? " interrupted" : "");
     return failed == 0u && !stop_requested ? 0 : -1;

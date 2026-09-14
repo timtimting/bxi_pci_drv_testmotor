@@ -15,7 +15,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
-            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n");
+            printf("             stand_sine [amplitude] [freq_hz] [duration_ms]\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("             reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("             reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
@@ -73,6 +74,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
+        printf("  stand_sine [amplitude] [freq_hz] [duration_ms]\n");
+        printf("      stand_up 后让在线且已使能的关节在零位附近小幅慢速正弦运动；跳过夹爪。\n");
         printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
         printf("      读取寄存器；all 按默认烧录配置逐台发送。\n");
         printf("  reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
@@ -131,6 +134,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
+    printf("  stand_sine [amplitude] [freq_hz] [duration_ms]\n");
+    printf("      Slowly stream a small zero-centered sine test to enabled joints; grippers are skipped.\n");
     printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
     printf("      Read registers. all sends to every target in the default flash plan.\n");
     printf("  reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
