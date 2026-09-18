@@ -108,6 +108,7 @@ static void console_home_gains_for_motor(const flash_state *state,
                                          float *kd)
 {
     unsigned int index = motor->index;
+    const bxi_motor_limits *limits = limits_for_entry(state, motor);
 
     *kp = state->config.home_kp;
     *kd = state->config.home_kd;
@@ -117,6 +118,8 @@ static void console_home_gains_for_motor(const flash_state *state,
     if (index < MOTOR_MAP_MAX && state->config.home_kd_by_index_set[index]) {
         *kd = state->config.home_kd_by_index[index];
     }
+    *kp = fminf(fmaxf(*kp, limits->kp_min), limits->kp_max);
+    *kd = fminf(fmaxf(*kd, limits->kd_min), limits->kd_max);
 }
 
 static int console_probe_motors(flash_state *state, unsigned int timeout_ms)
