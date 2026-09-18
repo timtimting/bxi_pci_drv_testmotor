@@ -120,8 +120,8 @@ mit_kd_max: 5.0
 #   50/50L 的 t_ff 范围 [-40,40]
 #   70 的 t_ff 范围 [-80,80]
 #   85 的 t_ff 范围 [-160,160]
-#   50_hand 使用 USE_ENC2=0 的物理量通信：位置 [0,90] mm、速度 [-641,641] mm/s、力矩 [-16,16] N、Kp [0,5]
-#   50L_hand 使用 USE_ENC2=0 的物理量通信：位置 [0,90] mm、速度 [-641,641] mm/s、力矩 [-24,24] N、Kp [0,5]
+#   50_hand 使用 USE_ENC2=0 的物理量通信：位置 [0,90] mm、速度 [-641,641] mm/s、力矩 [-16,16] N、Kp [0,5]、Kd [0,1]
+#   50L_hand 使用 USE_ENC2=0 的物理量通信：位置 [0,90] mm、速度 [-641,641] mm/s、力矩 [-24,24] N、Kp [0,5]、Kd [0,1]
 # -----------------------------------------------------------------------------
 motor_types:
   - type: "50"
@@ -147,7 +147,7 @@ motor_types:
     mit_t_min: -16.0
     mit_t_max: 16.0
     mit_kp_max: 5.0
-    mit_kd_max: 5.0
+    mit_kd_max: 1.0
   - type: "50L_hand"
     firmware: bxi_motor_50L_hand.bin
     firmware_v0: bxi_motor_50L_hand.bin
@@ -159,7 +159,7 @@ motor_types:
     mit_t_min: -24.0
     mit_t_max: 24.0
     mit_kp_max: 5.0
-    mit_kd_max: 5.0
+    mit_kd_max: 1.0
   - type: "50L"
     firmware: bxi_motor_50L.bin
     firmware_v0: bxi_motor_50L_v0.1.2.bin
