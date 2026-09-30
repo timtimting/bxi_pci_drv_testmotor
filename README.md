@@ -186,6 +186,9 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 如果无时间参数的 `ethercat_enable` 仍在运行，先在该终端按 `Ctrl-C`，由原主站完成
 失能；不要同时启动第二个 EtherCAT 主站。
 
+终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
+从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

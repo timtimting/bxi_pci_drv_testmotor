@@ -167,6 +167,7 @@ int main(int argc, char **argv)
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) /
                                 sizeof(console_command_words[0]);
+    set_completion_words_hook(console_ethercat_completion_words);
     update_boot_ids(&state);
     rx_ring_init(&state.rx);
     frame_ring_init(&state.frames);

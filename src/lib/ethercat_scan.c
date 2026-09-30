@@ -49,7 +49,104 @@ enum {
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS = 2u,
     ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS = 60000u,
     ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE = 8192u,
+    ETHERCAT_COMPLETION_INTERFACE_MAX = 32u,
+    ETHERCAT_COMPLETION_SLAVE_MAX = 100u,
 };
+
+static const char *const ethercat_hold_ms_words[] = {
+    "1000", "2000", "5000", "10000", "30000", "60000",
+};
+
+static const char *const ethercat_all_word[] = {
+    "all",
+};
+
+static char ethercat_interface_storage[ETHERCAT_COMPLETION_INTERFACE_MAX][IFNAMSIZ];
+static const char *ethercat_interface_words[ETHERCAT_COMPLETION_INTERFACE_MAX];
+static char ethercat_slave_storage[ETHERCAT_COMPLETION_SLAVE_MAX][4];
+static const char *ethercat_slave_words[ETHERCAT_COMPLETION_SLAVE_MAX + 1u];
+static bool ethercat_slave_words_initialized = false;
+
+static const char *const *console_ethercat_interface_completion_words(size_t *count)
+{
+    DIR *directory;
+    struct dirent *entry;
+    size_t interface_count = 0u;
+
+    directory = opendir("/sys/class/net");
+    if (directory == NULL) {
+        *count = 0u;
+        return NULL;
+    }
+    while ((entry = readdir(directory)) != NULL &&
+           interface_count < ETHERCAT_COMPLETION_INTERFACE_MAX) {
+        size_t name_length;
+
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        name_length = strnlen(entry->d_name, IFNAMSIZ);
+        if (name_length == IFNAMSIZ) {
+            continue;
+        }
+        memcpy(ethercat_interface_storage[interface_count], entry->d_name, name_length + 1u);
+        ethercat_interface_words[interface_count] = ethercat_interface_storage[interface_count];
+        interface_count++;
+    }
+    closedir(directory);
+    *count = interface_count;
+    return ethercat_interface_words;
+}
+
+static const char *const *console_ethercat_slave_completion_words(size_t *count)
+{
+    size_t slave;
+
+    if (!ethercat_slave_words_initialized) {
+        ethercat_slave_words[0] = ethercat_all_word[0];
+        for (slave = 1u; slave <= ETHERCAT_COMPLETION_SLAVE_MAX; slave++) {
+            snprintf(ethercat_slave_storage[slave - 1u],
+                     sizeof(ethercat_slave_storage[slave - 1u]), "%zu", slave);
+            ethercat_slave_words[slave] = ethercat_slave_storage[slave - 1u];
+        }
+        ethercat_slave_words_initialized = true;
+    }
+    *count = sizeof(ethercat_slave_words) / sizeof(ethercat_slave_words[0]);
+    return ethercat_slave_words;
+}
+
+static const char *const *console_ethercat_completion_words(const char *line,
+                                                             size_t len,
+                                                             size_t *count)
+{
+    int start;
+    unsigned int tokens_before;
+    char first[64];
+
+    start = current_token_start(line, len);
+    tokens_before = count_tokens_before(line, start);
+    if (copy_nth_token(line, 0u, first, sizeof(first)) != 0) {
+        *count = 0u;
+        return NULL;
+    }
+    if (strcmp(first, "ethercat_scan") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if ((strcmp(first, "ethercat_enable") == 0 ||
+         strcmp(first, "ethercat_disable") == 0) && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if ((strcmp(first, "ethercat_enable") == 0 ||
+         strcmp(first, "ethercat_disable") == 0) && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 3u) {
+        *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
+        return ethercat_hold_ms_words;
+    }
+    *count = 0u;
+    return NULL;
+}
 
 #ifdef HAVE_SOEM
 static const char *console_ethercat_state_name(uint16_t state)

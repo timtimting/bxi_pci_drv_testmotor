@@ -4447,6 +4447,15 @@ static const char *const language_words[] = {
 /* A program embedding this terminal editor may replace top-level completion. */
 static const char *const *custom_command_words = NULL;
 static size_t custom_command_word_count = 0u;
+typedef const char *const *(*completion_words_hook)(const char *line,
+                                                     size_t len,
+                                                     size_t *count);
+static completion_words_hook custom_completion_words_hook = NULL;
+
+static void set_completion_words_hook(completion_words_hook hook)
+{
+    custom_completion_words_hook = hook;
+}
 
 static int starts_with(const char *text, const char *prefix)
 {
@@ -4585,6 +4594,13 @@ static const char *const *completion_words_for_line(const char *line, size_t len
     if (strcmp(first, "listen") == 0 && tokens_before == 2u) {
         *count = sizeof(listen_words) / sizeof(listen_words[0]);
         return listen_words;
+    }
+    if (custom_completion_words_hook != NULL) {
+        const char *const *words = custom_completion_words_hook(line, len, count);
+
+        if (words != NULL && *count > 0u) {
+            return words;
+        }
     }
 
     *count = 0u;
