@@ -125,6 +125,19 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_send_special(state, (int)slot, special, cmd);
+    } else if (strcmp(cmd, "enable") == 0 || strcmp(cmd, "disable") == 0) {
+        uint8_t special = strcmp(cmd, "enable") == 0 ? BXI_MOTOR_CMD_ENABLE :
+                          BXI_MOTOR_CMD_DISABLE;
+
+        if (argc == 1 || (argc == 2 && strcmp(argv[1], "all") == 0)) {
+            return console_send_special(state, -1, special, cmd);
+        }
+        if (argc != 2 || console_parse_index_arg(argv[1], &index) != 0 ||
+            console_motor_by_index(state, index, &slot) == NULL) {
+            printf("%s: %s [<index00>|all]\n", console_text(state, "用法", "usage"), cmd);
+            return -1;
+        }
+        return console_send_special(state, (int)slot, special, cmd);
     } else if (strcmp(cmd, "mit_enable_all") == 0) {
         if (argc != 1) {
             printf("%s: mit_enable_all\n", console_text(state, "用法", "usage"));
@@ -137,7 +150,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
-    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
+    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0 ||
+               strcmp(cmd, "mit") == 0) {
         return console_motor_set(state, argc, argv);
     } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
         if (argc != 1) {
@@ -159,7 +173,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_flash_all(state, argc, argv);
     } else if (strcmp(cmd, "flash_debug") == 0) {
         return console_flash_debug(state, argc, argv);
-    } else if (strcmp(cmd, "motor_dbg") == 0) {
+    } else if (strcmp(cmd, "motor_dbg") == 0 || strcmp(cmd, "debug") == 0) {
         return console_motor_dbg(state, argc, argv);
     } else if (strcmp(cmd, "can_dbg") == 0 ||
                strcmp(cmd, "motor_reply") == 0 ||

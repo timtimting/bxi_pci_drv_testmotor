@@ -16,6 +16,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("  快捷命令：  enable [<index00>|all]    disable [<index00>|all]\n");
+            printf("             mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("             debug <index00>\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("             reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("             reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
@@ -33,6 +36,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                mit_enable_all    mit_disable_all\n");
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
+            printf("  Shortcuts:     enable [<index00>|all]    disable [<index00>|all]\n");
+            printf("                 mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("                 debug <index00>\n\n");
             printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("                reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
             printf("                reg_save <index00|all> [wait_ms]    reg_info <index00|all> [wait_ms]\n\n");
@@ -69,8 +75,12 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      使能或失能全部配置电机。\n");
         printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
         printf("      使能或失能指定电机。\n");
+        printf("  enable [<index00>|all] | disable [<index00>|all]\n");
+        printf("      快捷使能或失能命令；省略参数或使用 all 表示全部电机。\n");
         printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
+        printf("  mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+        printf("      mit_set 的快捷写法。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
         printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
@@ -90,6 +100,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      两位数按 index，一位 bus+一位 id 按 Bus/ID；必须显式指定固件。\n");
         printf("  motor_dbg <index00>\n");
         printf("      按配置序号进入单电机直通调试；所有按键立即发送给电机，` 退出。\n");
+        printf("  debug <index00>\n");
+        printf("      motor_dbg 的快捷写法。\n");
         printf("  motor_reply <index00> [wait_ms] [passive]  （别名：can_dbg）\n");
         printf("      打印指定电机相关的原始 CAN 回复；默认发送一帧零 MIT 触发回复，passive 只监听。\n");
         printf("  can_status [reset]\n");
@@ -126,8 +138,12 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Send MIT enable/disable to every configured motor.\n");
     printf("  mit_enable_single <index00> | mit_disable_single <index00>\n");
     printf("      Send MIT enable/disable to one motor.\n");
+    printf("  enable [<index00>|all] | disable [<index00>|all]\n");
+    printf("      Shortcuts for enabling/disabling one motor or all motors.\n");
     printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
     printf("      Send one MIT control frame. The selected motor must be enabled.\n");
+    printf("  mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+    printf("      Shortcut for mit_set.\n");
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");
@@ -149,6 +165,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  motor_dbg <index00>\n");
     printf("      Enter one configured motor's pass-through debug mode by index. Every key\n");
     printf("      is sent immediately; ` exits debug mode.\n");
+    printf("  debug <index00>\n");
+    printf("      Shortcut for motor_dbg.\n");
     printf("  motor_reply <index00> [wait_ms] [passive]  (alias: can_dbg)\n");
     printf("      Print raw CAN replies related to one motor. By default sends one zero MIT\n");
     printf("      frame first; passive only listens.\n");

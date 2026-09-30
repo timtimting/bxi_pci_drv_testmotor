@@ -235,6 +235,15 @@ mit_enable_single 00
 mit_disable_single 00
 ```
 
+常用快捷写法：
+
+```text
+enable              # 使能全部电机
+enable 00           # 使能单台电机
+disable             # 失能全部电机
+disable 00          # 失能单台电机
+```
+
 只有收到电机回复后，软件才会把该电机记录为已使能或已失能。可以通过
 `motor_list` 检查状态。
 
@@ -248,6 +257,12 @@ mit_set <index00> <pos> <torque> <vel> <kp> <kd>
 
 ```text
 mit_set 00 0.5 0 0 10 1
+```
+
+也可以使用更短的命令名：
+
+```text
+mit 00 0.5 0 0 10 1
 ```
 
 参数顺序：
@@ -289,6 +304,14 @@ quit
 
 如果仍有已知使能电机，`power_off` 会先发送全部失能命令，再关闭总电源。电源开启时
 直接执行 `quit` / `q` / `qq` 会自动执行一次 `power_off`，下电成功后再退出。
+
+### 7.7 直通调试
+
+```text
+debug 00
+```
+
+`debug 00` 等价于 `motor_dbg 00`；进入后每个按键都会立即发送给目标电机，按反引号 `` ` `` 退出。
 
 ## 8. CAN 输出和统计
 
@@ -668,6 +691,9 @@ flash_all config/flash_plan_debug.yaml
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `motor_dbg` | `<index00>` | 按 index 进入单电机直通调试；所有按键直接发给电机，反引号 `` ` `` 退出 |
+| `enable` / `disable` | `[<index00>\|all]` | 快捷使能/失能；省略参数或使用 `all` 表示全部电机 |
+| `mit` | `<index00> <pos> <torque> <vel> <kp> <kd>` | `mit_set` 的快捷写法 |
+| `debug` | `<index00>` | `motor_dbg` 的快捷写法 |
 | `language` / `lang` | `zh\|en` | 切换中英文 |
 
 ## 12. 源码结构
