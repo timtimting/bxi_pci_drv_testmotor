@@ -34,6 +34,7 @@ endif()
 if(SOEM_INCLUDE_DIR AND SOEM_LIBRARY)
   include_directories(
     "${SOEM_INCLUDE_DIR}"
+    "${SOEM_INCLUDE_DIR}/soem"
     "${SOEM_INCLUDE_DIR}/osal"
     "${SOEM_INCLUDE_DIR}/osal/linux"
     "${SOEM_INCLUDE_DIR}/oshw"
