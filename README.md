@@ -127,6 +127,16 @@ lang en
 
 涉及配置电机序号的命令统一使用两位十进制 `index00` 参数，例如 `00`、`08`、`30`。
 
+## 开璇 EtherCAT ESI
+
+厂商 ESI 文件位于 `assets/ethercat/KaiserDrive_KDE_ECAT_V1.2.xml`，已纳入 Git
+跟踪。`motor_console` 启动时会读取该文件并打印 Vendor ID、Product Code 和
+Revision，用于确认项目内的 ESI 资产可用；该读取不会初始化 EtherCAT 主站，也不会
+向电机发送任何 EtherCAT、CAN 或 MIT 控制命令。
+
+当前终端仍使用 BXI PCI/CAN 通信。开璇 EtherCAT 控制需要后续集成 SOEM，并以
+运行中从站读取到的实际 PDO 映射为准。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

@@ -13,6 +13,7 @@ enum {
 };
 
 #define DEFAULT_FLASH_PLAN "config/flash_plan_default.yaml"
+#define DEFAULT_KAIXUAN_ESI "assets/ethercat/KaiserDrive_KDE_ECAT_V1.2.xml"
 
 typedef struct
 {
@@ -49,6 +50,7 @@ static const char *const console_command_words[] = {
 };
 
 #include "lib/core.c"
+#include "lib/ethercat_esi.c"
 #include "lib/display.c"
 #include "lib/control.c"
 #include "lib/flash.c"
@@ -132,6 +134,7 @@ int main(int argc, char **argv)
     if (console_reload_config(&state, config_path) != 0) {
         return 1;
     }
+    console_load_kaixuan_esi(&state, argv[0]);
     if (check_config) {
         console_print_config(&state);
         console_print_motors(&state);
