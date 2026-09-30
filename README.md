@@ -217,6 +217,20 @@ sudo ./build/motor_console --ethercat-zero enp86s0 all
 命令会先确认伺服失能，再通过 SDO 对 `Pn101 (0x2101:00, int16)` 写入 `0→1→0`。这只记录
 零位请求；根据开璇手册，完成后必须同时重启执行器主电和 USB 电源，`0x6064` 的零位才会生效。
 
+### EtherCAT 信息查询
+
+读取指定从站或全部从站的可安全查询信息：
+
+```bash
+sudo ./build/motor_console --ethercat-info enp86s0 1
+sudo ./build/motor_console --ethercat-info enp86s0 all
+```
+
+命令通过只读 CoE/SDO 查询身份、链路状态、DC 能力、CiA-402 控制字/状态字、错误码、运行模式、
+实际和目标位置/速度/力矩、电流、数字输入，以及开璇 `Pn001`、`Pn002` 和当前监控值 `0x3000`。
+读取不会配置 PDO、请求 OP、使能或运动电机。`Pn002` 只显示当前监控项选择，不会为读取温度等数据
+修改该参数。
+
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
 

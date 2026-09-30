@@ -189,6 +189,12 @@ static const char *const *console_ethercat_completion_words(const char *line,
     if (strcmp(first, "ethercat_zero") == 0 && tokens_before == 2u) {
         return console_ethercat_slave_completion_words(count);
     }
+    if (strcmp(first, "ethercat_info") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_info") == 0 && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
     *count = 0u;
     return NULL;
 }
@@ -899,6 +905,152 @@ cleanup:
 close_socket:
     ec_close();
     return failed == 0 && !stop_requested ? 0 : -1;
+#endif
+}
+
+static int console_ethercat_info(bool chinese, const char *interface, const char *selection)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        printf("%s: ethercat_info <network_interface> <slave_id|all>\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法读取 EtherCAT 电机信息。从 SOEM 源码编译后，执行 make "
+           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "EtherCAT info is unavailable because this build has no SOEM support. Build again "
+           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+    return -1;
+#else
+    int slave;
+    int failed = 0;
+
+    printf("%s: interface=%s slave=%s\n",
+           chinese ? "ethercat_info: 开始读取" : "ethercat_info: read start", interface, selection);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_info: 打开网卡失败" :
+               "ethercat_info: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_info: 未发现 EtherCAT 从站" :
+               "ethercat_info: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_info: 从站序号不存在" :
+               "ethercat_info: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    ec_readstate();
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t control_word;
+        uint16_t status_word;
+        uint16_t error_code;
+        int8_t mode_command;
+        int8_t mode_display;
+        int16_t torque_actual;
+        int16_t current_actual;
+        int16_t target_torque;
+        int16_t pn001;
+        int16_t pn002;
+        int32_t position_actual;
+        int32_t velocity_actual;
+        int32_t target_position;
+        int32_t target_velocity;
+        int32_t monitor_value;
+        uint32_t digital_inputs;
+        int size;
+
+        if (!all_slaves && (unsigned int)slave != slave_id) {
+            continue;
+        }
+        printf("[slave%d] name=%s state=0x%02x(%s) addr=0x%04x dc=%s\n",
+               slave, ec_slave[slave].name, (unsigned int)ec_slave[slave].state,
+               console_ethercat_state_name(ec_slave[slave].state),
+               (unsigned int)ec_slave[slave].configadr, ec_slave[slave].hasdc ? "yes" : "no");
+        printf("  identity vendor=0x%08x product=0x%08x revision=0x%08x\n",
+               (unsigned int)ec_slave[slave].eep_man, (unsigned int)ec_slave[slave].eep_id,
+               (unsigned int)ec_slave[slave].eep_rev);
+
+#define ETHERCAT_INFO_READ(index, value) \
+        (size = (int)sizeof(value), \
+         ec_SDOread((uint16)slave, (index), 0u, FALSE, &size, &(value), EC_TIMEOUTRXM) > 0 && \
+         size == (int)sizeof(value))
+
+        if (ETHERCAT_INFO_READ(0x6040u, control_word)) {
+            printf("  control_word=0x%04x\n", (unsigned int)control_word);
+        }
+        if (ETHERCAT_INFO_READ(0x6041u, status_word)) {
+            printf("  status_word=0x%04x\n", (unsigned int)status_word);
+        }
+        if (ETHERCAT_INFO_READ(0x603fu, error_code)) {
+            printf("  error_code=0x%04x\n", (unsigned int)error_code);
+        }
+        if (ETHERCAT_INFO_READ(0x6060u, mode_command)) {
+            printf("  mode_command=%d\n", (int)mode_command);
+        }
+        if (ETHERCAT_INFO_READ(0x6061u, mode_display)) {
+            printf("  mode_display=%d\n", (int)mode_display);
+        }
+        if (ETHERCAT_INFO_READ(0x6064u, position_actual)) {
+            printf("  position_actual=%d count (%.6f rad)\n", position_actual,
+                   (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
+        }
+        if (ETHERCAT_INFO_READ(0x606cu, velocity_actual)) {
+            printf("  velocity_actual=%d count/s (%.6f rad/s)\n", velocity_actual,
+                   (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
+        }
+        if (ETHERCAT_INFO_READ(0x6077u, torque_actual)) {
+            printf("  torque_actual=%d (0.01A)\n", (int)torque_actual);
+        }
+        if (ETHERCAT_INFO_READ(0x6078u, current_actual)) {
+            printf("  current_actual=%d (0.01A)\n", (int)current_actual);
+        }
+        if (ETHERCAT_INFO_READ(0x607au, target_position)) {
+            printf("  target_position=%d count (%.6f rad)\n", target_position,
+                   (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
+        }
+        if (ETHERCAT_INFO_READ(0x60ffu, target_velocity)) {
+            printf("  target_velocity=%d count/s (%.6f rad/s)\n", target_velocity,
+                   (double)target_velocity * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
+        }
+        if (ETHERCAT_INFO_READ(0x6071u, target_torque)) {
+            printf("  target_torque=%d (0.01A)\n", (int)target_torque);
+        }
+        if (ETHERCAT_INFO_READ(0x60fdu, digital_inputs)) {
+            printf("  digital_inputs=0x%08x\n", (unsigned int)digital_inputs);
+        }
+        if (ETHERCAT_INFO_READ(0x2001u, pn001)) {
+            printf("  Pn001_drive_mode=%d\n", (int)pn001);
+        }
+        if (ETHERCAT_INFO_READ(0x2002u, pn002)) {
+            printf("  Pn002_monitor_select=%d\n", (int)pn002);
+        }
+        if (ETHERCAT_INFO_READ(0x3000u, monitor_value)) {
+            printf("  monitor_value=%d (interpret using Pn002_monitor_select)\n", monitor_value);
+        }
+#undef ETHERCAT_INFO_READ
+    }
+    printf("%s\n", chinese ?
+           "ethercat_info: 只读 SDO 查询完成；未配置 PDO、未请求 OP、未发送使能或运动命令。" :
+           "ethercat_info: read-only SDO query complete; did not configure PDOs, request OP, or send enable/motion commands.");
+    ec_close();
+    return failed == 0 ? 0 : -1;
+
+close_socket:
+    ec_close();
+    return -1;
 #endif
 }
 
