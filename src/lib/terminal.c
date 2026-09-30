@@ -124,6 +124,13 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_ethercat_enable(state->config.chinese_ui, argv[1], argv[2], hold_ms);
+    } else if (strcmp(cmd, "ethercat_disable") == 0) {
+        if (argc != 3) {
+            printf("%s: ethercat_disable <network_interface> <slave_id|all>\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_disable(state->config.chinese_ui, argv[1], argv[2]);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));

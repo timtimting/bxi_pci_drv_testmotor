@@ -176,6 +176,16 @@ sudo ./build/motor_console --ethercat-enable enp86s0 all 5000
 `Ctrl-C` 时会发送 `0x0000` 失能并关闭主站。省略 `hold_ms` 时，命令持续运行并维持
 主站 PDO 通信；此时请用 `Ctrl-C` 退出和失能，不能在另一个终端中启动第二个主站。
 
+失能指定从站或总线上全部从站：
+
+```bash
+sudo ./build/motor_console --ethercat-disable enp86s0 1
+sudo ./build/motor_console --ethercat-disable enp86s0 all
+```
+
+如果无时间参数的 `ethercat_enable` 仍在运行，先在该终端按 `Ctrl-C`，由原主站完成
+失能；不要同时启动第二个 EtherCAT 主站。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

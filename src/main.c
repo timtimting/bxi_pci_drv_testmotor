@@ -39,7 +39,7 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
-    "ethercat_scan", "ethercat_enable",
+    "ethercat_scan", "ethercat_enable", "ethercat_disable",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -73,6 +73,8 @@ int main(int argc, char **argv)
     const char *ethercat_interface = NULL;
     const char *ethercat_enable_interface = NULL;
     const char *ethercat_enable_selection = NULL;
+    const char *ethercat_disable_interface = NULL;
+    const char *ethercat_disable_selection = NULL;
     unsigned int ethercat_enable_hold_ms = 0u;
     unsigned int parsed_ethercat_slave_id;
     bool parsed_ethercat_all_slaves;
@@ -83,11 +85,12 @@ int main(int argc, char **argv)
         {"language", required_argument, NULL, 'l'},
         {"ethercat-scan", required_argument, NULL, 'E'},
         {"ethercat-enable", required_argument, NULL, 'M'},
+        {"ethercat-disable", required_argument, NULL, 'D'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
     };
 
-    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
             config_explicit = true;
@@ -105,8 +108,10 @@ int main(int argc, char **argv)
             ethercat_interface = optarg;
         } else if (opt == 'M') {
             ethercat_enable_interface = optarg;
+        } else if (opt == 'D') {
+            ethercat_disable_interface = optarg;
         } else {
-            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms]]\n", argv[0]);
+            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms]] [--ethercat-disable interface slave_id|all]\n", argv[0]);
             return 1;
         }
     }
@@ -118,7 +123,8 @@ int main(int argc, char **argv)
         return 0;
     }
     if (ethercat_enable_interface != NULL) {
-        if (ethercat_interface != NULL || optind >= argc || optind + 2 < argc ||
+        if (ethercat_interface != NULL || ethercat_disable_interface != NULL ||
+            optind >= argc || optind + 2 < argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
                                                     &parsed_ethercat_all_slaves) != 0) {
@@ -130,6 +136,15 @@ int main(int argc, char **argv)
             printf("用法：%s --ethercat-enable <interface> <slave_id|all> [hold_ms]\n", argv[0]);
             return 1;
         }
+    } else if (ethercat_disable_interface != NULL) {
+        if (ethercat_interface != NULL || optind >= argc || optind + 1 != argc ||
+            console_ethercat_parse_slave_selection(argv[optind],
+                                                    &parsed_ethercat_slave_id,
+                                                    &parsed_ethercat_all_slaves) != 0) {
+            printf("用法：%s --ethercat-disable <interface> <slave_id|all>\n", argv[0]);
+            return 1;
+        }
+        ethercat_disable_selection = argv[optind++];
     }
     if (optind != argc) {
         printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
@@ -173,6 +188,11 @@ int main(int argc, char **argv)
                                        ethercat_enable_interface,
                                        ethercat_enable_selection,
                                        ethercat_enable_hold_ms) == 0 ? 0 : 1;
+    }
+    if (ethercat_disable_interface != NULL) {
+        return console_ethercat_disable(state.config.chinese_ui,
+                                        ethercat_disable_interface,
+                                        ethercat_disable_selection) == 0 ? 0 : 1;
     }
     if (check_config) {
         console_print_config(&state);

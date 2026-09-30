@@ -437,3 +437,124 @@ close_socket:
     return result;
 #endif
 }
+
+static int console_ethercat_disable(bool chinese,
+                                    const char *interface,
+                                    const char *selection)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        printf("%s: ethercat_disable <network_interface> <slave_id|all>\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法失能 EtherCAT 电机。从 SOEM 源码编译后，执行 make "
+           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "EtherCAT disable is unavailable because this build has no SOEM support. Build again "
+           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+    return -1;
+#else
+    uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int32_t zero_positions[EC_MAXSLAVE] = {0};
+    int slave;
+    int result = -1;
+    bool mapped = false;
+    bool operational = false;
+
+    printf("%s: interface=%s slave=%s\n",
+           chinese ? "ethercat_disable: 开始" : "ethercat_disable: start",
+           interface, selection);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_disable: 打开网卡失败" :
+               "ethercat_disable: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_disable: 未发现 EtherCAT 从站" :
+               "ethercat_disable: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_disable: 从站序号不存在" :
+               "ethercat_disable: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+
+    ec_config_map(process_image);
+    mapped = true;
+    ec_configdc();
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+        printf("%s\n", chinese ? "ethercat_disable: 从站未进入 SAFE-OP" :
+               "ethercat_disable: slaves did not reach SAFE-OP");
+        goto cleanup;
+    }
+    if (console_ethercat_selected_ready(selected, zero_positions) != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_disable: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝操作" :
+               "ethercat_disable: PDO mapping is not the required Kaixuan 13B output/14B input layout; operation refused");
+        goto cleanup;
+    }
+    console_ethercat_set_control_word(selected, 0u);
+    if (console_ethercat_exchange() != 0) {
+        printf("%s\n", chinese ? "ethercat_disable: 初始 PDO 通信失败" :
+               "ethercat_disable: initial PDO exchange failed");
+        goto cleanup;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] != 0u) {
+            ec_slave[slave].state = EC_STATE_OPERATIONAL;
+            ec_writestate((uint16)slave);
+        }
+    }
+    for (slave = 0; slave < 100 && !stop_requested; slave++) {
+        bool all_operational = true;
+        int target;
+
+        if (console_ethercat_exchange() != 0) {
+            break;
+        }
+        for (target = 1; target <= ec_slavecount; target++) {
+            if (selected[target] != 0u &&
+                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
+                EC_STATE_OPERATIONAL) {
+                all_operational = false;
+                break;
+            }
+        }
+        if (all_operational) {
+            operational = true;
+            break;
+        }
+        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+    }
+    if (!operational) {
+        printf("%s\n", chinese ? "ethercat_disable: 从站未进入 OP，已尝试安全失能" :
+               "ethercat_disable: slave did not reach OP; attempted safe disable");
+        goto cleanup;
+    }
+    console_ethercat_disable_selected(selected);
+    printf("%s\n", chinese ? "ethercat_disable: 已发送 0x0000 并切回 SAFE-OP" :
+           "ethercat_disable: sent 0x0000 and returned to SAFE-OP");
+    result = 0;
+
+cleanup:
+    if (mapped && !operational) {
+        console_ethercat_disable_selected(selected);
+    }
+close_socket:
+    ec_close();
+    return result;
+#endif
+}
