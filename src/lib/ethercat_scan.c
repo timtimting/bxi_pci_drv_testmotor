@@ -41,6 +41,23 @@ static int console_ethercat_parse_slave_selection(const char *selection,
     return 0;
 }
 
+static int console_ethercat_parse_position_rad(const char *text, double *position_rad)
+{
+    char *end;
+    double parsed;
+
+    if (text == NULL || position_rad == NULL) {
+        return -1;
+    }
+    errno = 0;
+    parsed = strtod(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || !isfinite(parsed)) {
+        return -1;
+    }
+    *position_rad = parsed;
+    return 0;
+}
+
 enum {
     ETHERCAT_KAIXUAN_VENDOR_ID = 0x00010203u,
     ETHERCAT_KAIXUAN_PRODUCT_CODE = 0x00000402u,
@@ -53,8 +70,15 @@ enum {
     ETHERCAT_COMPLETION_SLAVE_MAX = 100u,
 };
 
+#define ETHERCAT_KAIXUAN_COUNTS_PER_REV 1048576.0
+#define ETHERCAT_KAIXUAN_TWO_PI 6.28318530717958647692
+
 static const char *const ethercat_hold_ms_words[] = {
     "1000", "2000", "5000", "10000", "30000", "60000",
+};
+
+static const char *const ethercat_position_rad_words[] = {
+    "0",
 };
 
 static const char *const ethercat_all_word[] = {
@@ -141,6 +165,21 @@ static const char *const *console_ethercat_completion_words(const char *line,
         return console_ethercat_slave_completion_words(count);
     }
     if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 3u) {
+        *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
+        return ethercat_hold_ms_words;
+    }
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 3u) {
+        *count = sizeof(ethercat_position_rad_words) /
+                 sizeof(ethercat_position_rad_words[0]);
+        return ethercat_position_rad_words;
+    }
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 4u) {
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
         return ethercat_hold_ms_words;
     }
@@ -529,6 +568,183 @@ cleanup:
     }
     printf("%s\n", chinese ? "ethercat_enable: 已发送失能并关闭 EtherCAT 主站" :
            "ethercat_enable: disable sent and EtherCAT master closed");
+close_socket:
+    ec_close();
+    return result;
+#endif
+}
+
+static int console_ethercat_position(bool chinese,
+                                     const char *interface,
+                                     const char *selection,
+                                     double position_rad,
+                                     unsigned int hold_ms)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
+        !isfinite(position_rad) || hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS) {
+        printf("%s: ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms:1..%u]\n",
+               chinese ? "用法" : "usage", ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS);
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法执行 EtherCAT 位控。从 SOEM 源码编译后，执行 make "
+           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "EtherCAT position control is unavailable because this build has no SOEM support. "
+           "Build again with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+    return -1;
+#else
+    uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int32_t target_positions[EC_MAXSLAVE];
+    double position_count_double;
+    uint64_t deadline;
+    long long position_count_long;
+    int slave;
+    int32_t position_count;
+    int result = -1;
+    bool mapped = false;
+
+    position_count_double = position_rad * ETHERCAT_KAIXUAN_COUNTS_PER_REV /
+                            ETHERCAT_KAIXUAN_TWO_PI;
+    if (position_count_double < (double)INT32_MIN || position_count_double > (double)INT32_MAX) {
+        printf("%s\n", chinese ? "ethercat_position: 目标弧度超出 int32 位置范围" :
+               "ethercat_position: target radians exceed int32 position range");
+        return -1;
+    }
+    position_count_long = llround(position_count_double);
+    position_count = (int32_t)position_count_long;
+    for (slave = 0; slave < EC_MAXSLAVE; slave++) {
+        target_positions[slave] = position_count;
+    }
+    if (hold_ms == 0u) {
+        printf("%s: interface=%s slave=%s target_rad=%.6f target_count=%d hold=until-Ctrl-C\n",
+               chinese ? "ethercat_position: 开始" : "ethercat_position: start",
+               interface, selection, position_rad, position_count);
+    } else {
+        printf("%s: interface=%s slave=%s target_rad=%.6f target_count=%d hold_ms=%u\n",
+               chinese ? "ethercat_position: 开始" : "ethercat_position: start",
+               interface, selection, position_rad, position_count, hold_ms);
+    }
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_position: 打开网卡失败" :
+               "ethercat_position: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_position: 未发现 EtherCAT 从站" :
+               "ethercat_position: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_position: 从站序号不存在" :
+               "ethercat_position: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+
+    ec_config_map(process_image);
+    mapped = true;
+    ec_configdc();
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+        printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
+               "ethercat_position: slaves did not reach SAFE-OP");
+        goto cleanup;
+    }
+    if (console_ethercat_selected_ready(selected, target_positions) != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_position: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝控制" :
+               "ethercat_position: PDO mapping is not the required Kaixuan 13B output/14B input layout; control refused");
+        goto cleanup;
+    }
+    if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
+        console_ethercat_exchange() != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 初始 PDO 通信失败" :
+               "ethercat_position: initial PDO exchange failed");
+        goto cleanup;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] != 0u) {
+            ec_slave[slave].state = EC_STATE_OPERATIONAL;
+            ec_writestate((uint16)slave);
+        }
+    }
+    for (slave = 0; slave < 100 && !stop_requested; slave++) {
+        bool all_operational = true;
+        int target;
+
+        if (console_ethercat_exchange() != 0) {
+            break;
+        }
+        for (target = 1; target <= ec_slavecount; target++) {
+            if (selected[target] != 0u &&
+                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
+                EC_STATE_OPERATIONAL) {
+                all_operational = false;
+                break;
+            }
+        }
+        if (all_operational) {
+            break;
+        }
+        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] != 0u &&
+            (ec_statecheck((uint16)slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
+            EC_STATE_OPERATIONAL) {
+            printf("%s: %d\n", chinese ? "ethercat_position: 从站未进入 OP" :
+                   "ethercat_position: slave did not reach OP", slave);
+            goto cleanup;
+        }
+    }
+    console_ethercat_set_control_word(selected, 0x0006u);
+    if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 0x0006 状态确认失败" :
+               "ethercat_position: 0x0006 state confirmation failed");
+        goto cleanup;
+    }
+    console_ethercat_set_control_word(selected, 0x0007u);
+    if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 0x0007 状态确认失败" :
+               "ethercat_position: 0x0007 state confirmation failed");
+        goto cleanup;
+    }
+    console_ethercat_set_control_word(selected, 0x000fu);
+    if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 0x000F 状态确认失败" :
+               "ethercat_position: 0x000F state confirmation failed");
+        goto cleanup;
+    }
+    printf("%s\n", chinese ?
+           "ethercat_position: 已进入 CSP 位控并持续发送目标位置；Ctrl-C 时失能。" :
+           "ethercat_position: CSP position control is active and target positions are being sent; Ctrl-C disables.");
+    deadline = hold_ms == 0u ? UINT64_MAX : time_us() + (uint64_t)hold_ms * 1000u;
+    while (!stop_requested && time_us() < deadline) {
+        if (console_ethercat_exchange() != 0) {
+            printf("%s\n", chinese ? "ethercat_position: PDO 通信中断" :
+                   "ethercat_position: PDO communication lost");
+            goto cleanup;
+        }
+        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+    }
+    result = stop_requested ? -1 : 0;
+
+cleanup:
+    if (mapped) {
+        console_ethercat_disable_selected(selected);
+    }
+    printf("%s\n", chinese ? "ethercat_position: 已发送失能并关闭 EtherCAT 主站" :
+           "ethercat_position: disable sent and EtherCAT master closed");
 close_socket:
     ec_close();
     return result;

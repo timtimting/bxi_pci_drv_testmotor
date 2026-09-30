@@ -186,6 +186,25 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 如果无时间参数的 `ethercat_enable` 仍在运行，先在该终端按 `Ctrl-C`，由原主站完成
 失能；不要同时启动第二个 EtherCAT 主站。
 
+### EtherCAT CSP 位控
+
+`target_rad` 会自动转换为对象 `0x607A` 的位置计数，单位为电机输入端弧度；
+`2π rad` 对应 `1048576 count` 和电机端一圈。 例如，让 `slave 1` 运动到电机端零位并保持使能：
+
+```bash
+sudo ./build/motor_console --ethercat-position enp86s0 1 0
+```
+
+让全部从站运动到电机端半圈（`π rad`），并在 5 秒后自动失能：
+
+```bash
+sudo ./build/motor_console --ethercat-position enp86s0 all 3.141593 5000
+```
+
+该命令使用 CSP（`0x6060=8`），先配置目标位置，再按 `0x0006`、`0x0007`、`0x000F`
+使能，随后以 2 ms 周期持续发送 `0x607A`。目标值是绝对电机端弧度，不包含减速比、机械零位
+或方向换算；首次测试请从当前位置附近的小幅弧度开始，并预留机械限位空间。
+
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
 

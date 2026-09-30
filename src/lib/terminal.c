@@ -131,6 +131,19 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_ethercat_disable(state->config.chinese_ui, argv[1], argv[2]);
+    } else if (strcmp(cmd, "ethercat_position") == 0) {
+        double position_rad;
+        unsigned int hold_ms = 0u;
+
+        if ((argc != 4 && argc != 5) ||
+            console_ethercat_parse_position_rad(argv[3], &position_rad) != 0 ||
+            (argc == 5 && parse_uint_arg(argv[4], &hold_ms) != 0)) {
+            printf("%s: ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_position(state->config.chinese_ui,
+                                         argv[1], argv[2], position_rad, hold_ms);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));

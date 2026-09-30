@@ -47,6 +47,7 @@ add_executable(motor_console ./src/main.c ./src/lib/bxi_motor_comm.c)
 
 target_link_libraries(motor_console
   PRIVATE
+  m
   pthread
   "${BXI_PCI_CTL_LIB}"
 )
