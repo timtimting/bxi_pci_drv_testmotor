@@ -146,6 +146,10 @@ OP 状态，也不发送使能或运动指令：
 sudo ./build/motor_console --ethercat-scan enp86s0
 ```
 
+所有 `--ethercat-*` 命令均直接通过 SOEM 扫描网卡上的实际 EtherCAT 从站；不会读取
+`config/motor_console.yaml` 中的 CAN 电机配置，也不会初始化 BXI PCI/CAN。电机身份和
+拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
+
 终端内等效命令为 `ethercat_scan enp86s0`，但命令行方式不会初始化 BXI PCI/CAN，
 更适合只连接 EtherCAT 电机的电脑。SOEM 默认从 `$HOME/SOEM-v1.4.0` 检测；若安装
 在其他位置，重新构建时指定：
@@ -171,10 +175,14 @@ sudo ./build/motor_console --ethercat-enable enp86s0 all 5000
 ```
 
 该命令仅支持扫描到的开璇 `Kaiserdrive_ECAT` 和实测 `13 B` 输出、`14 B` 输入 PDO
-布局。它先将目标位置写为每台电机的当前反馈位置，再依次发送 CiA-402 控制字
+布局。它以 `2 ms` 配置从站的 DC Sync0，再将目标位置写为每台电机的当前反馈位置，最后依次发送 CiA-402 控制字
 `0x0006`、`0x0007`、`0x000F`。命令持续发送 2 ms 周期 PDO；到时、通信失败或
 `Ctrl-C` 时会发送 `0x0000` 失能并关闭主站。省略 `hold_ms` 时，命令持续运行并维持
 主站 PDO 通信；此时请用 `Ctrl-C` 退出和失能，不能在另一个终端中启动第二个主站。
+
+若使能状态确认失败，程序会打印 PDO 状态字、CiA-402 状态、模式显示（`0x6061`）和
+故障码（`0x603F`）。若处于 `fault`，先排除供电、机械急停和编码器等故障；确认安全后
+按手册发送 `0x0080` 复位故障，再重新使能。
 
 失能指定从站或总线上全部从站：
 

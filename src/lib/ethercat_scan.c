@@ -64,6 +64,7 @@ enum {
     ETHERCAT_KAIXUAN_RXPDO_BITS = 104u,
     ETHERCAT_KAIXUAN_TXPDO_MIN_BITS = 112u,
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS = 2u,
+    ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS = 2000000u,
     ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS = 60000u,
     ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE = 8192u,
     ETHERCAT_COMPLETION_INTERFACE_MAX = 32u,
@@ -256,6 +257,76 @@ static int console_ethercat_exchange(void)
     ec_send_processdata();
     work_counter = ec_receive_processdata(EC_TIMEOUTRET);
     return work_counter > 0 ? 0 : -1;
+}
+
+static const char *console_ethercat_cia402_state_name(uint16_t status_word)
+{
+    switch (status_word & 0x006fu) {
+    case 0x0040u:
+        return "switch-on-disabled";
+    case 0x0021u:
+        return "ready-to-switch-on";
+    case 0x0023u:
+        return "switched-on";
+    case 0x0027u:
+        return "operation-enabled";
+    case 0x0007u:
+        return "quick-stop-active";
+    case 0x000fu:
+        return "fault-reaction-active";
+    case 0x0008u:
+        return "fault";
+    default:
+        return "unknown";
+    }
+}
+
+static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        if (ec_slave[slave].hasdc == 0u) {
+            return -1;
+        }
+        ec_dcsync0((uint16)slave, TRUE, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, 0);
+    }
+    return 0;
+}
+
+static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t status_word;
+        uint16_t error_code;
+        int8_t mode_display;
+        int size;
+
+        if (selected[slave] == 0u || ec_slave[slave].inputs == NULL ||
+            ec_slave[slave].Ibits < 16u) {
+            continue;
+        }
+        status_word = console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs);
+        printf("[slave%d]: status_word=0x%04x cia402=%s", slave,
+               (unsigned int)status_word, console_ethercat_cia402_state_name(status_word));
+
+        size = (int)sizeof(mode_display);
+        if (ec_SDOread((uint16)slave, 0x6061u, 0u, FALSE, &size, &mode_display,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(mode_display)) {
+            printf(" mode_display=%d", (int)mode_display);
+        }
+        size = (int)sizeof(error_code);
+        if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
+            printf(" error_code=0x%04x", (unsigned int)error_code);
+        }
+        printf("\n");
+    }
 }
 
 static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
@@ -481,6 +552,11 @@ static int console_ethercat_enable(bool chinese,
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
+    if (console_ethercat_enable_dc_sync(selected) != 0) {
+        printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
+               "ethercat_enable: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
@@ -546,18 +622,21 @@ static int console_ethercat_enable(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0006 状态确认失败" :
                "ethercat_enable: 0x0006 state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0007 状态确认失败" :
                "ethercat_enable: 0x0007 state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x000F 状态确认失败" :
                "ethercat_enable: 0x000F state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     printf("%s\n", chinese ?
@@ -667,6 +746,11 @@ static int console_ethercat_position(bool chinese,
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
+    if (console_ethercat_enable_dc_sync(selected) != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 目标从站不支持 DC Sync0" :
+               "ethercat_position: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
                "ethercat_position: slaves did not reach SAFE-OP");
@@ -723,18 +807,21 @@ static int console_ethercat_position(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0006 状态确认失败" :
                "ethercat_position: 0x0006 state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0007 状态确认失败" :
                "ethercat_position: 0x0007 state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x000F 状态确认失败" :
                "ethercat_position: 0x000F state confirmation failed");
+        console_ethercat_print_selected_status(selected);
         goto cleanup;
     }
     printf("%s\n", chinese ?

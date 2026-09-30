@@ -207,6 +207,47 @@ int main(int argc, char **argv)
         printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
         return 1;
     }
+    if (ethercat_interface != NULL || ethercat_enable_interface != NULL ||
+        ethercat_disable_interface != NULL || ethercat_position_interface != NULL ||
+        ethercat_zero_interface != NULL || ethercat_info_interface != NULL) {
+        bool chinese = language_override == NULL || strcmp(language_override, "zh") == 0;
+
+        if (check_config) {
+            printf("用法：--check-config 不能与 EtherCAT 命令同时使用\n");
+            return 1;
+        }
+        signal(SIGINT, on_signal);
+        signal(SIGTERM, on_signal);
+        if (ethercat_interface != NULL) {
+            return console_ethercat_scan(chinese, ethercat_interface) == 0 ? 0 : 1;
+        }
+        if (ethercat_enable_interface != NULL) {
+            return console_ethercat_enable(chinese,
+                                           ethercat_enable_interface,
+                                           ethercat_enable_selection,
+                                           ethercat_enable_hold_ms) == 0 ? 0 : 1;
+        }
+        if (ethercat_disable_interface != NULL) {
+            return console_ethercat_disable(chinese,
+                                            ethercat_disable_interface,
+                                            ethercat_disable_selection) == 0 ? 0 : 1;
+        }
+        if (ethercat_position_interface != NULL) {
+            return console_ethercat_position(chinese,
+                                             ethercat_position_interface,
+                                             ethercat_position_selection,
+                                             ethercat_position_rad,
+                                             ethercat_position_hold_ms) == 0 ? 0 : 1;
+        }
+        if (ethercat_zero_interface != NULL) {
+            return console_ethercat_zero(chinese,
+                                         ethercat_zero_interface,
+                                         ethercat_zero_selection) == 0 ? 0 : 1;
+        }
+        return console_ethercat_info(chinese,
+                                     ethercat_info_interface,
+                                     ethercat_info_selection) == 0 ? 0 : 1;
+    }
     if (!config_explicit) {
         config_path = console_default_config_path(argv[0], resolved_config_path,
                                                   sizeof(resolved_config_path));
@@ -238,37 +279,6 @@ int main(int argc, char **argv)
     console_load_kaixuan_esi(&state, argv[0]);
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
-    if (ethercat_interface != NULL) {
-        return console_ethercat_scan(state.config.chinese_ui, ethercat_interface) == 0 ? 0 : 1;
-    }
-    if (ethercat_enable_interface != NULL) {
-        return console_ethercat_enable(state.config.chinese_ui,
-                                       ethercat_enable_interface,
-                                       ethercat_enable_selection,
-                                       ethercat_enable_hold_ms) == 0 ? 0 : 1;
-    }
-    if (ethercat_disable_interface != NULL) {
-        return console_ethercat_disable(state.config.chinese_ui,
-                                        ethercat_disable_interface,
-                                        ethercat_disable_selection) == 0 ? 0 : 1;
-    }
-    if (ethercat_position_interface != NULL) {
-        return console_ethercat_position(state.config.chinese_ui,
-                                         ethercat_position_interface,
-                                         ethercat_position_selection,
-                                         ethercat_position_rad,
-                                         ethercat_position_hold_ms) == 0 ? 0 : 1;
-    }
-    if (ethercat_zero_interface != NULL) {
-        return console_ethercat_zero(state.config.chinese_ui,
-                                    ethercat_zero_interface,
-                                    ethercat_zero_selection) == 0 ? 0 : 1;
-    }
-    if (ethercat_info_interface != NULL) {
-        return console_ethercat_info(state.config.chinese_ui,
-                                     ethercat_info_interface,
-                                     ethercat_info_selection) == 0 ? 0 : 1;
-    }
     if (check_config) {
         console_print_config(&state);
         console_print_motors(&state);
