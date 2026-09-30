@@ -156,6 +156,26 @@ make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
 
 若未检测到 SOEM，命令会输出上述重建提示而不会尝试访问网卡。
 
+### EtherCAT 安全使能测试
+
+使能指定拓扑从站（例如 `slave 1`）并持续保持当前的位置：
+
+```bash
+sudo ./build/motor_console --ethercat-enable enp86s0 1
+```
+
+使能总线上全部从站并保持当前位置 5 秒后自动失能：
+
+```bash
+sudo ./build/motor_console --ethercat-enable enp86s0 all 5000
+```
+
+该命令仅支持扫描到的开璇 `Kaiserdrive_ECAT` 和实测 `13 B` 输出、`14 B` 输入 PDO
+布局。它先将目标位置写为每台电机的当前反馈位置，再依次发送 CiA-402 控制字
+`0x0006`、`0x0007`、`0x000F`。命令持续发送 2 ms 周期 PDO；到时、通信失败或
+`Ctrl-C` 时会发送 `0x0000` 失能并关闭主站。省略 `hold_ms` 时，命令持续运行并维持
+主站 PDO 通信；此时请用 `Ctrl-C` 退出和失能，不能在另一个终端中启动第二个主站。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

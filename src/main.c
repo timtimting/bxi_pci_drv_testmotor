@@ -39,7 +39,7 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
-    "ethercat_scan",
+    "ethercat_scan", "ethercat_enable",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -71,17 +71,23 @@ int main(int argc, char **argv)
     bool config_explicit = false;
     const char *language_override = NULL;
     const char *ethercat_interface = NULL;
+    const char *ethercat_enable_interface = NULL;
+    const char *ethercat_enable_selection = NULL;
+    unsigned int ethercat_enable_hold_ms = 0u;
+    unsigned int parsed_ethercat_slave_id;
+    bool parsed_ethercat_all_slaves;
 
     static const struct option options[] = {
         {"config", required_argument, NULL, 'c'},
         {"check-config", no_argument, NULL, 'C'},
         {"language", required_argument, NULL, 'l'},
         {"ethercat-scan", required_argument, NULL, 'E'},
+        {"ethercat-enable", required_argument, NULL, 'M'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
     };
 
-    while ((opt = getopt_long(argc, argv, "c:Cl:hE:", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
             config_explicit = true;
@@ -97,8 +103,10 @@ int main(int argc, char **argv)
             show_help = true;
         } else if (opt == 'E') {
             ethercat_interface = optarg;
+        } else if (opt == 'M') {
+            ethercat_enable_interface = optarg;
         } else {
-            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
+            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms]]\n", argv[0]);
             return 1;
         }
     }
@@ -108,6 +116,20 @@ int main(int argc, char **argv)
         console_print_help(language_override != NULL && strcmp(language_override, "zh") == 0,
                            verbose_help);
         return 0;
+    }
+    if (ethercat_enable_interface != NULL) {
+        if (ethercat_interface != NULL || optind >= argc || optind + 2 < argc ||
+            console_ethercat_parse_slave_selection(argv[optind],
+                                                    &parsed_ethercat_slave_id,
+                                                    &parsed_ethercat_all_slaves) != 0) {
+            printf("用法：%s --ethercat-enable <interface> <slave_id|all> [hold_ms]\n", argv[0]);
+            return 1;
+        }
+        ethercat_enable_selection = argv[optind++];
+        if (optind < argc && parse_uint_arg(argv[optind++], &ethercat_enable_hold_ms) != 0) {
+            printf("用法：%s --ethercat-enable <interface> <slave_id|all> [hold_ms]\n", argv[0]);
+            return 1;
+        }
     }
     if (optind != argc) {
         printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
@@ -141,8 +163,16 @@ int main(int argc, char **argv)
         return 1;
     }
     console_load_kaixuan_esi(&state, argv[0]);
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
     if (ethercat_interface != NULL) {
         return console_ethercat_scan(state.config.chinese_ui, ethercat_interface) == 0 ? 0 : 1;
+    }
+    if (ethercat_enable_interface != NULL) {
+        return console_ethercat_enable(state.config.chinese_ui,
+                                       ethercat_enable_interface,
+                                       ethercat_enable_selection,
+                                       ethercat_enable_hold_ms) == 0 ? 0 : 1;
     }
     if (check_config) {
         console_print_config(&state);
@@ -154,8 +184,6 @@ int main(int argc, char **argv)
     }
     console_prefetch_firmware(&state);
 
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
     if (bxi_pci_init(can_rx_callback, &state, -1) == -1) {
         fprintf(stderr, "%s\n", console_text(&state,
                 "PCI/CAN 初始化失败：bxi_pci_init",

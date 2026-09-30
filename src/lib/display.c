@@ -13,7 +13,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  电源/状态： power_on    power_off    motor_probe\n");
             printf("             motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT：  ethercat_scan <network_interface>\n");
-            printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n\n");
+            printf("             ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
+            printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
+            printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms]（命令行且不初始化 PCI/CAN）\n\n");
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
@@ -35,7 +37,9 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  Power/status: power_on    power_off    motor_probe\n");
             printf("                motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT:     ethercat_scan <network_interface>\n");
-            printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n\n");
+            printf("                ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
+            printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
+            printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] (CLI; skips PCI/CAN initialization)\n\n");
             printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("                mit_enable_all    mit_disable_all\n");
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
@@ -73,8 +77,12 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
         printf("  ethercat_scan <network_interface>\n");
         printf("      通过 SOEM 枚举 EtherCAT 从站；不配置 PDO、不进入 OP，也不使能或运动电机。\n");
+        printf("  ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
+        printf("      通过 CiA-402 使能指定从站或全部从站并保持当前位置；省略 hold_ms 时持续使能，Ctrl-C 失能。\n");
         printf("  --ethercat-scan <network_interface>\n");
         printf("      命令行执行 EtherCAT 扫描，不初始化 BXI PCI/CAN。\n");
+        printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms]\n");
+        printf("      命令行执行 EtherCAT 安全使能测试，不初始化 BXI PCI/CAN。\n");
         printf("  mit_zero_set_all\n");
         printf("      给全部电机发送 MIT 零位校准帧；要求电机已上电并处于失能状态。\n");
         printf("  mit_zero_set_single <index00>\n");
@@ -139,8 +147,12 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
     printf("  ethercat_scan <network_interface>\n");
     printf("      Enumerate EtherCAT slaves through SOEM; does not configure PDOs, enter OP, or enable/move a drive.\n");
+    printf("  ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
+    printf("      Enable selected/all slaves through CiA-402 while holding position; omit hold_ms to stay enabled until Ctrl-C.\n");
     printf("  --ethercat-scan <network_interface>\n");
     printf("      Run an EtherCAT scan from the command line without BXI PCI/CAN initialization.\n");
+    printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms]\n");
+    printf("      Run the EtherCAT safe enable test from the command line without BXI PCI/CAN initialization.\n");
     printf("  mit_zero_set_all\n");
     printf("      Send the MIT zero-calibration frame to every configured motor. Motors must\n");
     printf("      be powered and disabled.\n");
