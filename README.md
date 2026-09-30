@@ -205,6 +205,18 @@ sudo ./build/motor_console --ethercat-position enp86s0 all 3.141593 5000
 使能，随后以 2 ms 周期持续发送 `0x607A`。目标值是绝对电机端弧度，不包含减速比、机械零位
 或方向换算；首次测试请从当前位置附近的小幅弧度开始，并预留机械限位空间。
 
+### EtherCAT 零位设置
+
+在机械位置已摆正且无持续 EtherCAT 主站运行时，设置指定从站或全部从站的当前机械位置为零：
+
+```bash
+sudo ./build/motor_console --ethercat-zero enp86s0 1
+sudo ./build/motor_console --ethercat-zero enp86s0 all
+```
+
+命令会先确认伺服失能，再通过 SDO 对 `Pn101 (0x2101:00, int16)` 写入 `0→1→0`。这只记录
+零位请求；根据开璇手册，完成后必须同时重启执行器主电和 USB 电源，`0x6064` 的零位才会生效。
+
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
 

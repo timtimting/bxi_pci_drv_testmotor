@@ -16,10 +16,12 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
             printf("             ethercat_disable <network_interface> <slave_id|all>\n");
             printf("             ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
+            printf("             ethercat_zero <network_interface> <slave_id|all>\n");
             printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-disable <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
-            printf("             --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n\n");
+            printf("             --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
+            printf("             --ethercat-zero <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n\n");
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
@@ -44,10 +46,12 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n");
             printf("                ethercat_disable <network_interface> <slave_id|all>\n");
             printf("                ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
+            printf("                ethercat_zero <network_interface> <slave_id|all>\n");
             printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-disable <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
-            printf("                --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n\n");
+            printf("                --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
+            printf("                --ethercat-zero <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n\n");
             printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("                mit_enable_all    mit_disable_all\n");
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
@@ -91,6 +95,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      向指定从站或全部从站发送 0x0000 失能，并切回 SAFE-OP。\n");
         printf("  ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
         printf("      CSP 位控；target_rad 为电机端弧度（2π/圈），省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
+        printf("  ethercat_zero <network_interface> <slave_id|all>\n");
+        printf("      伺服失能后写 Pn101 的 0→1→0；完成后必须同时重启主电和 USB 电源。\n");
         printf("  --ethercat-scan <network_interface>\n");
         printf("      命令行执行 EtherCAT 扫描，不初始化 BXI PCI/CAN。\n");
         printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms]\n");
@@ -99,6 +105,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      命令行执行 EtherCAT 失能，不初始化 BXI PCI/CAN。\n");
         printf("  --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
         printf("      命令行执行 EtherCAT CSP 位控，不初始化 BXI PCI/CAN。\n");
+        printf("  --ethercat-zero <network_interface> <slave_id|all>\n");
+        printf("      命令行执行 EtherCAT 零位设置，不初始化 BXI PCI/CAN。\n");
         printf("  mit_zero_set_all\n");
         printf("      给全部电机发送 MIT 零位校准帧；要求电机已上电并处于失能状态。\n");
         printf("  mit_zero_set_single <index00>\n");
@@ -169,6 +177,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Send 0x0000 to disable selected/all slaves, then return them to SAFE-OP.\n");
     printf("  ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
     printf("      CSP control; target_rad uses motor-side radians (2pi/rev). Omit hold_ms to control until Ctrl-C.\n");
+    printf("  ethercat_zero <network_interface> <slave_id|all>\n");
+    printf("      Disable servo, write Pn101 0->1->0, then restart main and USB power for zero to take effect.\n");
     printf("  --ethercat-scan <network_interface>\n");
     printf("      Run an EtherCAT scan from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms]\n");
@@ -177,6 +187,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Run EtherCAT disable from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
     printf("      Run EtherCAT CSP position control from the command line without BXI PCI/CAN initialization.\n");
+    printf("  --ethercat-zero <network_interface> <slave_id|all>\n");
+    printf("      Set EtherCAT zero from the command line without BXI PCI/CAN initialization.\n");
     printf("  mit_zero_set_all\n");
     printf("      Send the MIT zero-calibration frame to every configured motor. Motors must\n");
     printf("      be powered and disabled.\n");

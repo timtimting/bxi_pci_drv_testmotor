@@ -183,6 +183,12 @@ static const char *const *console_ethercat_completion_words(const char *line,
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
         return ethercat_hold_ms_words;
     }
+    if (strcmp(first, "ethercat_zero") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_zero") == 0 && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
     *count = 0u;
     return NULL;
 }
@@ -748,6 +754,151 @@ cleanup:
 close_socket:
     ec_close();
     return result;
+#endif
+}
+
+static int console_ethercat_zero(bool chinese, const char *interface, const char *selection)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        printf("%s: ethercat_zero <network_interface> <slave_id|all>\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法设置 EtherCAT 零位。从 SOEM 源码编译后，执行 make "
+           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "EtherCAT zero setting is unavailable because this build has no SOEM support. "
+           "Build again with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+    return -1;
+#else
+    uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int32_t zero_positions[EC_MAXSLAVE] = {0};
+    int16_t parameter_value;
+    int slave;
+    int failed = 0;
+    bool mapped = false;
+    bool operational = false;
+
+    printf("%s: interface=%s slave=%s\n",
+           chinese ? "ethercat_zero: 开始" : "ethercat_zero: start", interface, selection);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_zero: 打开网卡失败" :
+               "ethercat_zero: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_zero: 未发现 EtherCAT 从站" :
+               "ethercat_zero: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_zero: 从站序号不存在" :
+               "ethercat_zero: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+
+    ec_config_map(process_image);
+    mapped = true;
+    ec_configdc();
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP ||
+        console_ethercat_selected_ready(selected, zero_positions) != 0 ||
+        console_ethercat_exchange() != 0) {
+        printf("%s\n", chinese ? "ethercat_zero: PDO 映射或 SAFE-OP 初始化失败" :
+               "ethercat_zero: PDO mapping or SAFE-OP initialization failed");
+        goto cleanup;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] != 0u) {
+            ec_slave[slave].state = EC_STATE_OPERATIONAL;
+            ec_writestate((uint16)slave);
+        }
+    }
+    for (slave = 0; slave < 100 && !stop_requested; slave++) {
+        bool all_operational = true;
+        int target;
+
+        if (console_ethercat_exchange() != 0) {
+            break;
+        }
+        for (target = 1; target <= ec_slavecount; target++) {
+            if (selected[target] != 0u &&
+                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
+                EC_STATE_OPERATIONAL) {
+                all_operational = false;
+                break;
+            }
+        }
+        if (all_operational) {
+            operational = true;
+            break;
+        }
+        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+    }
+    if (!operational) {
+        printf("%s\n", chinese ? "ethercat_zero: 从站未进入 OP，已拒绝写入 Pn101" :
+               "ethercat_zero: slave did not reach OP; Pn101 write refused");
+        goto cleanup;
+    }
+    console_ethercat_set_control_word(selected, 0u);
+    if (console_ethercat_wait_for_status(selected, 0x0040u) != 0) {
+        printf("%s\n", chinese ? "ethercat_zero: 伺服失能状态确认失败" :
+               "ethercat_zero: servo-disable state confirmation failed");
+        goto cleanup;
+    }
+    console_ethercat_disable_selected(selected);
+    operational = false;
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        parameter_value = 0;
+        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
+                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
+            failed++;
+            continue;
+        }
+        parameter_value = 1;
+        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
+                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
+            failed++;
+            continue;
+        }
+        parameter_value = 0;
+        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
+                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
+            failed++;
+            continue;
+        }
+        printf("[slave%d]: Pn101 0->1->0 sent\n", slave);
+    }
+    if (failed == 0) {
+        printf("%s\n", chinese ?
+               "ethercat_zero: Pn101 已写入。请同时重启执行器主电和 USB 电源，零位才会生效。" :
+               "ethercat_zero: Pn101 was written. Restart both actuator main power and USB power for zero to take effect.");
+    } else {
+        printf("%s: failed=%d\n", chinese ? "ethercat_zero: Pn101 写入失败" :
+               "ethercat_zero: Pn101 write failed", failed);
+    }
+
+cleanup:
+    if (mapped && operational) {
+        console_ethercat_disable_selected(selected);
+    }
+close_socket:
+    ec_close();
+    return failed == 0 && !stop_requested ? 0 : -1;
 #endif
 }
 

@@ -39,7 +39,7 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
-    "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position",
+    "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_zero",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -77,6 +77,8 @@ int main(int argc, char **argv)
     const char *ethercat_disable_selection = NULL;
     const char *ethercat_position_interface = NULL;
     const char *ethercat_position_selection = NULL;
+    const char *ethercat_zero_interface = NULL;
+    const char *ethercat_zero_selection = NULL;
     unsigned int ethercat_enable_hold_ms = 0u;
     unsigned int ethercat_position_hold_ms = 0u;
     double ethercat_position_rad;
@@ -91,11 +93,12 @@ int main(int argc, char **argv)
         {"ethercat-enable", required_argument, NULL, 'M'},
         {"ethercat-disable", required_argument, NULL, 'D'},
         {"ethercat-position", required_argument, NULL, 'P'},
+        {"ethercat-zero", required_argument, NULL, 'Z'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
     };
 
-    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:P:", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:P:Z:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
             config_explicit = true;
@@ -117,6 +120,8 @@ int main(int argc, char **argv)
             ethercat_disable_interface = optarg;
         } else if (opt == 'P') {
             ethercat_position_interface = optarg;
+        } else if (opt == 'Z') {
+            ethercat_zero_interface = optarg;
         } else {
             printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms]] [--ethercat-disable interface slave_id|all] [--ethercat-position interface slave_id|all target_rad [hold_ms]]\n", argv[0]);
             return 1;
@@ -131,7 +136,7 @@ int main(int argc, char **argv)
     }
     if (ethercat_enable_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_disable_interface != NULL ||
-            ethercat_position_interface != NULL ||
+            ethercat_position_interface != NULL || ethercat_zero_interface != NULL ||
             optind >= argc || optind + 2 < argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -146,6 +151,7 @@ int main(int argc, char **argv)
         }
     } else if (ethercat_disable_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_position_interface != NULL ||
+            ethercat_zero_interface != NULL ||
             optind >= argc || optind + 1 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -155,7 +161,8 @@ int main(int argc, char **argv)
         }
         ethercat_disable_selection = argv[optind++];
     } else if (ethercat_position_interface != NULL) {
-        if (ethercat_interface != NULL || optind + 2 > argc || optind + 3 < argc ||
+        if (ethercat_interface != NULL || ethercat_zero_interface != NULL ||
+            optind + 2 > argc || optind + 3 < argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
                                                     &parsed_ethercat_all_slaves) != 0) {
@@ -168,6 +175,15 @@ int main(int argc, char **argv)
             printf("用法：%s --ethercat-position <interface> <slave_id|all> <target_rad> [hold_ms]\n", argv[0]);
             return 1;
         }
+    } else if (ethercat_zero_interface != NULL) {
+        if (ethercat_interface != NULL || optind + 1 != argc ||
+            console_ethercat_parse_slave_selection(argv[optind],
+                                                    &parsed_ethercat_slave_id,
+                                                    &parsed_ethercat_all_slaves) != 0) {
+            printf("用法：%s --ethercat-zero <interface> <slave_id|all>\n", argv[0]);
+            return 1;
+        }
+        ethercat_zero_selection = argv[optind++];
     }
     if (optind != argc) {
         printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
@@ -224,6 +240,11 @@ int main(int argc, char **argv)
                                          ethercat_position_selection,
                                          ethercat_position_rad,
                                          ethercat_position_hold_ms) == 0 ? 0 : 1;
+    }
+    if (ethercat_zero_interface != NULL) {
+        return console_ethercat_zero(state.config.chinese_ui,
+                                    ethercat_zero_interface,
+                                    ethercat_zero_selection) == 0 ? 0 : 1;
     }
     if (check_config) {
         console_print_config(&state);
