@@ -107,6 +107,13 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_print_motors(state);
+    } else if (strcmp(cmd, "ethercat_scan") == 0) {
+        if (argc != 2) {
+            printf("%s: ethercat_scan <network_interface>\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_scan(state->config.chinese_ui, argv[1]);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));

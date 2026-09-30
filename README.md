@@ -137,6 +137,25 @@ Revision，用于确认项目内的 ESI 资产可用；该读取不会初始化 
 当前终端仍使用 BXI PCI/CAN 通信。开璇 EtherCAT 控制需要后续集成 SOEM，并以
 运行中从站读取到的实际 PDO 映射为准。
 
+### EtherCAT 扫描
+
+编译时检测到 SOEM 后，可用以下命令只扫描 EtherCAT 从站，不配置 PDO、不进入
+OP 状态，也不发送使能或运动指令：
+
+```bash
+sudo ./build/motor_console --ethercat-scan enp86s0
+```
+
+终端内等效命令为 `ethercat_scan enp86s0`，但命令行方式不会初始化 BXI PCI/CAN，
+更适合只连接 EtherCAT 电机的电脑。SOEM 默认从 `$HOME/SOEM-v1.4.0` 检测；若安装
+在其他位置，重新构建时指定：
+
+```bash
+make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
+```
+
+若未检测到 SOEM，命令会输出上述重建提示而不会尝试访问网卡。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

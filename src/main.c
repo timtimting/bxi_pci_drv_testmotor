@@ -39,6 +39,7 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
+    "ethercat_scan",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -51,6 +52,7 @@ static const char *const console_command_words[] = {
 
 #include "lib/core.c"
 #include "lib/ethercat_esi.c"
+#include "lib/ethercat_scan.c"
 #include "lib/display.c"
 #include "lib/control.c"
 #include "lib/flash.c"
@@ -68,16 +70,18 @@ int main(int argc, char **argv)
     bool show_help = false;
     bool config_explicit = false;
     const char *language_override = NULL;
+    const char *ethercat_interface = NULL;
 
     static const struct option options[] = {
         {"config", required_argument, NULL, 'c'},
         {"check-config", no_argument, NULL, 'C'},
         {"language", required_argument, NULL, 'l'},
+        {"ethercat-scan", required_argument, NULL, 'E'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
     };
 
-    while ((opt = getopt_long(argc, argv, "c:Cl:h", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:Cl:hE:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
             config_explicit = true;
@@ -91,8 +95,10 @@ int main(int argc, char **argv)
             language_override = optarg;
         } else if (opt == 'h') {
             show_help = true;
+        } else if (opt == 'E') {
+            ethercat_interface = optarg;
         } else {
-            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config]\n", argv[0]);
+            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
             return 1;
         }
     }
@@ -104,7 +110,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (optind != argc) {
-        printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config]\n", argv[0]);
+        printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface]\n", argv[0]);
         return 1;
     }
     if (!config_explicit) {
@@ -135,6 +141,9 @@ int main(int argc, char **argv)
         return 1;
     }
     console_load_kaixuan_esi(&state, argv[0]);
+    if (ethercat_interface != NULL) {
+        return console_ethercat_scan(state.config.chinese_ui, ethercat_interface) == 0 ? 0 : 1;
+    }
     if (check_config) {
         console_print_config(&state);
         console_print_motors(&state);
