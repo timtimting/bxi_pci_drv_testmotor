@@ -35,7 +35,9 @@ if(SOEM_INCLUDE_DIR AND SOEM_LIBRARY)
   include_directories(
     "${SOEM_INCLUDE_DIR}"
     "${SOEM_INCLUDE_DIR}/osal"
+    "${SOEM_INCLUDE_DIR}/osal/linux"
     "${SOEM_INCLUDE_DIR}/oshw"
+    "${SOEM_INCLUDE_DIR}/oshw/linux"
   )
   add_definitions(-DHAVE_SOEM=1)
   message(STATUS "SOEM EtherCAT discovery enabled: ${SOEM_LIBRARY}")
