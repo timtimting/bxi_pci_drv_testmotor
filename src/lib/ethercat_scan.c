@@ -59,6 +59,24 @@ static int console_ethercat_parse_position_rad(const char *text, double *positio
     return 0;
 }
 
+static int console_ethercat_parse_sync0_shift(const char *text, int32_t *shift_ns)
+{
+    char *end;
+    long parsed;
+
+    if (text == NULL || shift_ns == NULL) {
+        return -1;
+    }
+    errno = 0;
+    parsed = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' ||
+        parsed < -4000000L || parsed > 4000000L) {
+        return -1;
+    }
+    *shift_ns = (int32_t)parsed;
+    return 0;
+}
+
 enum {
     ETHERCAT_KAIXUAN_VENDOR_ID = 0x00010203u,
     ETHERCAT_KAIXUAN_PRODUCT_CODE = 0x00000402u,
@@ -77,6 +95,10 @@ enum {
 
 static const char *const ethercat_hold_ms_words[] = {
     "1000", "2000", "5000", "10000", "30000", "60000",
+};
+
+static const char *const ethercat_sync0_shift_words[] = {
+    "0", "100000", "-100000",
 };
 
 static const char *const ethercat_position_rad_words[] = {
@@ -173,6 +195,11 @@ static const char *const *console_ethercat_completion_words(const char *line,
     if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 3u) {
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
         return ethercat_hold_ms_words;
+    }
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 4u) {
+        *count = sizeof(ethercat_sync0_shift_words) /
+                 sizeof(ethercat_sync0_shift_words[0]);
+        return ethercat_sync0_shift_words;
     }
     if (strcmp(first, "ethercat_position") == 0 && tokens_before == 1u) {
         return console_ethercat_interface_completion_words(count);
@@ -385,7 +412,8 @@ static const char *console_ethercat_cia402_state_name(uint16_t status_word)
     }
 }
 
-static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE])
+static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE],
+                                           int32_t shift_ns)
 {
     int slave;
 
@@ -396,7 +424,7 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE])
         if (ec_slave[slave].hasdc == 0u) {
             return -1;
         }
-        ec_dcsync0((uint16)slave, TRUE, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, 0);
+        ec_dcsync0((uint16)slave, TRUE, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, shift_ns);
     }
     return 0;
 }
@@ -717,15 +745,19 @@ static int console_ethercat_scan(bool chinese, const char *interface)
 static int console_ethercat_enable(bool chinese,
                                    const char *interface,
                                    const char *selection,
-                                   unsigned int hold_ms)
+                                   unsigned int hold_ms,
+                                   const char *sync0_shift_text)
 {
     unsigned int slave_id;
     bool all_slaves;
+    int32_t sync0_shift_ns = 0;
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
-        hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS) {
-        printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms:1..%u]\n",
+        hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
+        (sync0_shift_text != NULL &&
+         console_ethercat_parse_sync0_shift(sync0_shift_text, &sync0_shift_ns) != 0)) {
+        printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms:0..%u] [sync0_shift_ns:-4000000..4000000]\n",
                chinese ? "用法" : "usage", ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS);
         return -1;
     }
@@ -747,13 +779,15 @@ static int console_ethercat_enable(bool chinese,
     bool mapped = false;
 
     if (hold_ms == 0u) {
-        printf("%s: interface=%s slave=%s hold=until-Ctrl-C\n",
+        printf("%s: interface=%s slave=%s hold=until-Ctrl-C sync0_cycle_ns=%u sync0_shift_ns=%d\n",
                chinese ? "ethercat_enable: 开始" : "ethercat_enable: start",
-               interface, selection);
+               interface, selection, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS,
+               (int)sync0_shift_ns);
     } else {
-        printf("%s: interface=%s slave=%s hold_ms=%u\n",
+        printf("%s: interface=%s slave=%s hold_ms=%u sync0_cycle_ns=%u sync0_shift_ns=%d\n",
                chinese ? "ethercat_enable: 开始" : "ethercat_enable: start",
-               interface, selection, hold_ms);
+               interface, selection, hold_ms, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS,
+               (int)sync0_shift_ns);
     }
     if (ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_enable: 打开网卡失败" :
@@ -787,7 +821,7 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
     }
-    if (console_ethercat_enable_dc_sync(selected) != 0) {
+    if (console_ethercat_enable_dc_sync(selected, sync0_shift_ns) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
@@ -984,7 +1018,7 @@ static int console_ethercat_position(bool chinese,
                "ethercat_position: slaves did not reach SAFE-OP");
         goto cleanup;
     }
-    if (console_ethercat_enable_dc_sync(selected) != 0) {
+    if (console_ethercat_enable_dc_sync(selected, 0) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 目标从站不支持 DC Sync0" :
                "ethercat_position: selected slave does not support DC Sync0");
         goto cleanup;

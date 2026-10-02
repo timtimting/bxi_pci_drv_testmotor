@@ -116,14 +116,24 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_ethercat_scan(state->config.chinese_ui, argv[1]);
     } else if (strcmp(cmd, "ethercat_enable") == 0) {
         unsigned int hold_ms = 0u;
+        const char *sync0_shift_ns = NULL;
 
-        if ((argc != 3 && argc != 4) ||
+        if (argc < 3 || argc > 5 ||
             (argc == 4 && parse_uint_arg(argv[3], &hold_ms) != 0)) {
-            printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms]\n",
+            printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms [sync0_shift_ns]]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_enable(state->config.chinese_ui, argv[1], argv[2], hold_ms);
+        if (argc == 5) {
+            if (parse_uint_arg(argv[3], &hold_ms) != 0) {
+                printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms [sync0_shift_ns]]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+            sync0_shift_ns = argv[4];
+        }
+        return console_ethercat_enable(state->config.chinese_ui, argv[1], argv[2],
+                                       hold_ms, sync0_shift_ns);
     } else if (strcmp(cmd, "ethercat_disable") == 0) {
         if (argc != 3) {
             printf("%s: ethercat_disable <network_interface> <slave_id|all>\n",

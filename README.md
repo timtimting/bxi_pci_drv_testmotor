@@ -168,6 +168,14 @@ make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
 sudo ./build/motor_console --ethercat-enable enp86s0 1
 ```
 
+可在保持时间后指定主站 Sync0 相位偏移（单位 ns，范围 `-4000000` 至 `4000000`；默认 `0`）。例如指定 `+100 us`：
+
+```bash
+sudo ./build/motor_console --ethercat-enable enp86s0 1 0 100000
+```
+
+其中 `0` 表示持续运行直到 `Ctrl-C`，`100000` 是传给 SOEM `ec_dcsync0()` 的主站 shift。该参数不写驱动器 Pn077，也不改变当前固定的 `4 ms` Sync0 周期。测试不同 shift 会实际使能电机，请确保机械安全并在每次尝试后确认失能。
+
 使能总线上全部从站并保持当前位置 5 秒后自动失能：
 
 ```bash
