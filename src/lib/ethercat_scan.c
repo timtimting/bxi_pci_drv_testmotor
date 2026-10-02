@@ -201,6 +201,13 @@ static const char *const *console_ethercat_completion_words(const char *line,
 }
 
 #ifdef HAVE_SOEM
+static int ethercat_last_work_counter;
+static int ethercat_expected_work_counter;
+static int ethercat_min_work_counter;
+static unsigned int ethercat_incomplete_work_counter_count;
+static uint64_t ethercat_last_exchange_us;
+static uint64_t ethercat_max_exchange_interval_us;
+
 static const char *console_ethercat_state_name(uint16_t state)
 {
     switch (state & 0x0fU) {
@@ -252,11 +259,50 @@ static void console_ethercat_write_i32(uint8_t *data, int32_t value)
 
 static int console_ethercat_exchange(void)
 {
+    uint64_t now_us = time_us();
     int work_counter;
 
+    if (ethercat_last_exchange_us != 0u && now_us >= ethercat_last_exchange_us) {
+        uint64_t interval_us = now_us - ethercat_last_exchange_us;
+
+        if (interval_us > ethercat_max_exchange_interval_us) {
+            ethercat_max_exchange_interval_us = interval_us;
+        }
+    }
+    ethercat_last_exchange_us = now_us;
     ec_send_processdata();
     work_counter = ec_receive_processdata(EC_TIMEOUTRET);
+    ethercat_last_work_counter = work_counter;
+    if (work_counter < ethercat_min_work_counter) {
+        ethercat_min_work_counter = work_counter;
+    }
+    if (ethercat_expected_work_counter > 0 &&
+        work_counter < ethercat_expected_work_counter) {
+        ethercat_incomplete_work_counter_count++;
+    }
     return work_counter > 0 ? 0 : -1;
+}
+
+static void console_ethercat_reset_exchange_diagnostics(void)
+{
+    ethercat_last_work_counter = 0;
+    ethercat_expected_work_counter = 0;
+    ethercat_min_work_counter = INT_MAX;
+    ethercat_incomplete_work_counter_count = 0u;
+    ethercat_last_exchange_us = 0u;
+    ethercat_max_exchange_interval_us = 0u;
+}
+
+static void console_ethercat_print_bytes(const uint8_t *data, unsigned int length)
+{
+    unsigned int byte;
+
+    if (length > 32u) {
+        length = 32u;
+    }
+    for (byte = 0u; byte < length; byte++) {
+        printf("%s%02x", byte == 0u ? "" : " ", (unsigned int)data[byte]);
+    }
 }
 
 static const char *console_ethercat_cia402_state_name(uint16_t status_word)
@@ -297,57 +343,156 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE])
     return 0;
 }
 
-static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAXSLAVE])
+static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAXSLAVE],
+                                                   uint16_t requested_control_word)
 {
     int slave;
 
+    ec_readstate();
+    printf("[EtherCAT diag]: requested_control_word=0x%04x slaves=%d "
+           "expected_wkc=%d last_wkc=%d min_wkc=%d incomplete_wkc_count=%u "
+           "max_cycle_interval_us=%llu target_cycle_us=%u\n",
+           (unsigned int)requested_control_word, ec_slavecount,
+           ethercat_expected_work_counter, ethercat_last_work_counter,
+           ethercat_min_work_counter, ethercat_incomplete_work_counter_count,
+           (unsigned long long)ethercat_max_exchange_interval_us,
+           ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS * 1000u);
     for (slave = 1; slave <= ec_slavecount; slave++) {
         uint16_t status_word;
+        uint16_t al_status;
         uint16_t error_code;
         uint16_t pn077;
         uint16_t pn078;
         uint16_t sync_type;
         uint32_t sync_cycle_ns;
+        uint16_t tx_sync_type;
+        uint32_t tx_sync_cycle_ns;
+        uint8_t dc_activation;
+        uint8_t al_status_data[2];
+        uint8_t dc_cycle_data[4];
+        uint8_t dc_start_data[8];
+        uint32_t dc_cycle_ns;
         int8_t mode_display;
         int size;
 
-        if (selected[slave] == 0u || ec_slave[slave].inputs == NULL ||
-            ec_slave[slave].Ibits < 16u) {
+        if (selected[slave] == 0u) {
             continue;
         }
-        status_word = console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs);
-        printf("[slave%d]: status_word=0x%04x cia402=%s", slave,
+        status_word = ec_slave[slave].inputs != NULL && ec_slave[slave].Ibits >= 16u ?
+                      console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs) :
+                      0xffffu;
+        al_status = 0u;
+        if (ec_FPRD(ec_slave[slave].configadr, 0x0130u,
+                    (uint16)sizeof(al_status_data), al_status_data, EC_TIMEOUTRET) > 0) {
+            al_status = console_ethercat_read_u16(al_status_data);
+        }
+        printf("[slave%d]: ec_state=0x%02x(%s) ALstatus=0x%04x "
+               "ALstatuscode=0x%04x vendor=0x%08x product=0x%08x revision=0x%08x "
+               "hasdc=%u DCactive=%u DCcycle=%u DCshift=%d "
+               "PDO_out=%uB/%ubit PDO_in=%uB/%ubit status_word=0x%04x cia402=%s",
+               slave, (unsigned int)ec_slave[slave].state,
+               console_ethercat_state_name(ec_slave[slave].state),
+               (unsigned int)al_status,
+               (unsigned int)ec_slave[slave].ALstatuscode,
+               (unsigned int)ec_slave[slave].eep_man, (unsigned int)ec_slave[slave].eep_id,
+               (unsigned int)ec_slave[slave].eep_rev, (unsigned int)ec_slave[slave].hasdc,
+               (unsigned int)ec_slave[slave].DCactive, (unsigned int)ec_slave[slave].DCcycle,
+               (int)ec_slave[slave].DCshift,
+               (unsigned int)ec_slave[slave].Obytes, (unsigned int)ec_slave[slave].Obits,
+               (unsigned int)ec_slave[slave].Ibytes, (unsigned int)ec_slave[slave].Ibits,
                (unsigned int)status_word, console_ethercat_cia402_state_name(status_word));
+        if (ec_slave[slave].outputs != NULL) {
+            printf(" PDO_out_raw=[");
+            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].outputs,
+                                         ec_slave[slave].Obytes);
+            printf("]");
+        }
+        if (ec_slave[slave].inputs != NULL) {
+            printf(" PDO_in_raw=[");
+            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].inputs,
+                                         ec_slave[slave].Ibytes);
+            printf("]");
+        }
 
         size = (int)sizeof(mode_display);
         if (ec_SDOread((uint16)slave, 0x6061u, 0u, FALSE, &size, &mode_display,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(mode_display)) {
             printf(" mode_display=%d", (int)mode_display);
+        } else {
+            printf(" mode_display=unread");
         }
         size = (int)sizeof(error_code);
         if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
             printf(" error_code=0x%04x", (unsigned int)error_code);
+        } else {
+            printf(" error_code=unread");
         }
         size = (int)sizeof(pn077);
-        if (ec_SDOread((uint16)slave, 0x204du, 0u, FALSE, &size, &pn077,
+        if (ec_SDOread((uint16)slave, 0x2077u, 0u, FALSE, &size, &pn077,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn077)) {
             printf(" Pn077=%u", (unsigned int)pn077);
+        } else {
+            printf(" Pn077=unread");
         }
         size = (int)sizeof(pn078);
-        if (ec_SDOread((uint16)slave, 0x204eu, 0u, FALSE, &size, &pn078,
+        if (ec_SDOread((uint16)slave, 0x2078u, 0u, FALSE, &size, &pn078,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn078)) {
             printf(" Pn078=%u", (unsigned int)pn078);
+        } else {
+            printf(" Pn078=unread");
         }
         size = (int)sizeof(sync_type);
         if (ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sync_type,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_type)) {
             printf(" SM2_sync_type=0x%04x", (unsigned int)sync_type);
+        } else {
+            printf(" SM2_sync_type=unread");
         }
         size = (int)sizeof(sync_cycle_ns);
         if (ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sync_cycle_ns,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_cycle_ns)) {
             printf(" SM2_cycle_ns=%u", (unsigned int)sync_cycle_ns);
+        } else {
+            printf(" SM2_cycle_ns=unread");
+        }
+        size = (int)sizeof(tx_sync_type);
+        if (ec_SDOread((uint16)slave, 0x1c33u, 1u, FALSE, &size, &tx_sync_type,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_type)) {
+            printf(" SM3_sync_type=0x%04x", (unsigned int)tx_sync_type);
+        } else {
+            printf(" SM3_sync_type=unread");
+        }
+        size = (int)sizeof(tx_sync_cycle_ns);
+        if (ec_SDOread((uint16)slave, 0x1c33u, 2u, FALSE, &size, &tx_sync_cycle_ns,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_cycle_ns)) {
+            printf(" SM3_cycle_ns=%u", (unsigned int)tx_sync_cycle_ns);
+        } else {
+            printf(" SM3_cycle_ns=unread");
+        }
+        if (ec_FPRD(ec_slave[slave].configadr, 0x0981u, (uint16)sizeof(dc_activation),
+                    &dc_activation, EC_TIMEOUTRET) > 0) {
+            printf(" DC_activation=0x%02x", (unsigned int)dc_activation);
+        } else {
+            printf(" DC_activation=unread");
+        }
+        if (ec_FPRD(ec_slave[slave].configadr, 0x09a0u, (uint16)sizeof(dc_cycle_data),
+                    dc_cycle_data, EC_TIMEOUTRET) > 0) {
+            dc_cycle_ns = (uint32_t)dc_cycle_data[0] |
+                          ((uint32_t)dc_cycle_data[1] << 8u) |
+                          ((uint32_t)dc_cycle_data[2] << 16u) |
+                          ((uint32_t)dc_cycle_data[3] << 24u);
+            printf(" DC_cycle_ns=%u", (unsigned int)dc_cycle_ns);
+        } else {
+            printf(" DC_cycle_ns=unread");
+        }
+        if (ec_FPRD(ec_slave[slave].configadr, 0x0990u, (uint16)sizeof(dc_start_data),
+                    dc_start_data, EC_TIMEOUTRET) > 0) {
+            printf(" DC_start_raw=[");
+            console_ethercat_print_bytes(dc_start_data, (unsigned int)sizeof(dc_start_data));
+            printf("]");
+        } else {
+            printf(" DC_start_raw=unread");
         }
         printf("\n");
     }
@@ -575,6 +720,9 @@ static int console_ethercat_enable(bool chinese,
 
     ec_config_map(process_image);
     mapped = true;
+    console_ethercat_reset_exchange_diagnostics();
+    ethercat_expected_work_counter =
+        ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
@@ -646,21 +794,21 @@ static int console_ethercat_enable(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0006 状态确认失败" :
                "ethercat_enable: 0x0006 state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x0006u);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0007 状态确认失败" :
                "ethercat_enable: 0x0007 state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x0007u);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x000F 状态确认失败" :
                "ethercat_enable: 0x000F state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x000fu);
         goto cleanup;
     }
     printf("%s\n", chinese ?
@@ -769,6 +917,9 @@ static int console_ethercat_position(bool chinese,
 
     ec_config_map(process_image);
     mapped = true;
+    console_ethercat_reset_exchange_diagnostics();
+    ethercat_expected_work_counter =
+        ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
@@ -831,21 +982,21 @@ static int console_ethercat_position(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0006 状态确认失败" :
                "ethercat_position: 0x0006 state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x0006u);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0007 状态确认失败" :
                "ethercat_position: 0x0007 state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x0007u);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x000F 状态确认失败" :
                "ethercat_position: 0x000F state confirmation failed");
-        console_ethercat_print_selected_status(selected);
+        console_ethercat_print_selected_status(selected, 0x000fu);
         goto cleanup;
     }
     printf("%s\n", chinese ?
