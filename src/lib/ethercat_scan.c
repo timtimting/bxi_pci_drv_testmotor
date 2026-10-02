@@ -304,6 +304,10 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
     for (slave = 1; slave <= ec_slavecount; slave++) {
         uint16_t status_word;
         uint16_t error_code;
+        uint16_t pn077;
+        uint16_t pn078;
+        uint16_t sync_type;
+        uint32_t sync_cycle_ns;
         int8_t mode_display;
         int size;
 
@@ -324,6 +328,26 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
         if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
             printf(" error_code=0x%04x", (unsigned int)error_code);
+        }
+        size = (int)sizeof(pn077);
+        if (ec_SDOread((uint16)slave, 0x204du, 0u, FALSE, &size, &pn077,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn077)) {
+            printf(" Pn077=%u", (unsigned int)pn077);
+        }
+        size = (int)sizeof(pn078);
+        if (ec_SDOread((uint16)slave, 0x204eu, 0u, FALSE, &size, &pn078,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn078)) {
+            printf(" Pn078=%u", (unsigned int)pn078);
+        }
+        size = (int)sizeof(sync_type);
+        if (ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sync_type,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_type)) {
+            printf(" SM2_sync_type=0x%04x", (unsigned int)sync_type);
+        }
+        size = (int)sizeof(sync_cycle_ns);
+        if (ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sync_cycle_ns,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_cycle_ns)) {
+            printf(" SM2_cycle_ns=%u", (unsigned int)sync_cycle_ns);
         }
         printf("\n");
     }
