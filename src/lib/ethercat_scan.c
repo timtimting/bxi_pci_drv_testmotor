@@ -295,9 +295,15 @@ static void console_ethercat_write_i32(uint8_t *data, int32_t value)
 
 static int console_ethercat_exchange(void)
 {
+    struct timespec cycle_start;
     uint64_t now_us = time_us();
     int work_counter;
 
+    if (!ethercat_cycle_initialized &&
+        clock_gettime(CLOCK_MONOTONIC, &cycle_start) == 0) {
+        ethercat_next_cycle = cycle_start;
+        ethercat_cycle_initialized = true;
+    }
     if (ethercat_last_exchange_us != 0u && now_us >= ethercat_last_exchange_us) {
         uint64_t interval_us = now_us - ethercat_last_exchange_us;
 
