@@ -158,6 +158,16 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_ethercat_info(state->config.chinese_ui, argv[1], argv[2]);
+    } else if (strcmp(cmd, "ethercat_pn077") == 0) {
+        unsigned int value;
+
+        if (argc != 4 || parse_uint_arg(argv[3], &value) != 0 || value > 1u) {
+            printf("%s: ethercat_pn077 <network_interface> <slave_id|all> <0|1>\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_pn077(state->config.chinese_ui,
+                                      argv[1], argv[2], value);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));

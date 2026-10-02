@@ -87,6 +87,10 @@ static const char *const ethercat_all_word[] = {
     "all",
 };
 
+static const char *const ethercat_pn077_value_words[] = {
+    "0", "1",
+};
+
 static char ethercat_interface_storage[ETHERCAT_COMPLETION_INTERFACE_MAX][IFNAMSIZ];
 static const char *ethercat_interface_words[ETHERCAT_COMPLETION_INTERFACE_MAX];
 static char ethercat_slave_storage[ETHERCAT_COMPLETION_SLAVE_MAX][4];
@@ -196,6 +200,17 @@ static const char *const *console_ethercat_completion_words(const char *line,
     }
     if (strcmp(first, "ethercat_info") == 0 && tokens_before == 2u) {
         return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 3u) {
+        *count = sizeof(ethercat_pn077_value_words) /
+                 sizeof(ethercat_pn077_value_words[0]);
+        return ethercat_pn077_value_words;
     }
     *count = 0u;
     return NULL;
@@ -1265,6 +1280,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t target_torque;
         int16_t pn001;
         int16_t pn002;
+        int16_t pn077;
         int32_t position_actual;
         int32_t velocity_actual;
         int32_t target_position;
@@ -1342,6 +1358,9 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         if (ETHERCAT_INFO_READ(0x2002u, pn002)) {
             printf("  Pn002_monitor_select=%d\n", (int)pn002);
         }
+        if (ETHERCAT_INFO_READ(0x2077u, pn077)) {
+            printf("  Pn077_dc_clock_offset=%d\n", (int)pn077);
+        }
         if (ETHERCAT_INFO_READ(0x3000u, monitor_value)) {
             printf("  monitor_value=%d (interpret using Pn002_monitor_select)\n", monitor_value);
         }
@@ -1352,6 +1371,137 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
            "ethercat_info: read-only SDO query complete; did not configure PDOs, request OP, or send enable/motion commands.");
     ec_close();
     return failed == 0 ? 0 : -1;
+
+close_socket:
+    ec_close();
+    return -1;
+#endif
+}
+
+static int console_ethercat_pn077(bool chinese,
+                                  const char *interface,
+                                  const char *selection,
+                                  unsigned int value)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
+        value > 1u) {
+        printf("%s: ethercat_pn077 <network_interface> <slave_id|all> <0|1>\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法写入 Pn077。从 SOEM 源码编译后，执行 make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "Pn077 write is unavailable because this build has no SOEM support. Rebuild with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\".");
+    return -1;
+#else
+    uint16_t selected_status[EC_MAXSLAVE] = {0};
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int16_t current_value[EC_MAXSLAVE] = {0};
+    int16_t requested_value = (int16_t)value;
+    int16_t readback_value;
+    int slave;
+    int size;
+
+    printf("%s: interface=%s slave=%s value=%u\n",
+           chinese ? "ethercat_pn077: 开始" : "ethercat_pn077: start",
+           interface, selection, value);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_pn077: 打开网卡失败" :
+               "ethercat_pn077: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_pn077: 未发现 EtherCAT 从站" :
+               "ethercat_pn077: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_pn077: 从站序号不存在" :
+               "ethercat_pn077: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "不是受支持的开璇驱动器，拒绝写入" :
+                   "not a supported Kaixuan drive; refusing write");
+            goto close_socket;
+        }
+        size = (int)sizeof(selected_status[slave]);
+        if (ec_SDOread((uint16)slave, 0x6041u, 0u, FALSE, &size,
+                       &selected_status[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(selected_status[slave])) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "读取 0x6041 状态字失败，拒绝写入" :
+                   "failed to read 0x6041 statusword; refusing write");
+            goto close_socket;
+        }
+        if ((selected_status[slave] & 0x0010u) != 0u ||
+            (selected_status[slave] & 0x006fu) == 0x0021u ||
+            (selected_status[slave] & 0x006fu) == 0x0023u ||
+            (selected_status[slave] & 0x006fu) == 0x0027u ||
+            (selected_status[slave] & 0x006fu) == 0x0007u) {
+            printf("[slave%d]: status_word=0x%04x %s\n", slave,
+                   (unsigned int)selected_status[slave], chinese ?
+                   "驱动器未处于失能状态，拒绝写入 Pn077" :
+                   "drive is not disabled; refusing Pn077 write");
+            goto close_socket;
+        }
+        size = (int)sizeof(current_value[slave]);
+        if (ec_SDOread((uint16)slave, 0x2077u, 0u, FALSE, &size,
+                       &current_value[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(current_value[slave])) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "读取当前 Pn077 失败，拒绝写入" :
+                   "failed to read current Pn077; refusing write");
+            goto close_socket;
+        }
+    }
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        size = (int)sizeof(requested_value);
+        if (ec_SDOwrite((uint16)slave, 0x2077u, 0u, FALSE, size,
+                        &requested_value, EC_TIMEOUTRXM) <= 0) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "写入 Pn077 失败" : "Pn077 write failed");
+            goto close_socket;
+        }
+        size = (int)sizeof(readback_value);
+        if (ec_SDOread((uint16)slave, 0x2077u, 0u, FALSE, &size,
+                       &readback_value, EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(readback_value) || readback_value != requested_value) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "Pn077 写入后回读不匹配" : "Pn077 readback mismatch");
+            goto close_socket;
+        }
+        printf("[slave%d]: Pn077 %d -> %d (readback=%d)\n", slave,
+               (int)current_value[slave], (int)requested_value,
+               (int)readback_value);
+    }
+    printf("%s\n", chinese ?
+           "Pn077 已写入并回读。根据手册，需重启执行器后生效；该参数不是主站 Sync0 shift。" :
+           "Pn077 was written and verified. Restart the actuator for it to take effect; this is not the master Sync0 shift.");
+    ec_close();
+    return 0;
 
 close_socket:
     ec_close();

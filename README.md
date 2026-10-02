@@ -237,8 +237,19 @@ sudo ./build/motor_console --ethercat-info enp86s0 all
 
 命令通过只读 CoE/SDO 查询身份、链路状态、DC 能力、CiA-402 控制字/状态字、错误码、运行模式、
 实际和目标位置/速度/力矩、电流、数字输入，以及开璇 `Pn001`、`Pn002` 和当前监控值 `0x3000`。
+另外也读取 `Pn077`，便于通过 `ethercat_pn077` 写入后确认当前值。
 读取不会配置 PDO、请求 OP、使能或运动电机。`Pn002` 只显示当前监控项选择，不会为读取温度等数据
 修改该参数。
+
+### EtherCAT Pn077 配置
+
+驱动器失能时，可通过 SDO 写入 Pn077（仅允许 `0` 或 `1`）：
+
+```text
+ethercat_pn077 enp86s0 1 0
+```
+
+命令也可从 shell 执行：`sudo ./build/motor_console --ethercat-pn077 enp86s0 1 0`。它会确认目标为开璇驱动器、检查伺服未使能，写入 SDO `0x2077:00` 并回读验证。根据手册，`0` 表示 DC 时钟偏移 `100 us`，`1` 表示不偏移；修改需要重启执行器生效。该电机参数不同于主站的 Sync0 shift；此命令不会使能电机或改变 Sync0 配置。
 
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
