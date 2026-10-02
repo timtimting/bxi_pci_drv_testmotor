@@ -67,6 +67,7 @@ Left/Right, Delete/Backspace, Up/Down history, and Tab completion. Use `help`,
 
 ```text
 motor[POWER-OFF]> power_on
+motor[POWER-ON]> motor_scan
 motor[POWER-ON]> motor_list
 motor[POWER-ON]> mit_zero_set
 motor[POWER-ON]> mit_enable_all
@@ -78,31 +79,23 @@ motor[POWER-ON]> power_off
 motor[POWER-OFF]> quit
 ```
 
-`power_on` waits for soft start, listens/probes all configured motors, and prints
-the smaller side of the result: offline motors when only a few are missing, or
-online motors when most motors did not reply.
+`power_on` turns on motor power and waits for soft start without reading the
+configuration to scan CAN or sending CAN frames. Run `motor_scan` explicitly to
+probe the configured motors. `motor_probe` retains the power-on, scan, and
+automatic power-off workflow.
 
 Example:
 
 ```text
 power_on: start power=on wait=2s
-power_on: done total=31 success=31 failed=0
-```
-
-Mostly-offline example:
-
-```text
-power_on: start power=on wait=2s
-[motor00]: online name=waist-left bus=0 id=1
-[motor03]: online name=left-hip-pitch bus=1 id=1
-power_on: done total=31 success=2 failed=29
+power_on: done power=on; CAN scan skipped (run motor_scan explicitly)
 ```
 
 ## Command reference
 
 | Command | Arguments | Notes |
 | --- | --- | --- |
-| `power_on` | none | Power on, wait, and scan all configured motors |
+| `power_on` | none | Power on and wait; does not scan CAN |
 | `power_off` | none | Disable known enabled motors, then power off |
 | `motor_scan` | `[timeout_ms]` | Probe all configured motors |
 | `motor_list` | none | Show power and per-motor runtime state |

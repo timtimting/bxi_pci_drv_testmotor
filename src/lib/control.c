@@ -523,19 +523,11 @@ static void console_scan_online_versions(flash_state *state)
 
 static int console_power_on(flash_state *state)
 {
-    bool old_monitor = state->show_can_output;
-    bool old_input = state->show_motor_input;
-    unsigned int before[MOTOR_MAP_MAX];
-    size_t i;
-    size_t passive_found;
-    size_t success;
-    int ret;
-
     if (state->motor_power_on) {
         printf("%s\n", console_text(state,
-               "电机电源已经开启，重新扫描电机",
-               "motor power is already ON; rescanning motors"));
-        return console_probe_motors(state, state->config.scan_timeout_ms);
+               "电机电源已经开启；未执行 CAN 扫描",
+               "motor power is already ON; no CAN scan was performed"));
+        return 0;
     }
     if (motor_pwr_set(1u) < 0) {
         fprintf(stderr, "%s\n", console_text(state,
@@ -544,12 +536,6 @@ static int console_power_on(flash_state *state)
         return -1;
     }
     state->motor_power_on = true;
-    state->show_can_output = false;
-    state->show_motor_input = false;
-    for (i = 0u; i < state->config.entry_count; i++) {
-        before[i] = state->motors[i].rx_count;
-        state->motors[i].online = false;
-    }
     if (state->config.chinese_ui) {
         if ((state->config.power_on_wait_ms % 1000u) == 0u) {
             printf("power_on: start 电源已开启 wait=%us\n",
@@ -568,44 +554,8 @@ static int console_power_on(flash_state *state)
         }
     }
     console_quiet_sleep_ms(state->config.power_on_wait_ms);
-    passive_found = console_update_online_from_rx_delta(state, before);
-    if (passive_found != 0u) {
-        success = console_print_motor_offline_rows(state);
-        console_can_warmup(state,
-                           state->config.can_warmup_count,
-                           state->config.can_warmup_period_ms,
-                           true);
-        console_scan_online_versions(state);
-        printf("power_on: done total=%zu success=%zu failed=%zu\n",
-               state->config.entry_count, success, state->config.entry_count - success);
-        state->show_can_output = old_monitor;
-        state->show_motor_input = old_input;
-        return 0;
-    }
-
-    printf("power_on: passive=0, active_scan=start\n");
-    ret = console_probe_motors(state, state->config.scan_timeout_ms);
-    if (ret == 0) {
-        console_can_warmup(state,
-                           state->config.can_warmup_count,
-                           state->config.can_warmup_period_ms,
-                           true);
-        console_scan_online_versions(state);
-    }
-    {
-        size_t online = 0u;
-
-        for (i = 0u; i < state->config.entry_count; i++) {
-            if (state->motors[i].online) {
-                online++;
-            }
-        }
-        printf("power_on: done total=%zu success=%zu failed=%zu\n",
-               state->config.entry_count, online, state->config.entry_count - online);
-    }
-    state->show_can_output = old_monitor;
-    state->show_motor_input = old_input;
-    return ret;
+    printf("power_on: done power=on; CAN scan skipped (run motor_scan explicitly)\n");
+    return 0;
 }
 
 static int console_power_off(flash_state *state)
@@ -642,6 +592,7 @@ static int console_power_off(flash_state *state)
 static int console_motor_probe(flash_state *state)
 {
     int power_on_ret;
+    int scan_ret = -1;
     int power_off_ret;
     size_t online = 0u;
     size_t i;
@@ -656,7 +607,8 @@ static int console_motor_probe(flash_state *state)
     printf("motor_probe: start total=%zu\n", state->config.entry_count);
     power_on_ret = console_power_on(state);
 
-    if (state->motor_power_on) {
+    if (power_on_ret == 0 && state->motor_power_on) {
+        scan_ret = console_probe_motors(state, state->config.scan_timeout_ms);
         console_print_motors(state);
         for (i = 0u; i < state->config.entry_count; i++) {
             if (state->motors[i].online) {
@@ -673,7 +625,7 @@ static int console_motor_probe(flash_state *state)
            power_on_ret == 0 ? "OK" : "FAIL",
            power_off_ret == 0 ? "OK" : "FAIL");
 
-    return power_on_ret == 0 && power_off_ret == 0 ? 0 : -1;
+    return power_on_ret == 0 && scan_ret == 0 && power_off_ret == 0 ? 0 : -1;
 }
 
 static int console_motor_set(flash_state *state, int argc, char **argv)

@@ -82,7 +82,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  language zh|en  （别名：lang）\n");
         printf("      在中文和英文界面之间即时切换。\n");
         printf("  power_on\n");
-        printf("      电机总电源上电，等待软启动，扫描全部配置电机并输出回复序号。\n");
+        printf("      电机总电源上电并等待软启动；不扫描 CAN，需扫描时执行 motor_scan。\n");
         printf("  power_off\n");
         printf("      先失能已知处于使能状态的电机，再关闭电机总电源。\n");
         printf("  motor_probe\n");
@@ -167,8 +167,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  language zh|en  (alias: lang)\n");
     printf("      Switch the console interface between Chinese and English.\n");
     printf("  power_on\n");
-    printf("      Turn motor power on, wait for soft start, probe every configured motor,\n");
-    printf("      and print the responding motor indexes.\n");
+    printf("      Turn motor power on and wait for soft start; does not scan CAN.\n");
+    printf("      Run motor_scan explicitly when motor discovery is needed.\n");
     printf("  power_off\n");
     printf("      Disable known enabled motors first, then turn motor power off.\n");
     printf("  motor_probe\n");

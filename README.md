@@ -274,6 +274,7 @@ help all
 
 ```text
 电机[已下电]> power_on
+电机[已上电]> motor_scan
 电机[已上电]> motor_list
 电机[已上电]> can_status
 ```
@@ -282,39 +283,16 @@ help all
 
 1. 打开电机总电源。
 2. 按 `power_on_wait_ms` 等待软启动。
-3. 被动监听电机上电输出，识别已在线电机。
-4. 只向已确认在线电机发送 `can_warmup_count` 次零 MIT 帧，让 CAN TX error 通过成功 ACK 逐步恢复。
-5. 对已在线电机识别程序/配置版本；版本读取失败只提示，不阻塞上电。
-6. 如果被动监听没有发现电机，再进入主动扫描；空总线可能产生 CAN TX error。
+3. 结束上电流程，不读取配置文件扫描 CAN，也不发送 CAN 帧。
+
+需要发现配置中的 CAN 电机时，电机上电后手动执行 `motor_scan`；该命令仍按配置文件
+中的电机列表扫描。`motor_probe` 保留完整流程：上电、主动扫描配置电机，然后自动下电。
 
 典型输出：
 
 ```text
 power_on: start 电源已开启 wait=2s
-version_scan: start total=31
-version_scan: done total=31 success=31 failed=0
-power_on: done total=31 success=31 failed=0
-```
-
-如果有电机未回复，会自动选择更少的一侧输出，避免刷屏：
-
-- 离线电机较少：输出 `offline`，方便直接定位未回复关节。
-- 在线电机较少：输出 `online`，方便确认当前实际连上的电机。
-
-```text
-power_on: start 电源已开启 wait=2s
-[motor08]: offline name=左腿 bus=1 id=6
-[motor29]: offline name=头部 bus=0 id=4
-power_on: done total=31 success=29 failed=2
-```
-
-大部分电机未回复时，输出会变成：
-
-```text
-power_on: start 电源已开启 wait=2s
-[motor00]: online name=腰部左边 bus=0 id=1
-[motor03]: online name=左腿髋部pitch、y轴 bus=1 id=1
-power_on: done total=31 success=2 failed=29
+power_on: done power=on; CAN scan skipped (run motor_scan explicitly)
 ```
 
 也可以手动重新扫描：
@@ -719,11 +697,11 @@ config/motor_console.yaml
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `help` / `-h` / `?` | `[all]` | 显示终端帮助；带 `all` 显示详细说明 |
-| `power_on` | 无 | 电机上电、等待软启动、扫描全部电机，并读取在线电机版本 |
+| `power_on` | 无 | 电机上电并等待软启动；不扫描 CAN |
 | `power_off` | 无 | 失能已知使能电机并关闭总电源 |
 | `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态、程序/配置版本和最后反馈 |
-| `motor_scan` | `[timeout_ms]` | 重新扫描配置电机 |
+| `motor_scan` | `[timeout_ms]` | 按配置文件中的电机列表扫描 CAN 电机 |
 | `can_status` | `[reset]` | 显示或清零 CAN 软件统计 |
 | `quit` / `exit` / `q` / `qq` | 无 | 退出终端；电源开启时会先自动下电 |
 
