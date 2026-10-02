@@ -262,6 +262,14 @@ ethercat_pn077 enp86s0 1 0
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
 
+根据厂商提供的流程，可在驱动器失能时通过 `ethercat_save` 触发参数保存：
+
+```text
+ethercat_save enp86s0 1
+```
+
+该命令向 Pn097（SDO `0x2097:00`）依次写入 `1`、`0`，并确认回到 `0`。命令成功只表示保存触发序列已确认发送；仍需按厂商要求重启执行器，再用 `ethercat_info` 验证参数是否持久化。也支持 `all` 选择全部从站以及独立命令 `sudo ./build/motor_console --ethercat-save enp86s0 1`。
+
 ## 6. 查看帮助
 
 程序启动前查看英文帮助：

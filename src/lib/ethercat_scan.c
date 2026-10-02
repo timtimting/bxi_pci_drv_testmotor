@@ -239,6 +239,12 @@ static const char *const *console_ethercat_completion_words(const char *line,
                  sizeof(ethercat_pn077_value_words[0]);
         return ethercat_pn077_value_words;
     }
+    if (strcmp(first, "ethercat_save") == 0 && tokens_before == 1u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_save") == 0 && tokens_before == 2u) {
+        return console_ethercat_slave_completion_words(count);
+    }
     *count = 0u;
     return NULL;
 }
@@ -1486,8 +1492,7 @@ static int console_ethercat_pn077(bool chinese,
                    "failed to read 0x6041 statusword; refusing write");
             goto close_socket;
         }
-        if ((selected_status[slave] & 0x0010u) != 0u ||
-            (selected_status[slave] & 0x006fu) == 0x0021u ||
+        if ((selected_status[slave] & 0x006fu) == 0x0021u ||
             (selected_status[slave] & 0x006fu) == 0x0023u ||
             (selected_status[slave] & 0x006fu) == 0x0027u ||
             (selected_status[slave] & 0x006fu) == 0x0007u) {
@@ -1534,6 +1539,143 @@ static int console_ethercat_pn077(bool chinese,
     printf("%s\n", chinese ?
            "Pn077 已写入并回读。根据手册，需重启执行器后生效；该参数不是主站 Sync0 shift。" :
            "Pn077 was written and verified. Restart the actuator for it to take effect; this is not the master Sync0 shift.");
+    ec_close();
+    return 0;
+
+close_socket:
+    ec_close();
+    return -1;
+#endif
+}
+
+static int console_ethercat_save(bool chinese,
+                                 const char *interface,
+                                 const char *selection)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        printf("%s: ethercat_save <network_interface> <slave_id|all>\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法保存 EtherCAT 参数。从 SOEM 源码编译后，执行 make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
+           "EtherCAT parameter save is unavailable because this build has no SOEM support. Rebuild with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\".");
+    return -1;
+#else
+    uint16_t selected_status[EC_MAXSLAVE] = {0};
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int16_t save_parameter[EC_MAXSLAVE] = {0};
+    int16_t save_on = 1;
+    int16_t save_off = 0;
+    int slave;
+    int size;
+
+    printf("%s: interface=%s slave=%s object=0x2097:00 sequence=1->0\n",
+           chinese ? "ethercat_save: 开始" : "ethercat_save: start",
+           interface, selection);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_save: 打开网卡失败" :
+               "ethercat_save: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_save: 未发现 EtherCAT 从站" :
+               "ethercat_save: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_save: 从站序号不存在" :
+               "ethercat_save: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "不是受支持的开璇驱动器，拒绝保存参数" :
+                   "not a supported Kaixuan drive; refusing parameter save");
+            goto close_socket;
+        }
+        size = (int)sizeof(selected_status[slave]);
+        if (ec_SDOread((uint16)slave, 0x6041u, 0u, FALSE, &size,
+                       &selected_status[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(selected_status[slave])) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "读取 0x6041 状态字失败，拒绝保存参数" :
+                   "failed to read 0x6041 statusword; refusing parameter save");
+            goto close_socket;
+        }
+        if ((selected_status[slave] & 0x006fu) == 0x0021u ||
+            (selected_status[slave] & 0x006fu) == 0x0023u ||
+            (selected_status[slave] & 0x006fu) == 0x0027u ||
+            (selected_status[slave] & 0x006fu) == 0x0007u) {
+            printf("[slave%d]: status_word=0x%04x %s\n", slave,
+                   (unsigned int)selected_status[slave], chinese ?
+                   "驱动器未处于失能状态，拒绝保存参数" :
+                   "drive is not disabled; refusing parameter save");
+            goto close_socket;
+        }
+        size = (int)sizeof(save_parameter[slave]);
+        if (ec_SDOread((uint16)slave, 0x2097u, 0u, FALSE, &size,
+                       &save_parameter[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(save_parameter[slave])) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "读取 Pn097 (0x2097:00) 失败，拒绝保存" :
+                   "failed to read Pn097 (0x2097:00); refusing save");
+            goto close_socket;
+        }
+    }
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        size = (int)sizeof(save_on);
+        if (ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
+                        &save_on, EC_TIMEOUTRXM) <= 0) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "写入 Pn097=1 失败" : "failed to write Pn097=1");
+            goto close_socket;
+        }
+        size = (int)sizeof(save_off);
+        if (ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
+                        &save_off, EC_TIMEOUTRXM) <= 0) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "写入 Pn097=0 失败" : "failed to write Pn097=0 after save trigger");
+            ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
+                        &save_off, EC_TIMEOUTRXM);
+            goto close_socket;
+        }
+        size = (int)sizeof(save_parameter[slave]);
+        if (ec_SDOread((uint16)slave, 0x2097u, 0u, FALSE, &size,
+                       &save_parameter[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(save_parameter[slave]) ||
+            save_parameter[slave] != 0) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "Pn097 保存脉冲后未回到 0" :
+                   "Pn097 did not return to 0 after save pulse");
+            goto close_socket;
+        }
+        printf("[slave%d]: Pn097 1->0 已发送并回读为 0\n", slave);
+    }
+    printf("%s\n", chinese ?
+           "参数保存触发已发送；请按厂商流程重启执行器并回读参数确认持久化。" :
+           "Parameter save trigger sent; restart the actuator and read back parameters to verify persistence.");
     ec_close();
     return 0;
 
