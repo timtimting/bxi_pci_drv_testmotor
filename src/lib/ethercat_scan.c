@@ -1,4 +1,5 @@
 #include <net/if.h>
+#include <time.h>
 
 #ifdef HAVE_SOEM
 #include <soem/ethercat.h>
@@ -207,6 +208,41 @@ static int ethercat_min_work_counter;
 static unsigned int ethercat_incomplete_work_counter_count;
 static uint64_t ethercat_last_exchange_us;
 static uint64_t ethercat_max_exchange_interval_us;
+static struct timespec ethercat_next_cycle;
+static bool ethercat_cycle_initialized;
+
+static void console_ethercat_wait_next_cycle(void)
+{
+    struct timespec now;
+    int wait_result;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+        return;
+    }
+    if (!ethercat_cycle_initialized) {
+        ethercat_next_cycle = now;
+        ethercat_cycle_initialized = true;
+    }
+    ethercat_next_cycle.tv_nsec += (long)ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+    if (ethercat_next_cycle.tv_nsec >= 1000000000L) {
+        ethercat_next_cycle.tv_sec++;
+        ethercat_next_cycle.tv_nsec -= 1000000000L;
+    }
+    while ((ethercat_next_cycle.tv_sec < now.tv_sec) ||
+           (ethercat_next_cycle.tv_sec == now.tv_sec &&
+            ethercat_next_cycle.tv_nsec <= now.tv_nsec)) {
+        ethercat_next_cycle.tv_nsec += (long)ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+        if (ethercat_next_cycle.tv_nsec >= 1000000000L) {
+            ethercat_next_cycle.tv_sec++;
+            ethercat_next_cycle.tv_nsec -= 1000000000L;
+        }
+    }
+    do {
+        wait_result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME,
+                                      &ethercat_next_cycle, NULL);
+    } while (wait_result == EINTR && !stop_requested);
+}
 
 static const char *console_ethercat_state_name(uint16_t state)
 {
@@ -291,6 +327,7 @@ static void console_ethercat_reset_exchange_diagnostics(void)
     ethercat_incomplete_work_counter_count = 0u;
     ethercat_last_exchange_us = 0u;
     ethercat_max_exchange_interval_us = 0u;
+    ethercat_cycle_initialized = false;
 }
 
 static void console_ethercat_print_bytes(const uint8_t *data, unsigned int length)
@@ -570,7 +607,7 @@ static int console_ethercat_wait_for_status(const uint8_t selected[EC_MAXSLAVE],
         if (console_ethercat_selected_status_matches(selected, expected_state)) {
             return 0;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+        console_ethercat_wait_next_cycle();
     }
     return -1;
 }
@@ -585,7 +622,7 @@ static void console_ethercat_disable_selected(const uint8_t selected[EC_MAXSLAVE
         if (console_ethercat_exchange() != 0) {
             break;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+        console_ethercat_wait_next_cycle();
     }
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u) {
@@ -779,7 +816,7 @@ static int console_ethercat_enable(bool chinese,
         if (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) == EC_STATE_OPERATIONAL) {
             break;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+        console_ethercat_wait_next_cycle();
     }
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u &&
@@ -821,7 +858,7 @@ static int console_ethercat_enable(bool chinese,
                    "ethercat_enable: PDO communication lost");
             goto cleanup;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
+        console_ethercat_wait_next_cycle();
     }
     result = stop_requested ? -1 : 0;
 
