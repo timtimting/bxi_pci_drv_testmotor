@@ -552,14 +552,14 @@ static int console_ethercat_enable(bool chinese,
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
-    if (console_ethercat_enable_dc_sync(selected) != 0) {
-        printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
-               "ethercat_enable: selected slave does not support DC Sync0");
-        goto cleanup;
-    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
+        goto cleanup;
+    }
+    if (console_ethercat_enable_dc_sync(selected) != 0) {
+        printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
+               "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
     }
     if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
@@ -746,14 +746,14 @@ static int console_ethercat_position(bool chinese,
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
-    if (console_ethercat_enable_dc_sync(selected) != 0) {
-        printf("%s\n", chinese ? "ethercat_position: 目标从站不支持 DC Sync0" :
-               "ethercat_position: selected slave does not support DC Sync0");
-        goto cleanup;
-    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
                "ethercat_position: slaves did not reach SAFE-OP");
+        goto cleanup;
+    }
+    if (console_ethercat_enable_dc_sync(selected) != 0) {
+        printf("%s\n", chinese ? "ethercat_position: 目标从站不支持 DC Sync0" :
+               "ethercat_position: selected slave does not support DC Sync0");
         goto cleanup;
     }
     if (console_ethercat_selected_ready(selected, target_positions) != 0) {
