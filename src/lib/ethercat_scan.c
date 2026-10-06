@@ -1,6 +1,48 @@
 #include <net/if.h>
 #include <time.h>
 
+typedef struct {
+    bool chinese;
+    unsigned int hold_ms;
+    char interface[IFNAMSIZ];
+    char selection[32];
+    char sync0_shift[32];
+    char sync0_cycle_ms[32];
+    bool has_sync0_shift;
+    bool has_sync0_cycle_ms;
+    bool disable_task;
+} ethercat_background_args;
+
+static pthread_mutex_t ethercat_background_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t ethercat_background_condition = PTHREAD_COND_INITIALIZER;
+static pthread_t ethercat_background_thread;
+static ethercat_background_args ethercat_background_arguments;
+static bool ethercat_background_started;
+static bool ethercat_background_running;
+static bool ethercat_background_ready;
+static bool ethercat_background_stop_requested;
+static int ethercat_background_result;
+
+static bool console_ethercat_background_should_stop(void)
+{
+    bool should_stop;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    should_stop = ethercat_background_stop_requested;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return should_stop;
+}
+
+static void console_ethercat_background_mark_ready(void)
+{
+    pthread_mutex_lock(&ethercat_background_mutex);
+    if (ethercat_background_started && ethercat_background_running) {
+        ethercat_background_ready = true;
+        pthread_cond_broadcast(&ethercat_background_condition);
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+}
+
 #ifdef HAVE_SOEM
 #include <soem/ethercat.h>
 #endif
@@ -698,7 +740,8 @@ static int console_ethercat_wait_for_status(const uint8_t selected[EC_MAXSLAVE],
     unsigned int max_attempts = (400000000u + ethercat_control_period_ns - 1u) /
                                 ethercat_control_period_ns;
 
-    for (attempt = 0u; attempt < max_attempts && !stop_requested; attempt++) {
+    for (attempt = 0u; attempt < max_attempts && !stop_requested &&
+         !console_ethercat_background_should_stop(); attempt++) {
         if (console_ethercat_exchange() != 0) {
             return -1;
         }
@@ -927,7 +970,8 @@ static int console_ethercat_enable(bool chinese,
         }
     }
     max_op_attempts = (400000000u + sync0_cycle_ns - 1u) / sync0_cycle_ns;
-    for (op_attempt = 0u; op_attempt < max_op_attempts && !stop_requested; op_attempt++) {
+    for (op_attempt = 0u; op_attempt < max_op_attempts && !stop_requested &&
+         !console_ethercat_background_should_stop(); op_attempt++) {
         if (console_ethercat_exchange() != 0) {
             break;
         }
@@ -967,10 +1011,12 @@ static int console_ethercat_enable(bool chinese,
         goto cleanup;
     }
     printf("%s\n", chinese ?
-           "ethercat_enable: 已使能，正在保持当前位置；Ctrl-C 时自动失能。" :
-           "ethercat_enable: enabled and holding current positions; automatically disables on Ctrl-C.");
+           "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
+           "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
+    console_ethercat_background_mark_ready();
     deadline = hold_ms == 0u ? UINT64_MAX : time_us() + (uint64_t)hold_ms * 1000u;
-    while (!stop_requested && time_us() < deadline) {
+    while (!stop_requested && !console_ethercat_background_should_stop() &&
+           time_us() < deadline) {
         if (console_ethercat_exchange() != 0) {
             printf("%s\n", chinese ? "ethercat_enable: PDO 通信中断" :
                    "ethercat_enable: PDO communication lost");
@@ -978,7 +1024,7 @@ static int console_ethercat_enable(bool chinese,
         }
         console_ethercat_wait_next_cycle();
     }
-    result = stop_requested ? -1 : 0;
+    result = stop_requested || console_ethercat_background_should_stop() ? -1 : 0;
 
 cleanup:
     if (mapped) {
@@ -990,6 +1036,263 @@ close_socket:
     ethercat_control_period_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
     ec_close();
     return result;
+#endif
+}
+
+static int console_ethercat_disable(bool chinese,
+                                    const char *interface,
+                                    const char *selection);
+
+static void *console_ethercat_background_worker(void *argument)
+{
+    ethercat_background_args *args = argument;
+    int result;
+
+    if (args->disable_task) {
+        result = console_ethercat_disable(args->chinese,
+                                          args->interface,
+                                          args->selection);
+    } else {
+        result = console_ethercat_enable(args->chinese,
+                                         args->interface,
+                                         args->selection,
+                                         args->hold_ms,
+                                         args->has_sync0_shift ? args->sync0_shift : NULL,
+                                         args->has_sync0_cycle_ms ? args->sync0_cycle_ms : NULL);
+    }
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    ethercat_background_result = result;
+    ethercat_background_running = false;
+    pthread_cond_broadcast(&ethercat_background_condition);
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return NULL;
+}
+
+static int console_ethercat_background_stop(void);
+
+static void console_ethercat_background_reap(void)
+{
+    pthread_t thread;
+    bool should_join;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    should_join = ethercat_background_started && !ethercat_background_running;
+    thread = ethercat_background_thread;
+    if (should_join) {
+        ethercat_background_started = false;
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    if (should_join) {
+        pthread_join(thread, NULL);
+    }
+}
+
+static bool console_ethercat_background_is_running(void)
+{
+    bool running;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    running = ethercat_background_running;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return running;
+}
+
+static int console_ethercat_background_stop(void)
+{
+    pthread_t thread;
+    bool should_join;
+    bool was_running;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    was_running = ethercat_background_running;
+    if (was_running) {
+        ethercat_background_stop_requested = true;
+    }
+    should_join = ethercat_background_started;
+    thread = ethercat_background_thread;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+
+    if (should_join) {
+        pthread_join(thread, NULL);
+        pthread_mutex_lock(&ethercat_background_mutex);
+        ethercat_background_started = false;
+        ethercat_background_running = false;
+        ethercat_background_ready = false;
+        ethercat_background_stop_requested = false;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+    }
+    return was_running ? 1 : 0;
+}
+
+static int console_ethercat_background_disable(const char *interface,
+                                              const char *selection)
+{
+    bool active;
+    bool selection_matches;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    active = ethercat_background_running;
+    selection_matches = strcmp(ethercat_background_arguments.selection, "all") == 0 ?
+                        strcmp(selection, "all") == 0 :
+                        (strcmp(ethercat_background_arguments.selection, selection) == 0 ||
+                         strcmp(selection, "all") == 0);
+    if (!active) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        return 0;
+    }
+    if (strcmp(ethercat_background_arguments.interface, interface) != 0 ||
+        !selection_matches) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        return -1;
+    }
+    ethercat_background_stop_requested = true;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    console_ethercat_background_stop();
+    return 1;
+}
+
+static int console_ethercat_background_start(bool chinese,
+                                             const char *interface,
+                                             const char *selection,
+                                             unsigned int hold_ms,
+                                             const char *sync0_shift,
+                                             const char *sync0_cycle_ms)
+{
+    int wait_result = 0;
+    bool ready;
+    bool running;
+    unsigned int slave_id;
+    bool all_slaves;
+    int32_t parsed_shift_ns;
+    uint32_t parsed_cycle_ns;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
+        hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
+        (sync0_shift != NULL &&
+         console_ethercat_parse_sync0_shift(sync0_shift, &parsed_shift_ns) != 0) ||
+        (sync0_cycle_ms != NULL &&
+         console_ethercat_parse_cycle_ms(sync0_cycle_ms, &parsed_cycle_ns) != 0)) {
+        printf("%s\n", chinese ?
+               "ethercat_enable 参数无效；检查从站、保持时间、shift 和 Sync0 周期。" :
+               "Invalid ethercat_enable arguments; check slave, hold time, shift, and Sync0 cycle.");
+        return -1;
+    }
+
+    console_ethercat_background_reap();
+    pthread_mutex_lock(&ethercat_background_mutex);
+    if (ethercat_background_running) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        printf("%s\n", chinese ? "EtherCAT 后台主站已在运行；先使用 ethercat_disable 停止。" :
+               "EtherCAT background master is already running; stop it with ethercat_disable first.");
+        return -1;
+    }
+    memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
+    ethercat_background_arguments.chinese = chinese;
+    ethercat_background_arguments.hold_ms = hold_ms;
+    snprintf(ethercat_background_arguments.interface,
+             sizeof(ethercat_background_arguments.interface), "%s", interface);
+    snprintf(ethercat_background_arguments.selection,
+             sizeof(ethercat_background_arguments.selection), "%s", selection);
+    if (sync0_shift != NULL) {
+        snprintf(ethercat_background_arguments.sync0_shift,
+                 sizeof(ethercat_background_arguments.sync0_shift), "%s", sync0_shift);
+        ethercat_background_arguments.has_sync0_shift = true;
+    }
+    if (sync0_cycle_ms != NULL) {
+        snprintf(ethercat_background_arguments.sync0_cycle_ms,
+                 sizeof(ethercat_background_arguments.sync0_cycle_ms), "%s", sync0_cycle_ms);
+        ethercat_background_arguments.has_sync0_cycle_ms = true;
+    }
+    ethercat_background_stop_requested = false;
+    ethercat_background_ready = false;
+    ethercat_background_running = true;
+    ethercat_background_started = true;
+    if (pthread_create(&ethercat_background_thread, NULL,
+                       console_ethercat_background_worker,
+                       &ethercat_background_arguments) != 0) {
+        ethercat_background_running = false;
+        ethercat_background_started = false;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        printf("%s\n", chinese ? "无法创建 EtherCAT 后台任务。" :
+               "Failed to create EtherCAT background task.");
+        return -1;
+    }
+    while (ethercat_background_running && !ethercat_background_ready && wait_result == 0) {
+        wait_result = pthread_cond_wait(&ethercat_background_condition,
+                                        &ethercat_background_mutex);
+    }
+    ready = ethercat_background_ready;
+    running = ethercat_background_running;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    if (wait_result != 0) {
+        console_ethercat_background_stop();
+        return -1;
+    }
+    if (!ready || !running) {
+        console_ethercat_background_reap();
+        return -1;
+    }
+    printf("%s\n", chinese ? "EtherCAT 后台循环已启动；可继续输入命令。" :
+           "EtherCAT background cycle is running; you can continue entering commands.");
+    return 0;
+}
+
+static int console_ethercat_background_disable_start(bool chinese,
+                                                     const char *interface,
+                                                     const char *selection)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_disable 参数无效；请检查网卡和从站编号。" :
+               "Invalid ethercat_disable arguments; check the interface and slave selection.");
+        return -1;
+    }
+#ifndef HAVE_SOEM
+    return console_ethercat_disable(chinese, interface, selection);
+#else
+    console_ethercat_background_reap();
+    pthread_mutex_lock(&ethercat_background_mutex);
+    if (ethercat_background_running) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        printf("%s\n", chinese ?
+               "EtherCAT 后台主站仍在运行；请等待当前操作完成或先停止它。" :
+               "The EtherCAT background master is busy; wait for it to finish or stop it first.");
+        return -1;
+    }
+    memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
+    ethercat_background_arguments.chinese = chinese;
+    ethercat_background_arguments.disable_task = true;
+    snprintf(ethercat_background_arguments.interface,
+             sizeof(ethercat_background_arguments.interface), "%s", interface);
+    snprintf(ethercat_background_arguments.selection,
+             sizeof(ethercat_background_arguments.selection), "%s", selection);
+    ethercat_background_stop_requested = false;
+    ethercat_background_ready = false;
+    ethercat_background_running = true;
+    ethercat_background_started = true;
+    printf("%s: interface=%s slave=%s %s\n",
+           chinese ? "ethercat_disable: 开始" : "ethercat_disable: start",
+           interface, selection,
+           chinese ? "正在后台失能并释放 EtherCAT 主站。" :
+           "disabling in background and releasing the EtherCAT master.");
+    if (pthread_create(&ethercat_background_thread, NULL,
+                       console_ethercat_background_worker,
+                       &ethercat_background_arguments) != 0) {
+        ethercat_background_running = false;
+        ethercat_background_started = false;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        printf("%s\n", chinese ? "无法创建 EtherCAT 后台任务。" :
+               "Failed to create EtherCAT background task.");
+        return -1;
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return 0;
 #endif
 }
 

@@ -56,6 +56,25 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return 0;
     }
     cmd = argv[0];
+    if (console_ethercat_background_is_running()) {
+        if (strcmp(cmd, "ethercat_enable") == 0) {
+            printf("%s\n", console_text(state,
+                   "EtherCAT 后台主站正在运行；请先执行 ethercat_disable，避免同时启动主站。",
+                   "EtherCAT background master is running; use ethercat_disable before starting another master."));
+            return -1;
+        }
+        if (strncmp(cmd, "ethercat_", 9u) == 0 && strcmp(cmd, "ethercat_disable") != 0) {
+            if (console_ethercat_background_stop() > 0) {
+                printf("%s\n", console_text(state,
+                       "为交接 EtherCAT 主站，已先失能后台控制；正在执行本条命令。",
+                       "Disabled the background drive before handing off the EtherCAT master to this command."));
+            }
+        } else if (strcmp(cmd, "power_off") == 0 || strcmp(cmd, "exit") == 0 ||
+                   strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0 ||
+                   strcmp(cmd, "qq") == 0) {
+            console_ethercat_background_stop();
+        }
+    }
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "all") != 0)) {
             printf("%s: %s [all]\n", console_text(state, "用法", "usage"), cmd);
@@ -190,8 +209,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_enable(state->config.chinese_ui, interface, argv[first_argument],
-                                       hold_ms, sync0_shift_ns, sync0_cycle_ms);
+        return console_ethercat_background_start(state->config.chinese_ui,
+                                                 interface,
+                                                 argv[first_argument],
+                                                 hold_ms,
+                                                 sync0_shift_ns,
+                                                 sync0_cycle_ms);
     } else if (strcmp(cmd, "ethercat_disable") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -212,7 +235,25 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             interface = argv[2];
             selection = argv[1];
         }
-        return console_ethercat_disable(state->config.chinese_ui, interface, selection);
+        {
+            int background_disable = console_ethercat_background_disable(interface, selection);
+
+            if (background_disable < 0) {
+                printf("%s\n", console_text(state,
+                       "失能目标与后台 EtherCAT 主站的网卡或从站不匹配；后台循环保持运行。",
+                       "Disable target does not match the background master's interface or slave; the cycle remains active."));
+                return -1;
+            }
+            if (background_disable > 0) {
+                printf("%s\n", console_text(state,
+                       "后台 EtherCAT 循环已停止并发送失能。",
+                       "Background EtherCAT cycle stopped and disable sent."));
+                return 0;
+            }
+        }
+        return console_ethercat_background_disable_start(state->config.chinese_ui,
+                                                         interface,
+                                                         selection);
     } else if (strcmp(cmd, "ethercat_position") == 0) {
         double position_rad;
         unsigned int hold_ms = 0u;
@@ -491,8 +532,10 @@ static int console_terminal(flash_state *state)
         argc = split_line(line, argv, (int)(sizeof(argv) / sizeof(argv[0])));
         ret = console_run_command(state, argc, argv);
         if (ret == CONSOLE_COMMAND_EXIT) {
+            console_ethercat_background_stop();
             return 0;
         }
     }
+    console_ethercat_background_stop();
     return state->motor_power_on ? -1 : 0;
 }
