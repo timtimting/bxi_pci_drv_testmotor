@@ -82,6 +82,8 @@ typedef struct {
     uint32_t dc_cycle_ns;
     uint32_t sync0_cycle_ns;
     int32_t sync0_shift_ns;
+    int64_t dc_sync_phase_error_ns;
+    int64_t dc_sync_adjustment_ns;
     uint32_t config_valid_mask;
     uint16_t live_error_code;
     uint8_t outputs[13];
@@ -442,32 +444,80 @@ static uint64_t ethercat_max_exchange_interval_us;
 static struct timespec ethercat_next_cycle;
 static bool ethercat_cycle_initialized;
 static uint32_t ethercat_control_period_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+static bool ethercat_dc_sync_enabled;
+static int64_t ethercat_dc_sync_target_ns;
+static int64_t ethercat_dc_sync_integral_ns;
+static int64_t ethercat_dc_sync_phase_error_ns;
+static int64_t ethercat_dc_sync_adjustment_ns;
+
+static void console_ethercat_update_dc_sync(void)
+{
+    int64_t cycle_ns = (int64_t)ethercat_control_period_ns;
+    int64_t integral_limit_ns;
+    int64_t phase_ns;
+
+    if (!ethercat_dc_sync_enabled || cycle_ns <= 0) {
+        return;
+    }
+    phase_ns = ((int64_t)ec_DCtime - ethercat_dc_sync_target_ns) % cycle_ns;
+    if (phase_ns > cycle_ns / 2) {
+        phase_ns -= cycle_ns;
+    } else if (phase_ns < -(cycle_ns / 2)) {
+        phase_ns += cycle_ns;
+    }
+    ethercat_dc_sync_phase_error_ns = -phase_ns;
+    ethercat_dc_sync_integral_ns += ethercat_dc_sync_phase_error_ns;
+    integral_limit_ns = cycle_ns * 10000;
+    if (ethercat_dc_sync_integral_ns > integral_limit_ns) {
+        ethercat_dc_sync_integral_ns = integral_limit_ns;
+    } else if (ethercat_dc_sync_integral_ns < -integral_limit_ns) {
+        ethercat_dc_sync_integral_ns = -integral_limit_ns;
+    }
+    ethercat_dc_sync_adjustment_ns =
+        (int64_t)((double)ethercat_dc_sync_phase_error_ns * 0.01 +
+                  (double)ethercat_dc_sync_integral_ns * 0.00002);
+}
 
 static void console_ethercat_wait_next_cycle(void)
 {
     struct timespec now;
+    int64_t cycle_increment_ns = (int64_t)ethercat_control_period_ns;
     int wait_result;
 
+    if (ethercat_dc_sync_enabled) {
+        cycle_increment_ns += ethercat_dc_sync_adjustment_ns;
+    }
+    if (cycle_increment_ns <= 0) {
+        cycle_increment_ns = (int64_t)ethercat_control_period_ns;
+    }
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-        sleep_ms((ethercat_control_period_ns + 999999u) / 1000000u);
+        sleep_ms((unsigned int)((cycle_increment_ns + 999999) / 1000000));
         return;
     }
     if (!ethercat_cycle_initialized) {
         ethercat_next_cycle = now;
         ethercat_cycle_initialized = true;
     }
-    ethercat_next_cycle.tv_nsec += (long)ethercat_control_period_ns;
-    if (ethercat_next_cycle.tv_nsec >= 1000000000L) {
+    ethercat_next_cycle.tv_nsec += (long)cycle_increment_ns;
+    while (ethercat_next_cycle.tv_nsec >= 1000000000L) {
         ethercat_next_cycle.tv_sec++;
         ethercat_next_cycle.tv_nsec -= 1000000000L;
+    }
+    while (ethercat_next_cycle.tv_nsec < 0L) {
+        ethercat_next_cycle.tv_sec--;
+        ethercat_next_cycle.tv_nsec += 1000000000L;
     }
     while ((ethercat_next_cycle.tv_sec < now.tv_sec) ||
            (ethercat_next_cycle.tv_sec == now.tv_sec &&
             ethercat_next_cycle.tv_nsec <= now.tv_nsec)) {
-        ethercat_next_cycle.tv_nsec += (long)ethercat_control_period_ns;
-        if (ethercat_next_cycle.tv_nsec >= 1000000000L) {
+        ethercat_next_cycle.tv_nsec += (long)cycle_increment_ns;
+        while (ethercat_next_cycle.tv_nsec >= 1000000000L) {
             ethercat_next_cycle.tv_sec++;
             ethercat_next_cycle.tv_nsec -= 1000000000L;
+        }
+        while (ethercat_next_cycle.tv_nsec < 0L) {
+            ethercat_next_cycle.tv_sec--;
+            ethercat_next_cycle.tv_nsec += 1000000000L;
         }
     }
     do {
@@ -582,6 +632,8 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         snapshot.ibits = ec_slave[slave].Ibits;
         snapshot.sync0_cycle_ns = sync0_cycle_ns;
         snapshot.sync0_shift_ns = sync0_shift_ns;
+        snapshot.dc_sync_phase_error_ns = ethercat_dc_sync_phase_error_ns;
+        snapshot.dc_sync_adjustment_ns = ethercat_dc_sync_adjustment_ns;
 
 #define ETHERCAT_CACHE_SDO(index, subindex, field, mask) \
         if (console_ethercat_read_sdo_value(slave, (index), (subindex), \
@@ -660,6 +712,8 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
         snapshot->state = (uint8_t)ec_slave[slave].state;
         snapshot->live_timestamp_us = timestamp_us;
         snapshot->live_valid = true;
+        snapshot->dc_sync_phase_error_ns = ethercat_dc_sync_phase_error_ns;
+        snapshot->dc_sync_adjustment_ns = ethercat_dc_sync_adjustment_ns;
     }
     pthread_mutex_unlock(&ethercat_background_mutex);
     for (slave = 1; slave < EC_MAXSLAVE; slave++) {
@@ -814,8 +868,10 @@ static int console_ethercat_print_background_info(bool chinese,
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_TYPE) printf("0x%04x", snapshot->sm3_sync_type); else printf("?");
         printf(" cycle=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_CYCLE) printf("%uns\n", snapshot->sm3_cycle_ns); else printf("?\n");
-        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d error_code=",
-               (unsigned long long)age_us, control_word, status_word, (int)mode_command);
+        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d DC_error=%lldns DC_adjust=%lldns error_code=",
+               (unsigned long long)age_us, control_word, status_word, (int)mode_command,
+               (long long)snapshot->dc_sync_phase_error_ns,
+               (long long)snapshot->dc_sync_adjustment_ns);
         if (snapshot->live_error_valid) printf("0x%04x\n", snapshot->live_error_code); else printf("?\n");
         printf("  actual: motor_pos=%.6frad (%d count) output_pos=",
                (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
@@ -894,6 +950,9 @@ static int console_ethercat_exchange(void)
         work_counter < ethercat_expected_work_counter) {
         ethercat_incomplete_work_counter_count++;
     }
+    if (work_counter > 0) {
+        console_ethercat_update_dc_sync();
+    }
     return work_counter > 0 ? 0 : -1;
 }
 
@@ -906,6 +965,11 @@ static void console_ethercat_reset_exchange_diagnostics(void)
     ethercat_last_exchange_us = 0u;
     ethercat_max_exchange_interval_us = 0u;
     ethercat_cycle_initialized = false;
+    ethercat_dc_sync_enabled = false;
+    ethercat_dc_sync_target_ns = 0;
+    ethercat_dc_sync_integral_ns = 0;
+    ethercat_dc_sync_phase_error_ns = 0;
+    ethercat_dc_sync_adjustment_ns = 0;
 }
 
 static void console_ethercat_print_bytes(const uint8_t *data, unsigned int length)
@@ -957,6 +1021,15 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE],
         }
         ec_dcsync0((uint16)slave, TRUE, cycle_ns, shift_ns);
     }
+    ethercat_dc_sync_target_ns = ((int64_t)cycle_ns / 2) + (int64_t)shift_ns;
+    ethercat_dc_sync_target_ns %= (int64_t)cycle_ns;
+    if (ethercat_dc_sync_target_ns < 0) {
+        ethercat_dc_sync_target_ns += (int64_t)cycle_ns;
+    }
+    ethercat_dc_sync_integral_ns = 0;
+    ethercat_dc_sync_phase_error_ns = 0;
+    ethercat_dc_sync_adjustment_ns = 0;
+    ethercat_dc_sync_enabled = true;
     return 0;
 }
 
@@ -969,12 +1042,14 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
     printf("[EtherCAT diag]\n"
            "  request: control_word=0x%04x slaves=%d\n"
            "  exchange: WKC expected=%d last=%d min=%d incomplete=%u\n"
-           "  timing: target=%uus max_interval=%lluus\n",
+           "  timing: target=%uus max_interval=%lluus DC_error=%lldns DC_adjust=%lldns\n",
            (unsigned int)requested_control_word, ec_slavecount,
            ethercat_expected_work_counter, ethercat_last_work_counter,
            ethercat_min_work_counter, ethercat_incomplete_work_counter_count,
            ethercat_control_period_ns / 1000u,
-           (unsigned long long)ethercat_max_exchange_interval_us);
+           (unsigned long long)ethercat_max_exchange_interval_us,
+           (long long)ethercat_dc_sync_phase_error_ns,
+           (long long)ethercat_dc_sync_adjustment_ns);
     for (slave = 1; slave <= ec_slavecount; slave++) {
         uint16_t status_word;
         uint16_t al_status;
