@@ -66,6 +66,7 @@ typedef struct {
     int16_t pn079;
     int16_t pn085;
     int16_t pn088;
+    int16_t pn150;
     int8_t mode_display;
     uint16_t error_code;
     int32_t monitor_value;
@@ -104,6 +105,7 @@ enum {
     ETHERCAT_CACHE_SM3_CYCLE = 1u << 14,
     ETHERCAT_CACHE_DC_ACTIVATION = 1u << 15,
     ETHERCAT_CACHE_DC_CYCLE = 1u << 16,
+    ETHERCAT_CACHE_PN150 = 1u << 17,
 };
 #endif
 
@@ -550,6 +552,7 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         ETHERCAT_CACHE_SDO(0x2079u, 0u, pn079, ETHERCAT_CACHE_PN079);
         ETHERCAT_CACHE_SDO(0x2085u, 0u, pn085, ETHERCAT_CACHE_PN085);
         ETHERCAT_CACHE_SDO(0x2088u, 0u, pn088, ETHERCAT_CACHE_PN088);
+        ETHERCAT_CACHE_SDO(0x2150u, 0u, pn150, ETHERCAT_CACHE_PN150);
         ETHERCAT_CACHE_SDO(0x6061u, 0u, mode_display, ETHERCAT_CACHE_MODE_DISPLAY);
         ETHERCAT_CACHE_SDO(0x603fu, 0u, error_code, ETHERCAT_CACHE_ERROR_CODE);
         ETHERCAT_CACHE_SDO(0x3000u, 0u, monitor_value, ETHERCAT_CACHE_MONITOR);
@@ -697,7 +700,18 @@ static int console_ethercat_print_background_info(bool chinese,
         printf(" Pn075=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN075) printf("%d", snapshot->pn075); else printf("?");
         printf(" Pn077=");
-        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN077) printf("%d\n", snapshot->pn077); else printf("?\n");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN077) printf("%d", snapshot->pn077); else printf("?");
+        printf(" Pn150=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN150) {
+            printf("%d(%s)\n", snapshot->pn150,
+                   snapshot->pn150 == 0 ?
+                   (chinese ? "双编码器" : "dual encoder") :
+                   (snapshot->pn150 == 1 ?
+                    (chinese ? "单编码器/多圈" : "single multi-turn encoder") :
+                    (chinese ? "未知配置值" : "unknown value")));
+        } else {
+            printf("?\n");
+        }
         printf("  params snapshot: Pn079=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
         printf(" Pn085=");
@@ -2068,6 +2082,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t pn079;
         int16_t pn085;
         int16_t pn088;
+        int16_t pn150;
         int32_t position_actual;
         int32_t velocity_actual;
         int32_t target_position;
@@ -2099,6 +2114,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         bool pn079_ok;
         bool pn085_ok;
         bool pn088_ok;
+        bool pn150_ok;
         bool monitor_value_ok;
         bool sm2_sync_type_ok;
         bool sm2_cycle_ns_ok;
@@ -2144,6 +2160,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         pn079_ok = ETHERCAT_INFO_READ(0x2079u, pn079);
         pn085_ok = ETHERCAT_INFO_READ(0x2085u, pn085);
         pn088_ok = ETHERCAT_INFO_READ(0x2088u, pn088);
+        pn150_ok = ETHERCAT_INFO_READ(0x2150u, pn150);
         monitor_value_ok = ETHERCAT_INFO_READ(0x3000u, monitor_value);
         sm2_sync_type_ok = (size = (int)sizeof(sm2_sync_type),
             ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sm2_sync_type,
@@ -2182,6 +2199,17 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         if (pn088_ok) printf("%d(%s)", (int)pn088,
                              pn088 == 0 ? "rpm" : (pn088 == 1 ? "count/s" : "unit?"));
         else printf("?");
+        printf("\n  encoder: Pn150=");
+        if (pn150_ok) {
+            printf("%d(%s)", (int)pn150,
+                   pn150 == 0 ?
+                   (chinese ? "双编码器" : "dual encoder") :
+                   (pn150 == 1 ?
+                    (chinese ? "单编码器/多圈" : "single multi-turn encoder") :
+                    (chinese ? "未知配置值" : "unknown value")));
+        } else {
+            printf("?");
+        }
         printf("\n  bus: PDO=");
         if (ec_slave[slave].Obytes == 0u && ec_slave[slave].Ibytes == 0u) {
             printf("unmapped in read-only session");

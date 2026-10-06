@@ -109,7 +109,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      伺服失能后写 Pn101 的 0→1→0；完成后必须同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
-        printf("      使能时显示使能前缓存的 SDO 配置与后台实时 PDO；否则执行只读 SDO 查询。\n");
+        printf("      显示 Pn150 编码器配置（0=双编码器，1=单编码器/多圈）；使能时显示缓存配置与实时 PDO。\n");
         printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
         printf("      仅在驱动器失能时写入并回读 Pn077；0=DC 时钟偏移 100us，1=不偏移；重启生效。\n");
         printf("  ethercat_save <slave_id|all> [network_interface]\n");
@@ -206,7 +206,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      Disable servo, write Pn101 0->1->0, then restart main and USB power for zero to take effect.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");
-    printf("      During enable, show cached pre-enable SDO config and live PDO; otherwise read SDOs directly.\n");
+    printf("      Show Pn150 encoder configuration (0=dual, 1=single multi-turn); during enable show cached config and live PDO.\n");
     printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
     printf("      Write and verify Pn077 only while disabled; 0 offsets DC by 100us, 1 disables the offset; restart required.\n");
     printf("  ethercat_save <slave_id|all> [network_interface]\n");
