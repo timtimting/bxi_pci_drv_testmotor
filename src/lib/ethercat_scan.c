@@ -1642,6 +1642,23 @@ static int console_ethercat_save(bool chinese,
                    "写入 Pn097=1 失败" : "failed to write Pn097=1");
             goto close_socket;
         }
+        size = (int)sizeof(save_parameter[slave]);
+        if (ec_SDOread((uint16)slave, 0x2097u, 0u, FALSE, &size,
+                       &save_parameter[slave], EC_TIMEOUTRXM) <= 0 ||
+            size != (int)sizeof(save_parameter[slave]) ||
+            save_parameter[slave] != 1) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "Pn097=1 未能回读确认；尝试复位为 0" :
+                   "Pn097=1 readback failed; attempting reset to 0");
+            size = (int)sizeof(save_off);
+            ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
+                        &save_off, EC_TIMEOUTRXM);
+            goto close_socket;
+        }
+        printf("[slave%d]: %s\n", slave, chinese ?
+               "Pn097=1 已回读确认，保持 100ms 供驱动器处理保存请求" :
+               "Pn097=1 readback confirmed; holding for 100ms so the drive can process the save request");
+        sleep_ms(100u);
         size = (int)sizeof(save_off);
         if (ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
                         &save_off, EC_TIMEOUTRXM) <= 0) {
