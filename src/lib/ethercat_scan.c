@@ -431,14 +431,15 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
     int slave;
 
     ec_readstate();
-    printf("[EtherCAT diag]: requested_control_word=0x%04x slaves=%d "
-           "expected_wkc=%d last_wkc=%d min_wkc=%d incomplete_wkc_count=%u "
-           "max_cycle_interval_us=%llu target_cycle_us=%u\n",
+    printf("[EtherCAT diag]\n"
+           "  request: control_word=0x%04x slaves=%d\n"
+           "  exchange: WKC expected=%d last=%d min=%d incomplete=%u\n"
+           "  timing: target=%uus max_interval=%lluus\n",
            (unsigned int)requested_control_word, ec_slavecount,
            ethercat_expected_work_counter, ethercat_last_work_counter,
            ethercat_min_work_counter, ethercat_incomplete_work_counter_count,
-           (unsigned long long)ethercat_max_exchange_interval_us,
-           ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS * 1000u);
+           ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS * 1000u,
+           (unsigned long long)ethercat_max_exchange_interval_us);
     for (slave = 1; slave <= ec_slavecount; slave++) {
         uint16_t status_word;
         uint16_t al_status;
@@ -468,45 +469,35 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
                     (uint16)sizeof(al_status_data), al_status_data, EC_TIMEOUTRET) > 0) {
             al_status = console_ethercat_read_u16(al_status_data);
         }
-        printf("[slave%d]: ec_state=0x%02x(%s) ALstatus=0x%04x "
-               "ALstatuscode=0x%04x vendor=0x%08x product=0x%08x revision=0x%08x "
-               "hasdc=%u DCactive=%u DCcycle=%u DCshift=%d "
-               "PDO_out=%uB/%ubit PDO_in=%uB/%ubit status_word=0x%04x cia402=%s",
-               slave, (unsigned int)ec_slave[slave].state,
-               console_ethercat_state_name(ec_slave[slave].state),
+        printf("[slave%d] EtherCAT=%s(0x%02x) AL=0x%04x ALcode=0x%04x CIA402=%s\n"
+               "  identity: vendor=0x%08x product=0x%08x revision=0x%08x\n"
+               "  PDO map: out=%uB/%ubit in=%uB/%ubit\n"
+               "  DC: supported=%s active=%s cycle=%uns shift=%dns\n",
+               slave, console_ethercat_state_name(ec_slave[slave].state),
+               (unsigned int)ec_slave[slave].state,
                (unsigned int)al_status,
                (unsigned int)ec_slave[slave].ALstatuscode,
+               console_ethercat_cia402_state_name(status_word),
                (unsigned int)ec_slave[slave].eep_man, (unsigned int)ec_slave[slave].eep_id,
-               (unsigned int)ec_slave[slave].eep_rev, (unsigned int)ec_slave[slave].hasdc,
-               (unsigned int)ec_slave[slave].DCactive, (unsigned int)ec_slave[slave].DCcycle,
-               (int)ec_slave[slave].DCshift,
+               (unsigned int)ec_slave[slave].eep_rev,
                (unsigned int)ec_slave[slave].Obytes, (unsigned int)ec_slave[slave].Obits,
                (unsigned int)ec_slave[slave].Ibytes, (unsigned int)ec_slave[slave].Ibits,
-               (unsigned int)status_word, console_ethercat_cia402_state_name(status_word));
-        if (ec_slave[slave].outputs != NULL) {
-            printf(" PDO_out_raw=[");
-            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].outputs,
-                                         ec_slave[slave].Obytes);
-            printf("]");
-        }
-        if (ec_slave[slave].inputs != NULL) {
-            printf(" PDO_in_raw=[");
-            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].inputs,
-                                         ec_slave[slave].Ibytes);
-            printf("]");
-        }
+               ec_slave[slave].hasdc ? "yes" : "no",
+               ec_slave[slave].DCactive ? "yes" : "no",
+               (unsigned int)ec_slave[slave].DCcycle, (int)ec_slave[slave].DCshift);
 
         size = (int)sizeof(mode_display);
         if (ec_SDOread((uint16)slave, 0x6061u, 0u, FALSE, &size, &mode_display,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(mode_display)) {
-            printf(" mode_display=%d", (int)mode_display);
+            printf("  drive: mode_display=%d", (int)mode_display);
         } else {
-            printf(" mode_display=unread");
+            printf("  drive: mode_display=unread");
         }
         size = (int)sizeof(error_code);
         if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
-            printf(" error_code=0x%04x", (unsigned int)error_code);
+            printf(" error_code=0x%04x (%u)", (unsigned int)error_code,
+                   (unsigned int)error_code);
         } else {
             printf(" error_code=unread");
         }
@@ -527,36 +518,37 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
         size = (int)sizeof(sync_type);
         if (ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sync_type,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_type)) {
-            printf(" SM2_sync_type=0x%04x", (unsigned int)sync_type);
+            printf("\n  sync: SM2 type=0x%04x", (unsigned int)sync_type);
         } else {
-            printf(" SM2_sync_type=unread");
+            printf("\n  sync: SM2 type=unread");
         }
         size = (int)sizeof(sync_cycle_ns);
         if (ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sync_cycle_ns,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_cycle_ns)) {
-            printf(" SM2_cycle_ns=%u", (unsigned int)sync_cycle_ns);
+            printf(" cycle=%uns", (unsigned int)sync_cycle_ns);
         } else {
-            printf(" SM2_cycle_ns=unread");
+            printf(" cycle=unread");
         }
         size = (int)sizeof(tx_sync_type);
         if (ec_SDOread((uint16)slave, 0x1c33u, 1u, FALSE, &size, &tx_sync_type,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_type)) {
-            printf(" SM3_sync_type=0x%04x", (unsigned int)tx_sync_type);
+            printf(" | SM3 type=0x%04x", (unsigned int)tx_sync_type);
         } else {
-            printf(" SM3_sync_type=unread");
+            printf(" | SM3 type=unread");
         }
         size = (int)sizeof(tx_sync_cycle_ns);
         if (ec_SDOread((uint16)slave, 0x1c33u, 2u, FALSE, &size, &tx_sync_cycle_ns,
                        EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_cycle_ns)) {
-            printf(" SM3_cycle_ns=%u", (unsigned int)tx_sync_cycle_ns);
+            printf(" cycle=%uns", (unsigned int)tx_sync_cycle_ns);
         } else {
-            printf(" SM3_cycle_ns=unread");
+            printf(" cycle=unread");
         }
+        printf("\n  DC registers: activation=");
         if (ec_FPRD(ec_slave[slave].configadr, 0x0981u, (uint16)sizeof(dc_activation),
                     &dc_activation, EC_TIMEOUTRET) > 0) {
-            printf(" DC_activation=0x%02x", (unsigned int)dc_activation);
+            printf("0x%02x", (unsigned int)dc_activation);
         } else {
-            printf(" DC_activation=unread");
+            printf("unread");
         }
         if (ec_FPRD(ec_slave[slave].configadr, 0x09a0u, (uint16)sizeof(dc_cycle_data),
                     dc_cycle_data, EC_TIMEOUTRET) > 0) {
@@ -564,19 +556,31 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
                           ((uint32_t)dc_cycle_data[1] << 8u) |
                           ((uint32_t)dc_cycle_data[2] << 16u) |
                           ((uint32_t)dc_cycle_data[3] << 24u);
-            printf(" DC_cycle_ns=%u", (unsigned int)dc_cycle_ns);
+            printf(" cycle=%uns", (unsigned int)dc_cycle_ns);
         } else {
-            printf(" DC_cycle_ns=unread");
+            printf(" cycle=unread");
         }
         if (ec_FPRD(ec_slave[slave].configadr, 0x0990u, (uint16)sizeof(dc_start_data),
                     dc_start_data, EC_TIMEOUTRET) > 0) {
-            printf(" DC_start_raw=[");
+            printf(" start=[");
             console_ethercat_print_bytes(dc_start_data, (unsigned int)sizeof(dc_start_data));
             printf("]");
         } else {
-            printf(" DC_start_raw=unread");
+            printf(" start=unread");
         }
         printf("\n");
+        if (ec_slave[slave].outputs != NULL) {
+            printf("  PDO out raw: [");
+            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].outputs,
+                                         ec_slave[slave].Obytes);
+            printf("]\n");
+        }
+        if (ec_slave[slave].inputs != NULL) {
+            printf("  PDO in raw:  [");
+            console_ethercat_print_bytes((const uint8_t *)ec_slave[slave].inputs,
+                                         ec_slave[slave].Ibytes);
+            printf("]\n");
+        }
     }
 }
 
@@ -1432,9 +1436,15 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         if (pn088_ok) printf("%d(%s)", (int)pn088,
                              pn088 == 0 ? "rpm" : (pn088 == 1 ? "count/s" : "unit?"));
         else printf("?");
-        printf("\n  bus: PDO out=%uB/%ubit in=%uB/%ubit DC=%s active=%u actreg=",
-               (unsigned int)ec_slave[slave].Obytes, (unsigned int)ec_slave[slave].Obits,
-               (unsigned int)ec_slave[slave].Ibytes, (unsigned int)ec_slave[slave].Ibits,
+        printf("\n  bus: PDO=");
+        if (ec_slave[slave].Obytes == 0u && ec_slave[slave].Ibytes == 0u) {
+            printf("unmapped in read-only session");
+        } else {
+            printf("out=%uB/%ubit in=%uB/%ubit",
+                   (unsigned int)ec_slave[slave].Obytes, (unsigned int)ec_slave[slave].Obits,
+                   (unsigned int)ec_slave[slave].Ibytes, (unsigned int)ec_slave[slave].Ibits);
+        }
+        printf(" DC_supported=%s active=%u actreg=",
                ec_slave[slave].hasdc ? "yes" : "no",
                (unsigned int)ec_slave[slave].DCactive);
         if (dc_activation_ok) printf("0x%02x", (unsigned int)dc_activation);
