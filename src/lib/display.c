@@ -105,7 +105,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_disable <slave_id|all> [network_interface]\n");
         printf("      后台发送 0x0000、等待失能并切回 SAFE-OP；返回提示符后可继续输入命令。\n");
         printf("  ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
-        printf("      CSP 位控；target_rad 为电机端弧度（2π/圈），省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
+        printf("      CSP 位控，默认周期 1ms；target_rad 为电机端弧度（2π/圈），省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      伺服失能后写 Pn101 的 0→1→0；完成后必须同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
@@ -202,7 +202,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_disable <slave_id|all> [network_interface]\n");
     printf("      Disable selected/all slaves in the background and return them to SAFE-OP.\n");
     printf("  ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
-    printf("      CSP control; target_rad uses motor-side radians (2pi/rev). Omit hold_ms to control until Ctrl-C.\n");
+    printf("      CSP control at a default 1ms cycle; target_rad uses motor-side radians (2pi/rev). Omit hold_ms to control until Ctrl-C.\n");
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      Disable servo, write Pn101 0->1->0, then restart main and USB power for zero to take effect.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");
