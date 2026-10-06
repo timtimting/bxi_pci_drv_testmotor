@@ -787,9 +787,17 @@ static int console_ethercat_print_background_info(bool chinese,
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_CYCLE) printf("%uns\n", snapshot->sm3_cycle_ns); else printf("?\n");
         printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d\n",
                (unsigned long long)age_us, control_word, status_word, (int)mode_command);
-        printf("  actual: pos=%.6frad (%d count) vel=",
+        printf("  actual: motor_pos=%.6frad (%d count) output_pos=",
                (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
                ETHERCAT_KAIXUAN_COUNTS_PER_REV, position_actual);
+        if ((snapshot->config_valid_mask & ETHERCAT_CACHE_PN051) && snapshot->pn051 > 0) {
+            printf("%.6frad",
+                   (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV / (double)snapshot->pn051);
+        } else {
+            printf("?");
+        }
+        printf(" vel=");
         if ((snapshot->config_valid_mask & ETHERCAT_CACHE_PN088) && snapshot->pn088 == 0) {
             printf("%.6frad/s (%d rpm)",
                    (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI / 60.0,
@@ -2309,12 +2317,20 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         printf("/");
         if (mode_display_ok) printf("%d\n", (int)mode_display); else printf("?\n");
 
-        printf("  actual: pos=");
+        printf("  actual: motor_pos=");
         if (position_actual_ok) {
             printf("%.6frad (%d count)",
                    (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
                    ETHERCAT_KAIXUAN_COUNTS_PER_REV, position_actual);
         } else printf("?");
+        printf(" output_pos=");
+        if (position_actual_ok && pn051_ok && pn051 > 0) {
+            printf("%.6frad",
+                   (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV / (double)pn051);
+        } else {
+            printf("?");
+        }
         printf(" vel=");
         if (velocity_actual_ok) {
             if (pn088_ok && pn088 == 0) {
