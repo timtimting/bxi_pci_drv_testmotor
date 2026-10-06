@@ -100,7 +100,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_scan [network_interface]\n");
         printf("      通过 SOEM 枚举 EtherCAT 从站；不配置 PDO、不进入 OP，也不使能或运动电机。\n");
         printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
-        printf("      默认周期 4ms、shift=0；交互模式下循环在后台运行并返回提示符，hold_ms 到期自动失能。\n");
+        printf("      默认周期 1ms、shift=0；交互模式下循环在后台运行并返回提示符，hold_ms 到期自动失能。\n");
         printf("      查询或其他 EtherCAT 命令会先停止后台使能、失能电机，再交接主站；周期可设 0.5/1/2/4/5/8ms。\n");
         printf("  ethercat_disable <slave_id|all> [network_interface]\n");
         printf("      后台发送 0x0000、等待失能并切回 SAFE-OP；返回提示符后可继续输入命令。\n");
@@ -196,7 +196,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_scan [network_interface]\n");
     printf("      Enumerate EtherCAT slaves through SOEM; does not configure PDOs, enter OP, or enable/move a drive.\n");
     printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
-    printf("      Default cycle 4ms/shift=0; interactive mode runs the cycle in background and returns to the prompt.\n");
+    printf("      Default cycle 1ms/shift=0; interactive mode runs the cycle in background and returns to the prompt.\n");
     printf("      A supplied hold_ms automatically disables when it expires.\n");
     printf("      ethercat_disable stops and disables; other EtherCAT commands first stop and disable before master handoff.\n");
     printf("  ethercat_disable <slave_id|all> [network_interface]\n");

@@ -214,6 +214,7 @@ enum {
     ETHERCAT_KAIXUAN_TXPDO_MIN_BITS = 112u,
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS = 4u,
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS = 4000000u,
+    ETHERCAT_KAIXUAN_DEFAULT_SYNC0_CYCLE_NS = 1000000u,
     ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS = 60000u,
     ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE = 8192u,
     ETHERCAT_COMPLETION_INTERFACE_MAX = 32u,
@@ -1165,7 +1166,7 @@ static int console_ethercat_enable(bool chinese,
     unsigned int slave_id;
     bool all_slaves;
     int32_t sync0_shift_ns = 0;
-    uint32_t sync0_cycle_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+    uint32_t sync0_cycle_ns = ETHERCAT_KAIXUAN_DEFAULT_SYNC0_CYCLE_NS;
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
