@@ -90,6 +90,8 @@ enum {
     ETHERCAT_COMPLETION_SLAVE_MAX = 100u,
 };
 
+#define ETHERCAT_DEFAULT_INTERFACE "enp86s0"
+
 #define ETHERCAT_KAIXUAN_COUNTS_PER_REV 1048576.0
 #define ETHERCAT_KAIXUAN_TWO_PI 6.28318530717958647692
 
@@ -185,65 +187,53 @@ static const char *const *console_ethercat_completion_words(const char *line,
         return console_ethercat_interface_completion_words(count);
     }
     if ((strcmp(first, "ethercat_enable") == 0 ||
-         strcmp(first, "ethercat_disable") == 0) && tokens_before == 1u) {
-        return console_ethercat_interface_completion_words(count);
-    }
-    if ((strcmp(first, "ethercat_enable") == 0 ||
-         strcmp(first, "ethercat_disable") == 0) && tokens_before == 2u) {
+         strcmp(first, "ethercat_disable") == 0 ||
+         strcmp(first, "ethercat_zero") == 0 ||
+         strcmp(first, "ethercat_info") == 0 ||
+         strcmp(first, "ethercat_save") == 0 ||
+         strcmp(first, "ethercat_pn077") == 0) && tokens_before == 1u) {
         return console_ethercat_slave_completion_words(count);
     }
-    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 3u) {
+    if (strcmp(first, "ethercat_disable") == 0 ||
+        strcmp(first, "ethercat_zero") == 0 ||
+        strcmp(first, "ethercat_info") == 0 ||
+        strcmp(first, "ethercat_save") == 0) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 2u) {
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
         return ethercat_hold_ms_words;
     }
-    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 4u) {
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 3u) {
         *count = sizeof(ethercat_sync0_shift_words) /
                  sizeof(ethercat_sync0_shift_words[0]);
         return ethercat_sync0_shift_words;
     }
-    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 1u) {
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before >= 4u) {
         return console_ethercat_interface_completion_words(count);
     }
-    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 2u) {
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 1u) {
         return console_ethercat_slave_completion_words(count);
     }
-    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 3u) {
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 2u) {
         *count = sizeof(ethercat_position_rad_words) /
                  sizeof(ethercat_position_rad_words[0]);
         return ethercat_position_rad_words;
     }
-    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 4u) {
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before == 3u) {
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
         return ethercat_hold_ms_words;
     }
-    if (strcmp(first, "ethercat_zero") == 0 && tokens_before == 1u) {
-        return console_ethercat_interface_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_zero") == 0 && tokens_before == 2u) {
-        return console_ethercat_slave_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_info") == 0 && tokens_before == 1u) {
-        return console_ethercat_interface_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_info") == 0 && tokens_before == 2u) {
-        return console_ethercat_slave_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 1u) {
+    if (strcmp(first, "ethercat_position") == 0 && tokens_before >= 4u) {
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 2u) {
-        return console_ethercat_slave_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 3u) {
         *count = sizeof(ethercat_pn077_value_words) /
                  sizeof(ethercat_pn077_value_words[0]);
         return ethercat_pn077_value_words;
     }
-    if (strcmp(first, "ethercat_save") == 0 && tokens_before == 1u) {
+    if (strcmp(first, "ethercat_pn077") == 0 && tokens_before >= 3u) {
         return console_ethercat_interface_completion_words(count);
-    }
-    if (strcmp(first, "ethercat_save") == 0 && tokens_before == 2u) {
-        return console_ethercat_slave_completion_words(count);
     }
     *count = 0u;
     return NULL;

@@ -150,9 +150,14 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 `config/motor_console.yaml` 中的 CAN 电机配置，也不会初始化 BXI PCI/CAN。电机身份和
 拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
 
-终端内等效命令为 `ethercat_scan enp86s0`，但命令行方式不会初始化 BXI PCI/CAN，
+终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
+旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
 更适合只连接 EtherCAT 电机的电脑。SOEM 默认从 `$HOME/SOEM-v1.4.0` 检测；若安装
 在其他位置，重新构建时指定：
+
+交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
+`ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
+使能命令的末尾网卡参数位于 `hold_ms` 和 `sync0_shift_ns` 之后。
 
 ```bash
 make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
@@ -254,10 +259,10 @@ sudo ./build/motor_console --ethercat-info enp86s0 all
 驱动器失能时，可通过 SDO 写入 Pn077（仅允许 `0` 或 `1`）：
 
 ```text
-ethercat_pn077 enp86s0 1 0
+ethercat_pn077 1 0
 ```
 
-命令也可从 shell 执行：`sudo ./build/motor_console --ethercat-pn077 enp86s0 1 0`。它会确认目标为开璇驱动器、检查伺服未使能，写入 SDO `0x2077:00` 并回读验证。根据手册，`0` 表示 DC 时钟偏移 `100 us`，`1` 表示不偏移；修改需要重启执行器生效。该电机参数不同于主站的 Sync0 shift；此命令不会使能电机或改变 Sync0 配置。
+指定其他网卡时把它放在末尾，例如 `ethercat_pn077 1 0 enp5s0`。命令也可从 shell 执行：`sudo ./build/motor_console --ethercat-pn077 enp86s0 1 0`。它会确认目标为开璇驱动器、检查伺服未使能，写入 SDO `0x2077:00` 并回读验证。根据手册，`0` 表示 DC 时钟偏移 `100 us`，`1` 表示不偏移；修改需要重启执行器生效。该电机参数不同于主站的 Sync0 shift；此命令不会使能电机或改变 Sync0 配置。
 
 终端中按 `Tab` 可补全 EtherCAT 命令、当前电脑 `/sys/class/net` 中的网卡名、`all`、
 从站序号 `1..100` 以及常用的 `hold_ms` 值。`hold_ms` 也接受手工输入的 `1..60000`。
@@ -265,10 +270,10 @@ ethercat_pn077 enp86s0 1 0
 根据厂商提供的流程，可在驱动器失能时通过 `ethercat_save` 触发参数保存：
 
 ```text
-ethercat_save enp86s0 1
+ethercat_save 1
 ```
 
-该命令向 Pn097（SDO `0x2097:00`）依次写入 `1`、`0`，并确认回到 `0`。命令成功只表示保存触发序列已确认发送；仍需按厂商要求重启执行器，再用 `ethercat_info` 验证参数是否持久化。也支持 `all` 选择全部从站以及独立命令 `sudo ./build/motor_console --ethercat-save enp86s0 1`。
+该命令向 Pn097（SDO `0x2097:00`）依次写入 `1`、`0`，并确认回到 `0`。命令成功只表示保存触发序列已确认发送；仍需按厂商要求重启执行器，再用 `ethercat_info 1` 验证参数是否持久化。也支持 `all` 选择全部从站、末尾网卡覆盖（如 `ethercat_save all enp5s0`）以及独立命令 `sudo ./build/motor_console --ethercat-save enp86s0 1`。
 
 ## 6. 查看帮助
 

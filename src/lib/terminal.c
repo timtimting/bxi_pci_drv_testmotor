@@ -108,83 +108,231 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         console_print_motors(state);
     } else if (strcmp(cmd, "ethercat_scan") == 0) {
-        if (argc != 2) {
-            printf("%s: ethercat_scan <network_interface>\n",
+        if (argc > 2) {
+            printf("%s: ethercat_scan [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_scan(state->config.chinese_ui, argv[1]);
+        return console_ethercat_scan(state->config.chinese_ui,
+                                     argc == 2 ? argv[1] : ETHERCAT_DEFAULT_INTERFACE);
     } else if (strcmp(cmd, "ethercat_enable") == 0) {
         unsigned int hold_ms = 0u;
         const char *sync0_shift_ns = NULL;
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        unsigned int slave_id;
+        bool all_slaves;
+        int first_argument = 1;
+        int last_argument = argc;
+        char *shift_end;
+        bool new_order;
 
-        if (argc < 3 || argc > 5 ||
-            (argc == 4 && parse_uint_arg(argv[3], &hold_ms) != 0)) {
-            printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms [sync0_shift_ns]]\n",
+        if (argc < 2 || argc > 6) {
+            printf("%s: ethercat_enable <slave_id|all> [hold_ms [sync0_shift_ns]] [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        if (argc == 5) {
-            if (parse_uint_arg(argv[3], &hold_ms) != 0) {
-                printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms [sync0_shift_ns]]\n",
+        new_order = console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0;
+        if (!new_order) {
+            if (argc < 3 || argc > 5) {
+                printf("%s: ethercat_enable <slave_id|all> [hold_ms [sync0_shift_ns]] [network_interface]\n",
                        console_text(state, "用法", "usage"));
                 return -1;
             }
-            sync0_shift_ns = argv[4];
+            interface = argv[1];
+            first_argument = 2;
+            last_argument = argc;
+        } else if (last_argument > 2) {
+            errno = 0;
+            (void)strtol(argv[last_argument - 1], &shift_end, 10);
+            if (errno == 0 && shift_end != argv[last_argument - 1] && *shift_end == '\0') {
+                if (last_argument == 6) {
+                    printf("%s: ethercat_enable <slave_id|all> [hold_ms [sync0_shift_ns]] [network_interface]\n",
+                           console_text(state, "用法", "usage"));
+                    return -1;
+                }
+            } else {
+                interface = argv[--last_argument];
+            }
         }
-        return console_ethercat_enable(state->config.chinese_ui, argv[1], argv[2],
-                                       hold_ms, sync0_shift_ns);
-    } else if (strcmp(cmd, "ethercat_disable") == 0) {
-        if (argc != 3) {
-            printf("%s: ethercat_disable <network_interface> <slave_id|all>\n",
+        if (last_argument > first_argument + 1 &&
+            parse_uint_arg(argv[first_argument + 1], &hold_ms) != 0) {
+            printf("%s: ethercat_enable <slave_id|all> [hold_ms [sync0_shift_ns]] [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_disable(state->config.chinese_ui, argv[1], argv[2]);
+        if (last_argument > first_argument + 2) {
+            sync0_shift_ns = argv[first_argument + 2];
+        }
+        if (new_order && last_argument > first_argument + 3) {
+            printf("%s: ethercat_enable <slave_id|all> [hold_ms [sync0_shift_ns]] [network_interface]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_enable(state->config.chinese_ui, interface, argv[first_argument],
+                                       hold_ms, sync0_shift_ns);
+    } else if (strcmp(cmd, "ethercat_disable") == 0) {
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
+
+        if (argc == 2 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+        } else if (argc == 3) {
+            interface = argv[1];
+            selection = argv[2];
+        } else {
+            printf("%s: ethercat_disable <slave_id|all> [network_interface]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        if (argc == 3 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            interface = argv[2];
+            selection = argv[1];
+        }
+        return console_ethercat_disable(state->config.chinese_ui, interface, selection);
     } else if (strcmp(cmd, "ethercat_position") == 0) {
         double position_rad;
         unsigned int hold_ms = 0u;
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
+        int last_argument = argc;
+        char *target_end;
+        bool new_order = argc >= 3 &&
+            console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0;
 
-        if ((argc != 4 && argc != 5) ||
-            console_ethercat_parse_position_rad(argv[3], &position_rad) != 0 ||
-            (argc == 5 && parse_uint_arg(argv[4], &hold_ms) != 0)) {
-            printf("%s: ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n",
+        if (!new_order && (argc != 4 && argc != 5)) {
+            printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_position(state->config.chinese_ui,
-                                         argv[1], argv[2], position_rad, hold_ms);
+        if (new_order) {
+            selection = argv[1];
+            if (last_argument > 3) {
+                errno = 0;
+                (void)strtol(argv[last_argument - 1], &target_end, 10);
+                if (errno != 0 || target_end == argv[last_argument - 1] || *target_end != '\0') {
+                    interface = argv[--last_argument];
+                }
+            }
+            if (console_ethercat_parse_position_rad(argv[2], &position_rad) != 0 ||
+                (last_argument > 3 && parse_uint_arg(argv[3], &hold_ms) != 0) ||
+                last_argument > 4) {
+                printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+        } else {
+            interface = argv[1];
+            selection = argv[2];
+            if (console_ethercat_parse_position_rad(argv[3], &position_rad) != 0 ||
+                (argc == 5 && parse_uint_arg(argv[4], &hold_ms) != 0)) {
+                printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+        }
+        return console_ethercat_position(state->config.chinese_ui, interface, selection,
+                                         position_rad, hold_ms);
     } else if (strcmp(cmd, "ethercat_zero") == 0) {
-        if (argc != 3) {
-            printf("%s: ethercat_zero <network_interface> <slave_id|all>\n",
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
+
+        if (argc == 2 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+        } else if (argc == 3 &&
+                   console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+            interface = argv[2];
+        } else if (argc == 3) {
+            interface = argv[1];
+            selection = argv[2];
+        } else {
+            printf("%s: ethercat_zero <slave_id|all> [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_zero(state->config.chinese_ui, argv[1], argv[2]);
+        return console_ethercat_zero(state->config.chinese_ui, interface, selection);
     } else if (strcmp(cmd, "ethercat_info") == 0) {
-        if (argc != 3) {
-            printf("%s: ethercat_info <network_interface> <slave_id|all>\n",
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
+
+        if (argc == 2 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+        } else if (argc == 3 &&
+                   console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+            interface = argv[2];
+        } else if (argc == 3) {
+            interface = argv[1];
+            selection = argv[2];
+        } else {
+            printf("%s: ethercat_info <slave_id|all> [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_info(state->config.chinese_ui, argv[1], argv[2]);
+        return console_ethercat_info(state->config.chinese_ui, interface, selection);
     } else if (strcmp(cmd, "ethercat_pn077") == 0) {
         unsigned int value;
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
 
-        if (argc != 4 || parse_uint_arg(argv[3], &value) != 0 || value > 1u) {
-            printf("%s: ethercat_pn077 <network_interface> <slave_id|all> <0|1>\n",
-                   console_text(state, "用法", "usage"));
-            return -1;
+        if ((argc != 3 && argc != 4) ||
+            (argc == 4 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) != 0)) {
+            if (argc != 4 || console_ethercat_parse_slave_selection(argv[2], &slave_id, &all_slaves) != 0) {
+                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+            interface = argv[1];
+            selection = argv[2];
+            if (parse_uint_arg(argv[3], &value) != 0 || value > 1u) {
+                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+        } else {
+            selection = argv[1];
+            if (parse_uint_arg(argv[2], &value) != 0 || value > 1u) {
+                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+            if (argc == 4) {
+                interface = argv[3];
+            }
         }
         return console_ethercat_pn077(state->config.chinese_ui,
-                                      argv[1], argv[2], value);
+                                      interface, selection, value);
     } else if (strcmp(cmd, "ethercat_save") == 0) {
-        if (argc != 3) {
-            printf("%s: ethercat_save <network_interface> <slave_id|all>\n",
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        unsigned int slave_id;
+        bool all_slaves;
+
+        if (argc == 2 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+        } else if (argc == 3 &&
+                   console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+            interface = argv[2];
+        } else if (argc == 3) {
+            interface = argv[1];
+            selection = argv[2];
+        } else {
+            printf("%s: ethercat_save <slave_id|all> [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_save(state->config.chinese_ui, argv[1], argv[2]);
+        return console_ethercat_save(state->config.chinese_ui, interface, selection);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));
