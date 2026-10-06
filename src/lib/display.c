@@ -18,6 +18,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
             printf("             ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
             printf("             ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
+            printf("             ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
             printf("             ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
             printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]（命令行且不初始化 PCI/CAN）\n");
@@ -25,6 +26,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-zero <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-info <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n\n");
+            printf("             --ethercat-pnread <network_interface> <slave_id|all> <Pn编号>（读取参数）\n");
             printf("             --ethercat-pn077 <network_interface> <slave_id|all> <0|1>（写入电机 Pn077）\n");
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
@@ -51,7 +53,8 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
             printf("                ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
-            printf("                ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
+                printf("                ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
+                printf("                ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
             printf("                ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
             printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] (CLI; skips PCI/CAN initialization)\n");
@@ -59,6 +62,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-zero <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-info <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n\n");
+            printf("                --ethercat-pnread <network_interface> <slave_id|all> <Pn_number> (read parameter)\n");
             printf("                --ethercat-pn077 <network_interface> <slave_id|all> <0|1> (write drive Pn077)\n");
             printf("                --ethercat-save <network_interface> <slave_id|all> (trigger parameter save)\n");
             printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
@@ -110,6 +114,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      伺服失能后写 Pn101 的 0→1→0；完成后必须同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
         printf("      显示 Pn150 编码器配置（0=双编码器，1=单编码器/多圈）；使能时显示缓存配置与实时 PDO。\n");
+        printf("  ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
+        printf("      读取 Pn 参数并显示原始字节及整数解释；参数类型和单位以手册为准。\n");
         printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
         printf("      仅在驱动器失能时写入并回读 Pn077；0=DC 时钟偏移 100us，1=不偏移；重启生效。\n");
         printf("  ethercat_save <slave_id|all> [network_interface]\n");
@@ -126,6 +132,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      命令行执行 EtherCAT 零位设置，不初始化 BXI PCI/CAN。\n");
         printf("  --ethercat-info <network_interface> <slave_id|all>\n");
         printf("      命令行读取 EtherCAT 电机信息，不初始化 BXI PCI/CAN。\n");
+        printf("  --ethercat-pnread <network_interface> <slave_id|all> <Pn编号>\n");
+        printf("      命令行读取指定 Pn 参数，不初始化 BXI PCI/CAN。\n");
         printf("  --ethercat-pn077 <network_interface> <slave_id|all> <0|1>\n");
         printf("      命令行写入 Pn077，不初始化 BXI PCI/CAN；仅接受失能状态，重启生效。\n");
         printf("  --ethercat-save <network_interface> <slave_id|all>\n");
@@ -207,6 +215,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Disable servo, write Pn101 0->1->0, then restart main and USB power for zero to take effect.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");
     printf("      Show Pn150 encoder configuration (0=dual, 1=single multi-turn); during enable show cached config and live PDO.\n");
+    printf("  ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
+    printf("      Read a Pn parameter and print raw bytes plus integer interpretations; consult the manual for type/units.\n");
     printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
     printf("      Write and verify Pn077 only while disabled; 0 offsets DC by 100us, 1 disables the offset; restart required.\n");
     printf("  ethercat_save <slave_id|all> [network_interface]\n");
@@ -223,6 +233,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Set EtherCAT zero from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-info <network_interface> <slave_id|all>\n");
     printf("      Read EtherCAT motor information from the command line without BXI PCI/CAN initialization.\n");
+    printf("  --ethercat-pnread <network_interface> <slave_id|all> <Pn_number>\n");
+    printf("      Read one Pn parameter without initializing BXI PCI/CAN.\n");
     printf("  --ethercat-pn077 <network_interface> <slave_id|all> <0|1>\n");
     printf("      Write Pn077 while disabled from the command line; restart required.\n");
     printf("  --ethercat-save <network_interface> <slave_id|all>\n");

@@ -343,6 +343,46 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_ethercat_info(state->config.chinese_ui, interface, selection);
+    } else if (strcmp(cmd, "ethercat_pnread") == 0) {
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        const char *selection;
+        uint16_t pn_number;
+        unsigned int slave_id;
+        bool all_slaves;
+
+        if (argc == 3 &&
+            console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+            if (console_ethercat_parse_pn_number(argv[2], &pn_number) != 0) {
+                printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+        } else if (argc == 4 &&
+                   console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+            selection = argv[1];
+            if (console_ethercat_parse_pn_number(argv[2], &pn_number) != 0) {
+                printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+            interface = argv[3];
+        } else if (argc == 4 &&
+                   console_ethercat_parse_slave_selection(argv[2], &slave_id, &all_slaves) == 0) {
+            interface = argv[1];
+            selection = argv[2];
+            if (console_ethercat_parse_pn_number(argv[3], &pn_number) != 0) {
+                printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
+                       console_text(state, "用法", "usage"));
+                return -1;
+            }
+        } else {
+            printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_pnread(state->config.chinese_ui,
+                                       interface, selection, pn_number);
     } else if (strcmp(cmd, "ethercat_pn077") == 0) {
         unsigned int value;
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;

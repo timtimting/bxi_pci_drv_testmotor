@@ -40,7 +40,7 @@ typedef struct
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_zero",
-    "ethercat_info", "ethercat_pn077", "ethercat_save",
+    "ethercat_info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -84,6 +84,8 @@ int main(int argc, char **argv)
     const char *ethercat_zero_selection = NULL;
     const char *ethercat_info_interface = NULL;
     const char *ethercat_info_selection = NULL;
+    const char *ethercat_pnread_interface = NULL;
+    const char *ethercat_pnread_selection = NULL;
     const char *ethercat_pn077_interface = NULL;
     const char *ethercat_pn077_selection = NULL;
     const char *ethercat_save_interface = NULL;
@@ -91,6 +93,7 @@ int main(int argc, char **argv)
     unsigned int ethercat_enable_hold_ms = 0u;
     unsigned int ethercat_position_hold_ms = 0u;
     unsigned int ethercat_pn077_value = 0u;
+    uint16_t ethercat_pnread_number = 0u;
     double ethercat_position_rad;
     unsigned int parsed_ethercat_slave_id;
     bool parsed_ethercat_all_slaves;
@@ -105,13 +108,14 @@ int main(int argc, char **argv)
         {"ethercat-position", required_argument, NULL, 'P'},
         {"ethercat-zero", required_argument, NULL, 'Z'},
         {"ethercat-info", required_argument, NULL, 'I'},
+        {"ethercat-pnread", required_argument, NULL, 'R'},
         {"ethercat-pn077", required_argument, NULL, 'W'},
         {"ethercat-save", required_argument, NULL, 'S'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
     };
 
-    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:P:Z:I:W:S:", options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:P:Z:I:R:W:S:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;
             config_explicit = true;
@@ -137,12 +141,14 @@ int main(int argc, char **argv)
             ethercat_zero_interface = optarg;
         } else if (opt == 'I') {
             ethercat_info_interface = optarg;
+        } else if (opt == 'R') {
+            ethercat_pnread_interface = optarg;
         } else if (opt == 'W') {
             ethercat_pn077_interface = optarg;
         } else if (opt == 'S') {
             ethercat_save_interface = optarg;
         } else {
-            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]] [--ethercat-disable interface slave_id|all] [--ethercat-position interface slave_id|all target_rad [hold_ms]] [--ethercat-pn077 interface slave_id|all 0|1] [--ethercat-save interface slave_id|all]\n", argv[0]);
+            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]] [--ethercat-disable interface slave_id|all] [--ethercat-position interface slave_id|all target_rad [hold_ms]] [--ethercat-pnread interface slave_id|all Pn编号] [--ethercat-pn077 interface slave_id|all 0|1] [--ethercat-save interface slave_id|all]\n", argv[0]);
             return 1;
         }
     }
@@ -158,7 +164,8 @@ int main(int argc, char **argv)
 
         if (ethercat_interface != NULL || ethercat_disable_interface != NULL ||
             ethercat_position_interface != NULL || ethercat_zero_interface != NULL ||
-            ethercat_info_interface != NULL || ethercat_pn077_interface != NULL ||
+            ethercat_info_interface != NULL || ethercat_pnread_interface != NULL ||
+            ethercat_pn077_interface != NULL ||
             ethercat_save_interface != NULL ||
             optind >= argc ||
             console_ethercat_parse_slave_selection(argv[optind],
@@ -203,7 +210,8 @@ int main(int argc, char **argv)
     } else if (ethercat_disable_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_position_interface != NULL ||
             ethercat_zero_interface != NULL || ethercat_info_interface != NULL ||
-            ethercat_pn077_interface != NULL || ethercat_save_interface != NULL ||
+            ethercat_pnread_interface != NULL || ethercat_pn077_interface != NULL ||
+            ethercat_save_interface != NULL ||
             optind >= argc || optind + 1 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -215,7 +223,7 @@ int main(int argc, char **argv)
     } else if (ethercat_position_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_zero_interface != NULL ||
             ethercat_info_interface != NULL || ethercat_pn077_interface != NULL ||
-            ethercat_save_interface != NULL ||
+            ethercat_pnread_interface != NULL || ethercat_save_interface != NULL ||
             optind + 2 > argc || optind + 3 < argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -231,7 +239,8 @@ int main(int argc, char **argv)
         }
     } else if (ethercat_zero_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_info_interface != NULL ||
-            ethercat_pn077_interface != NULL || ethercat_save_interface != NULL ||
+            ethercat_pnread_interface != NULL || ethercat_pn077_interface != NULL ||
+            ethercat_save_interface != NULL ||
             optind + 1 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -242,7 +251,7 @@ int main(int argc, char **argv)
         ethercat_zero_selection = argv[optind++];
     } else if (ethercat_info_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_pn077_interface != NULL ||
-            ethercat_save_interface != NULL ||
+            ethercat_pnread_interface != NULL || ethercat_save_interface != NULL ||
             optind + 1 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
@@ -251,8 +260,24 @@ int main(int argc, char **argv)
             return 1;
         }
         ethercat_info_selection = argv[optind++];
+    } else if (ethercat_pnread_interface != NULL) {
+        if (ethercat_interface != NULL || ethercat_enable_interface != NULL ||
+            ethercat_disable_interface != NULL || ethercat_position_interface != NULL ||
+            ethercat_zero_interface != NULL || ethercat_info_interface != NULL ||
+            ethercat_pn077_interface != NULL || ethercat_save_interface != NULL ||
+            optind + 2 != argc ||
+            console_ethercat_parse_slave_selection(argv[optind],
+                                                    &parsed_ethercat_slave_id,
+                                                    &parsed_ethercat_all_slaves) != 0 ||
+            console_ethercat_parse_pn_number(argv[optind + 1],
+                                             &ethercat_pnread_number) != 0) {
+            printf("用法：%s --ethercat-pnread <interface> <slave_id|all> <Pn编号>\n", argv[0]);
+            return 1;
+        }
+        ethercat_pnread_selection = argv[optind++];
+        optind++;
     } else if (ethercat_pn077_interface != NULL) {
-        if (ethercat_interface != NULL || optind + 2 != argc ||
+        if (ethercat_interface != NULL || ethercat_pnread_interface != NULL || optind + 2 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
                                                     &parsed_ethercat_all_slaves) != 0 ||
@@ -264,7 +289,7 @@ int main(int argc, char **argv)
         ethercat_pn077_selection = argv[optind++];
         optind++;
     } else if (ethercat_save_interface != NULL) {
-        if (ethercat_interface != NULL || optind + 1 != argc ||
+        if (ethercat_interface != NULL || ethercat_pnread_interface != NULL || optind + 1 != argc ||
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
                                                     &parsed_ethercat_all_slaves) != 0) {
@@ -280,7 +305,8 @@ int main(int argc, char **argv)
     if (ethercat_interface != NULL || ethercat_enable_interface != NULL ||
         ethercat_disable_interface != NULL || ethercat_position_interface != NULL ||
         ethercat_zero_interface != NULL || ethercat_info_interface != NULL ||
-        ethercat_pn077_interface != NULL || ethercat_save_interface != NULL) {
+        ethercat_pnread_interface != NULL || ethercat_pn077_interface != NULL ||
+        ethercat_save_interface != NULL) {
         bool chinese = language_override == NULL || strcmp(language_override, "zh") == 0;
 
         if (check_config) {
@@ -327,6 +353,12 @@ int main(int argc, char **argv)
             return console_ethercat_save(chinese,
                                          ethercat_save_interface,
                                          ethercat_save_selection) == 0 ? 0 : 1;
+        }
+        if (ethercat_pnread_interface != NULL) {
+            return console_ethercat_pnread(chinese,
+                                           ethercat_pnread_interface,
+                                           ethercat_pnread_selection,
+                                           ethercat_pnread_number) == 0 ? 0 : 1;
         }
         return console_ethercat_info(chinese,
                                      ethercat_info_interface,

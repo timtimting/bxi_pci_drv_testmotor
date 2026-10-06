@@ -257,6 +257,17 @@ sudo ./build/motor_console --ethercat-info enp86s0 all
 当前监控值来自 `0x3000`。Pn150 显示编码器配置：`0` 为双编码器，`1` 为高速端单多圈编码器。
 单项读取失败显示 `?`。读取不会配置 PDO、请求 OP、使能或运动电机。
 
+需要读取其他 Pn 参数时，可指定编号（支持 `150` 或 `Pn150`）：
+
+```text
+ethercat_pnread 1 Pn150
+ethercat_pnread all 150
+```
+
+该命令仅对当前开璇驱动器按 Pn 编号 `N` 读取 SDO `0x2000 + N:00`，显示数据长度、原始字节和小端整数解释；
+数据类型与单位请以对应参数手册为准。它只读 SDO，不配置 PDO 或请求 OP；若后台使能循环正在运行，
+交互终端会先停止并失能，再单独读取。也可从 shell 执行 `sudo ./build/motor_console --ethercat-pnread enp86s0 1 Pn150`。
+
 ### EtherCAT Pn077 配置
 
 驱动器失能时，可通过 SDO 写入 Pn077（仅允许 `0` 或 `1`）：

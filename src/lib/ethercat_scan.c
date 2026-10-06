@@ -146,6 +146,30 @@ static int console_ethercat_parse_slave_selection(const char *selection,
     return 0;
 }
 
+static int console_ethercat_parse_pn_number(const char *text, uint16_t *pn_number)
+{
+    char *end;
+    unsigned long parsed;
+
+    if (text == NULL || pn_number == NULL) {
+        return -1;
+    }
+    if ((text[0] == 'P' || text[0] == 'p') &&
+        (text[1] == 'N' || text[1] == 'n')) {
+        text += 2;
+    }
+    if (text[0] == '\0') {
+        return -1;
+    }
+    errno = 0;
+    parsed = strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || parsed > 0xdfffu) {
+        return -1;
+    }
+    *pn_number = (uint16_t)parsed;
+    return 0;
+}
+
 static int console_ethercat_parse_position_rad(const char *text, double *position_rad)
 {
     char *end;
@@ -258,6 +282,11 @@ static const char *const ethercat_pn077_value_words[] = {
     "0", "1",
 };
 
+static const char *const ethercat_pn_number_words[] = {
+    "Pn001", "Pn002", "Pn070", "Pn075", "Pn077", "Pn079", "Pn085",
+    "Pn088", "Pn097", "Pn101", "Pn150",
+};
+
 static char ethercat_interface_storage[ETHERCAT_COMPLETION_INTERFACE_MAX][IFNAMSIZ];
 static const char *ethercat_interface_words[ETHERCAT_COMPLETION_INTERFACE_MAX];
 static char ethercat_slave_storage[ETHERCAT_COMPLETION_SLAVE_MAX][4];
@@ -333,14 +362,22 @@ static const char *const *console_ethercat_completion_words(const char *line,
          strcmp(first, "ethercat_disable") == 0 ||
          strcmp(first, "ethercat_zero") == 0 ||
          strcmp(first, "ethercat_info") == 0 ||
+         strcmp(first, "ethercat_pnread") == 0 ||
          strcmp(first, "ethercat_save") == 0 ||
          strcmp(first, "ethercat_pn077") == 0) && tokens_before == 1u) {
         return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_pnread") == 0 && tokens_before == 2u) {
+        *count = sizeof(ethercat_pn_number_words) / sizeof(ethercat_pn_number_words[0]);
+        return ethercat_pn_number_words;
     }
     if (strcmp(first, "ethercat_disable") == 0 ||
         strcmp(first, "ethercat_zero") == 0 ||
         strcmp(first, "ethercat_info") == 0 ||
         strcmp(first, "ethercat_save") == 0) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_pnread") == 0 && tokens_before >= 3u) {
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 2u) {
@@ -2302,6 +2339,120 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
     printf("%s\n", chinese ?
            "ethercat_info: 只读 SDO 查询完成；未配置 PDO、未请求 OP、未发送使能或运动命令。" :
            "ethercat_info: read-only SDO query complete; did not configure PDOs, request OP, or send enable/motion commands.");
+    ec_close();
+    return failed == 0 ? 0 : -1;
+
+close_socket:
+    ec_close();
+    return -1;
+#endif
+}
+
+static int console_ethercat_pnread(bool chinese,
+                                   const char *interface,
+                                   const char *selection,
+                                   uint16_t pn_number)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
+        pn_number > 0xdfffu) {
+        printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
+               chinese ? "用法" : "usage");
+        return -1;
+    }
+
+#ifndef HAVE_SOEM
+    printf("%s\n", chinese ?
+           "当前程序未编译 SOEM，无法读取 Pn 参数。请启用 SOEM 支持后重新构建。" :
+           "Pn parameter reads are unavailable because this build has no SOEM support.");
+    return -1;
+#else
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    uint16_t index = (uint16_t)(0x2000u + pn_number);
+    int slave;
+    int failed = 0;
+
+    printf("%s: interface=%s slave=%s Pn%u index=0x%04x:00\n",
+           chinese ? "ethercat_pnread: 开始读取" : "ethercat_pnread: reading",
+           interface, selection, (unsigned int)pn_number, (unsigned int)index);
+    if (ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", chinese ? "ethercat_pnread: 打开网卡失败" :
+               "ethercat_pnread: failed to open interface", interface);
+        return -1;
+    }
+    if (ec_config_init(FALSE) <= 0) {
+        printf("%s\n", chinese ? "ethercat_pnread: 未发现 EtherCAT 从站" :
+               "ethercat_pnread: no EtherCAT slaves found");
+        goto close_socket;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %u (1..%d)\n", chinese ? "ethercat_pnread: 从站序号不存在" :
+               "ethercat_pnread: slave id is out of range", slave_id, ec_slavecount);
+        goto close_socket;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (all_slaves || (unsigned int)slave == slave_id) {
+            selected[slave] = 1u;
+        }
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint8_t data[256] = {0};
+        uint64_t raw_value = 0u;
+        int actual_size = (int)sizeof(data);
+        int result;
+        int byte_index;
+
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE) {
+            printf("[slave%d]: %s\n", slave, chinese ?
+                   "不是当前 Pn 编号映射所支持的开璇驱动器，跳过读取" :
+                   "not a supported Kaixuan drive for this Pn mapping; skipping");
+            failed++;
+            continue;
+        }
+        result = ec_SDOread((uint16)slave, index, 0u, FALSE,
+                            &actual_size, data, EC_TIMEOUTRXM);
+        if (result <= 0 || actual_size <= 0 || actual_size > (int)sizeof(data)) {
+            printf("[slave%d]: Pn%u index=0x%04x:00 %s\n", slave,
+                   (unsigned int)pn_number, (unsigned int)index,
+                   chinese ? "读取失败或数据长度无效" : "read failed or invalid data length");
+            failed++;
+            continue;
+        }
+        printf("[slave%d]: Pn%u index=0x%04x:00 size=%d raw=[",
+               slave, (unsigned int)pn_number, (unsigned int)index, actual_size);
+        for (byte_index = 0; byte_index < actual_size; byte_index++) {
+            printf("%s%02x", byte_index == 0 ? "" : " ", data[byte_index]);
+            if (byte_index < 8) {
+                raw_value |= (uint64_t)data[byte_index] << (8u * (unsigned int)byte_index);
+            }
+        }
+        printf("]");
+        if (actual_size <= 8) {
+            printf(" little_endian=0x%llx (%llu)",
+                   (unsigned long long)raw_value,
+                   (unsigned long long)raw_value);
+            if (actual_size <= 4) {
+                uint64_t sign_bit = 1ull << (8u * (unsigned int)actual_size - 1u);
+                int64_t signed_value = (int64_t)raw_value;
+
+                if ((raw_value & sign_bit) != 0u) {
+                    signed_value -= (int64_t)(1ull << (8u * (unsigned int)actual_size));
+                }
+                printf(" signed=%lld", (long long)signed_value);
+            }
+        }
+        printf("\n");
+    }
+    printf("%s\n", chinese ?
+           "读取完成；未配置 PDO 或请求 OP。输出为 SDO 原始字节及小端数值，类型/单位请以驱动器手册为准。" :
+           "Read complete; no PDO configuration or OP request. Raw bytes and little-endian values shown; consult the manual for type and units.");
     ec_close();
     return failed == 0 ? 0 : -1;
 
