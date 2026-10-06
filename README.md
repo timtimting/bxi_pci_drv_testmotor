@@ -157,7 +157,8 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 
 交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
 `ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
-使能命令的末尾网卡参数位于 `hold_ms` 和 `sync0_shift_ns` 之后。
+使能命令可用独立命名参数 `sync0_cycle_ms=<周期>` 配置周期，支持 `0.5/1/2/4/5/8 ms`；
+主站 Sync0 与 EtherCAT 循环会一起使用该周期。`hold_ms`、`sync0_shift_ns` 仍为可选位置参数，网卡覆盖参数放在最后。
 
 ```bash
 make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
@@ -179,7 +180,13 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1
 sudo ./build/motor_console --ethercat-enable enp86s0 1 0 100000
 ```
 
-其中 `0` 表示持续运行直到 `Ctrl-C`，`100000` 是传给 SOEM `ec_dcsync0()` 的主站 shift。该参数不写驱动器 Pn077，也不改变当前固定的 `4 ms` Sync0 周期。测试不同 shift 会实际使能电机，请确保机械安全并在每次尝试后确认失能。
+其中 `0` 表示持续运行直到 `Ctrl-C`，`100000` 是传给 SOEM `ec_dcsync0()` 的主站 shift。周期参数可独立指定，不需要填写 hold 或 shift：
+
+```bash
+sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
+```
+
+交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全并在每次尝试后确认失能。
 
 使能总线上全部从站并保持当前位置 5 秒后自动失能：
 
