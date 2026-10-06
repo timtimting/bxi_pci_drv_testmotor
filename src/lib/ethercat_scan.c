@@ -1303,6 +1303,8 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         uint16_t control_word;
         uint16_t status_word;
         uint16_t error_code;
+        uint16_t sm2_sync_type;
+        uint16_t sm3_sync_type;
         int8_t mode_command;
         int8_t mode_display;
         int16_t torque_actual;
@@ -1310,23 +1312,59 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t target_torque;
         int16_t pn001;
         int16_t pn002;
+        int16_t pn070;
+        int16_t pn075;
         int16_t pn077;
+        int16_t pn079;
+        int16_t pn085;
+        int16_t pn088;
         int32_t position_actual;
         int32_t velocity_actual;
         int32_t target_position;
         int32_t target_velocity;
         int32_t monitor_value;
+        uint32_t sm2_cycle_ns;
+        uint32_t sm3_cycle_ns;
         uint32_t digital_inputs;
+        uint8_t dc_activation;
+        uint8_t dc_cycle_data[4];
+        bool control_word_ok;
+        bool status_word_ok;
+        bool error_code_ok;
+        bool mode_command_ok;
+        bool mode_display_ok;
+        bool position_actual_ok;
+        bool velocity_actual_ok;
+        bool torque_actual_ok;
+        bool current_actual_ok;
+        bool target_position_ok;
+        bool target_velocity_ok;
+        bool target_torque_ok;
+        bool digital_inputs_ok;
+        bool pn001_ok;
+        bool pn002_ok;
+        bool pn070_ok;
+        bool pn075_ok;
+        bool pn077_ok;
+        bool pn079_ok;
+        bool pn085_ok;
+        bool pn088_ok;
+        bool monitor_value_ok;
+        bool sm2_sync_type_ok;
+        bool sm2_cycle_ns_ok;
+        bool sm3_sync_type_ok;
+        bool sm3_cycle_ns_ok;
+        bool dc_activation_ok;
+        bool dc_cycle_ok;
         int size;
 
         if (!all_slaves && (unsigned int)slave != slave_id) {
             continue;
         }
-        printf("[slave%d] name=%s state=0x%02x(%s) addr=0x%04x dc=%s\n",
+        printf("[slave%d] %s state=0x%02x(%s) addr=0x%04x identity=%08x:%08x rev=%08x\n",
                slave, ec_slave[slave].name, (unsigned int)ec_slave[slave].state,
                console_ethercat_state_name(ec_slave[slave].state),
-               (unsigned int)ec_slave[slave].configadr, ec_slave[slave].hasdc ? "yes" : "no");
-        printf("  identity vendor=0x%08x product=0x%08x revision=0x%08x\n",
+               (unsigned int)ec_slave[slave].configadr,
                (unsigned int)ec_slave[slave].eep_man, (unsigned int)ec_slave[slave].eep_id,
                (unsigned int)ec_slave[slave].eep_rev);
 
@@ -1335,65 +1373,146 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
          ec_SDOread((uint16)slave, (index), 0u, FALSE, &size, &(value), EC_TIMEOUTRXM) > 0 && \
          size == (int)sizeof(value))
 
-        if (ETHERCAT_INFO_READ(0x6040u, control_word)) {
-            printf("  control_word=0x%04x\n", (unsigned int)control_word);
+        control_word_ok = ETHERCAT_INFO_READ(0x6040u, control_word);
+        status_word_ok = ETHERCAT_INFO_READ(0x6041u, status_word);
+        error_code_ok = ETHERCAT_INFO_READ(0x603fu, error_code);
+        mode_command_ok = ETHERCAT_INFO_READ(0x6060u, mode_command);
+        mode_display_ok = ETHERCAT_INFO_READ(0x6061u, mode_display);
+        position_actual_ok = ETHERCAT_INFO_READ(0x6064u, position_actual);
+        velocity_actual_ok = ETHERCAT_INFO_READ(0x606cu, velocity_actual);
+        torque_actual_ok = ETHERCAT_INFO_READ(0x6077u, torque_actual);
+        current_actual_ok = ETHERCAT_INFO_READ(0x6078u, current_actual);
+        target_position_ok = ETHERCAT_INFO_READ(0x607au, target_position);
+        target_velocity_ok = ETHERCAT_INFO_READ(0x60ffu, target_velocity);
+        target_torque_ok = ETHERCAT_INFO_READ(0x6071u, target_torque);
+        digital_inputs_ok = ETHERCAT_INFO_READ(0x60fdu, digital_inputs);
+        pn001_ok = ETHERCAT_INFO_READ(0x2001u, pn001);
+        pn002_ok = ETHERCAT_INFO_READ(0x2002u, pn002);
+        pn070_ok = ETHERCAT_INFO_READ(0x2070u, pn070);
+        pn075_ok = ETHERCAT_INFO_READ(0x2075u, pn075);
+        pn077_ok = ETHERCAT_INFO_READ(0x2077u, pn077);
+        pn079_ok = ETHERCAT_INFO_READ(0x2079u, pn079);
+        pn085_ok = ETHERCAT_INFO_READ(0x2085u, pn085);
+        pn088_ok = ETHERCAT_INFO_READ(0x2088u, pn088);
+        monitor_value_ok = ETHERCAT_INFO_READ(0x3000u, monitor_value);
+        sm2_sync_type_ok = (size = (int)sizeof(sm2_sync_type),
+            ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sm2_sync_type,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sm2_sync_type));
+        sm2_cycle_ns_ok = (size = (int)sizeof(sm2_cycle_ns),
+            ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sm2_cycle_ns,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sm2_cycle_ns));
+        sm3_sync_type_ok = (size = (int)sizeof(sm3_sync_type),
+            ec_SDOread((uint16)slave, 0x1c33u, 1u, FALSE, &size, &sm3_sync_type,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sm3_sync_type));
+        sm3_cycle_ns_ok = (size = (int)sizeof(sm3_cycle_ns),
+            ec_SDOread((uint16)slave, 0x1c33u, 2u, FALSE, &size, &sm3_cycle_ns,
+                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sm3_cycle_ns));
+        dc_activation_ok = ec_FPRD(ec_slave[slave].configadr, 0x0981u,
+                                   (uint16)sizeof(dc_activation),
+                                   &dc_activation, EC_TIMEOUTRET) > 0;
+        dc_cycle_ok = ec_FPRD(ec_slave[slave].configadr, 0x09a0u,
+                              (uint16)sizeof(dc_cycle_data),
+                              dc_cycle_data, EC_TIMEOUTRET) > 0;
+
+        printf("  drive: Pn001=");
+        if (pn001_ok) printf("%d", (int)pn001); else printf("?");
+        printf(" Pn002=");
+        if (pn002_ok) printf("%d", (int)pn002); else printf("?");
+        printf(" Pn070=");
+        if (pn070_ok) printf("%d", (int)pn070); else printf("?");
+        printf(" Pn075=");
+        if (pn075_ok) printf("%d", (int)pn075); else printf("?");
+        printf(" Pn077=");
+        if (pn077_ok) printf("%d", (int)pn077); else printf("?");
+        printf("\n  params: Pn079=");
+        if (pn079_ok) printf("%d", (int)pn079); else printf("?");
+        printf(" Pn085=");
+        if (pn085_ok) printf("%d (0.01A)", (int)pn085); else printf("?");
+        printf(" Pn088=");
+        if (pn088_ok) printf("%d(%s)", (int)pn088,
+                             pn088 == 0 ? "rpm" : (pn088 == 1 ? "count/s" : "unit?"));
+        else printf("?");
+        printf("\n  bus: PDO out=%uB/%ubit in=%uB/%ubit DC=%s active=%u actreg=",
+               (unsigned int)ec_slave[slave].Obytes, (unsigned int)ec_slave[slave].Obits,
+               (unsigned int)ec_slave[slave].Ibytes, (unsigned int)ec_slave[slave].Ibits,
+               ec_slave[slave].hasdc ? "yes" : "no",
+               (unsigned int)ec_slave[slave].DCactive);
+        if (dc_activation_ok) printf("0x%02x", (unsigned int)dc_activation);
+        else printf("?");
+        printf(" cycle=");
+        if (dc_cycle_ok) {
+            uint32_t dc_cycle_ns = (uint32_t)dc_cycle_data[0] |
+                                   ((uint32_t)dc_cycle_data[1] << 8u) |
+                                   ((uint32_t)dc_cycle_data[2] << 16u) |
+                                   ((uint32_t)dc_cycle_data[3] << 24u);
+            printf("%uns", (unsigned int)dc_cycle_ns);
+        } else {
+            printf("?");
         }
-        if (ETHERCAT_INFO_READ(0x6041u, status_word)) {
-            printf("  status_word=0x%04x\n", (unsigned int)status_word);
-        }
-        if (ETHERCAT_INFO_READ(0x603fu, error_code)) {
-            printf("  error_code=0x%04x\n", (unsigned int)error_code);
-        }
-        if (ETHERCAT_INFO_READ(0x6060u, mode_command)) {
-            printf("  mode_command=%d\n", (int)mode_command);
-        }
-        if (ETHERCAT_INFO_READ(0x6061u, mode_display)) {
-            printf("  mode_display=%d\n", (int)mode_display);
-        }
-        if (ETHERCAT_INFO_READ(0x6064u, position_actual)) {
-            printf("  position_actual=%d count (%.6f rad)\n", position_actual,
+        printf(" shift=%d\n  sync: SM2 type=", (int)ec_slave[slave].DCshift);
+        if (sm2_sync_type_ok) printf("0x%04x", (unsigned int)sm2_sync_type);
+        else printf("?");
+        printf(" cycle=");
+        if (sm2_cycle_ns_ok) printf("%uns", (unsigned int)sm2_cycle_ns);
+        else printf("?");
+        printf(" | SM3 type=");
+        if (sm3_sync_type_ok) printf("0x%04x", (unsigned int)sm3_sync_type);
+        else printf("?");
+        printf(" cycle=");
+        if (sm3_cycle_ns_ok) printf("%uns\n", (unsigned int)sm3_cycle_ns);
+        else printf("?\n");
+
+        printf("  state: CW=");
+        if (control_word_ok) printf("0x%04x", (unsigned int)control_word); else printf("?");
+        printf(" SW=");
+        if (status_word_ok) printf("0x%04x", (unsigned int)status_word); else printf("?");
+        printf(" error=");
+        if (error_code_ok) printf("0x%04x", (unsigned int)error_code); else printf("?");
+        printf(" mode=");
+        if (mode_command_ok) printf("%d", (int)mode_command); else printf("?");
+        printf("/");
+        if (mode_display_ok) printf("%d\n", (int)mode_display); else printf("?\n");
+
+        printf("  actual: pos=");
+        if (position_actual_ok) {
+            printf("%.6frad (%d count)",
                    (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
-                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
-        }
-        if (ETHERCAT_INFO_READ(0x606cu, velocity_actual)) {
-            printf("  velocity_actual=%d count/s (%.6f rad/s)\n", velocity_actual,
-                   (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI /
-                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
-        }
-        if (ETHERCAT_INFO_READ(0x6077u, torque_actual)) {
-            printf("  torque_actual=%d (0.01A)\n", (int)torque_actual);
-        }
-        if (ETHERCAT_INFO_READ(0x6078u, current_actual)) {
-            printf("  current_actual=%d (0.01A)\n", (int)current_actual);
-        }
-        if (ETHERCAT_INFO_READ(0x607au, target_position)) {
-            printf("  target_position=%d count (%.6f rad)\n", target_position,
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV, position_actual);
+        } else printf("?");
+        printf(" vel=");
+        if (velocity_actual_ok) {
+            if (pn088_ok && pn088 == 0) {
+                printf("%.6frad/s (%d rpm)",
+                       (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI / 60.0,
+                       velocity_actual);
+            } else if (pn088_ok && pn088 == 1) {
+                printf("%.6frad/s (%d count/s)",
+                       (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                       ETHERCAT_KAIXUAN_COUNTS_PER_REV, velocity_actual);
+            } else {
+                printf("%d (unit unknown)", velocity_actual);
+            }
+        } else printf("?");
+        printf(" torque=");
+        if (torque_actual_ok) printf("%d (0.01A)", (int)torque_actual); else printf("?");
+        printf(" current=");
+        if (current_actual_ok) printf("%d (0.01A)\n", (int)current_actual);
+        else printf("?\n");
+        printf("  target: pos=");
+        if (target_position_ok) {
+            printf("%.6frad (%d count)",
                    (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
-                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
-        }
-        if (ETHERCAT_INFO_READ(0x60ffu, target_velocity)) {
-            printf("  target_velocity=%d count/s (%.6f rad/s)\n", target_velocity,
-                   (double)target_velocity * ETHERCAT_KAIXUAN_TWO_PI /
-                   ETHERCAT_KAIXUAN_COUNTS_PER_REV);
-        }
-        if (ETHERCAT_INFO_READ(0x6071u, target_torque)) {
-            printf("  target_torque=%d (0.01A)\n", (int)target_torque);
-        }
-        if (ETHERCAT_INFO_READ(0x60fdu, digital_inputs)) {
-            printf("  digital_inputs=0x%08x\n", (unsigned int)digital_inputs);
-        }
-        if (ETHERCAT_INFO_READ(0x2001u, pn001)) {
-            printf("  Pn001_drive_mode=%d\n", (int)pn001);
-        }
-        if (ETHERCAT_INFO_READ(0x2002u, pn002)) {
-            printf("  Pn002_monitor_select=%d\n", (int)pn002);
-        }
-        if (ETHERCAT_INFO_READ(0x2077u, pn077)) {
-            printf("  Pn077_dc_clock_offset=%d\n", (int)pn077);
-        }
-        if (ETHERCAT_INFO_READ(0x3000u, monitor_value)) {
-            printf("  monitor_value=%d (interpret using Pn002_monitor_select)\n", monitor_value);
-        }
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV, target_position);
+        } else printf("?");
+        printf(" vel=");
+        if (target_velocity_ok) printf("%d raw", target_velocity); else printf("?");
+        printf(" torque=");
+        if (target_torque_ok) printf("%d (0.01A)", (int)target_torque); else printf("?");
+        printf(" inputs=");
+        if (digital_inputs_ok) printf("0x%08x", (unsigned int)digital_inputs); else printf("?");
+        printf(" monitor=");
+        if (monitor_value_ok) printf("%d(Pn002)", monitor_value); else printf("?");
+        printf("\n");
 #undef ETHERCAT_INFO_READ
     }
     printf("%s\n", chinese ?
