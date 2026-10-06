@@ -186,7 +186,7 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 0 100000
 sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 ```
 
-交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。交互模式下使能循环在后台运行并立即返回提示符；`ethercat_disable 1` 会停止后台循环并失能。指定 `hold_ms` 时，到期后后台任务自动失能。输入其他 EtherCAT 命令时，程序会先停止后台循环、失能并释放主站，再执行该命令，因此不会并发打开两个 SOEM 主站。独立命令行模式仍前台运行，按 `Ctrl-C` 退出并失能。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全。
+交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。交互模式下使能循环在后台运行并立即返回提示符；`ethercat_disable 1` 会停止后台循环并失能。指定 `hold_ms` 时，到期后后台任务自动失能。使能期间执行 `ethercat_info` 时，显示使能前读取并缓存的 SDO 配置和后台循环最新 PDO 样本，不另开主站也不停止使能；查询未缓存的从站会先安全停止后台循环，再执行独立查询。其他 EtherCAT 命令也会先交接主站，避免并发打开两个 SOEM 主站。独立命令行模式仍前台运行，按 `Ctrl-C` 退出并失能。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全。
 
 使能总线上全部从站并保持当前位置 5 秒后自动失能：
 
@@ -210,7 +210,7 @@ sudo ./build/motor_console --ethercat-disable enp86s0 1
 sudo ./build/motor_console --ethercat-disable enp86s0 all
 ```
 
-交互模式下 `ethercat_disable <slave_id|all>` 会在后台完成失能并立即返回提示符；若使能循环正在后台运行，该命令会请求原循环发送失能并关闭主站。运行 `ethercat_info`、`ethercat_scan` 等其他 EtherCAT 命令时，会先等待后台操作结束，再执行新命令。不要在另一个终端直接运行第二个 SOEM 主站，以免两个主站争用同一网卡和从站状态。
+交互模式下 `ethercat_disable <slave_id|all>` 会在后台完成失能并立即返回提示符；若使能循环正在后台运行，该命令会请求原循环发送失能并关闭主站。运行 `ethercat_scan` 等其他 EtherCAT 命令时，会先等待后台操作结束，再执行新命令。不要在另一个终端直接运行第二个 SOEM 主站，以免两个主站争用同一网卡和从站状态。
 
 ### EtherCAT CSP 位控
 

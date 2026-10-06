@@ -45,6 +45,66 @@ static void console_ethercat_background_mark_ready(void)
 
 #ifdef HAVE_SOEM
 #include <soem/ethercat.h>
+
+typedef struct {
+    bool valid;
+    bool live_valid;
+    char name[80];
+    uint32_t vendor;
+    uint32_t product;
+    uint32_t revision;
+    uint8_t state;
+    uint16_t obytes;
+    uint16_t ibytes;
+    uint16_t obits;
+    uint16_t ibits;
+    int16_t pn001;
+    int16_t pn002;
+    int16_t pn070;
+    int16_t pn075;
+    int16_t pn077;
+    int16_t pn079;
+    int16_t pn085;
+    int16_t pn088;
+    int8_t mode_display;
+    uint16_t error_code;
+    int32_t monitor_value;
+    uint16_t sm2_sync_type;
+    uint16_t sm3_sync_type;
+    uint32_t sm2_cycle_ns;
+    uint32_t sm3_cycle_ns;
+    bool dc_supported;
+    uint8_t dc_activation;
+    uint32_t dc_cycle_ns;
+    uint32_t sync0_cycle_ns;
+    int32_t sync0_shift_ns;
+    uint32_t config_valid_mask;
+    uint8_t outputs[13];
+    uint8_t inputs[14];
+    uint64_t live_timestamp_us;
+} ethercat_cached_slave;
+
+static ethercat_cached_slave ethercat_cached_slaves[EC_MAXSLAVE];
+
+enum {
+    ETHERCAT_CACHE_PN001 = 1u << 0,
+    ETHERCAT_CACHE_PN002 = 1u << 1,
+    ETHERCAT_CACHE_PN070 = 1u << 2,
+    ETHERCAT_CACHE_PN075 = 1u << 3,
+    ETHERCAT_CACHE_PN077 = 1u << 4,
+    ETHERCAT_CACHE_PN079 = 1u << 5,
+    ETHERCAT_CACHE_PN085 = 1u << 6,
+    ETHERCAT_CACHE_PN088 = 1u << 7,
+    ETHERCAT_CACHE_MODE_DISPLAY = 1u << 8,
+    ETHERCAT_CACHE_ERROR_CODE = 1u << 9,
+    ETHERCAT_CACHE_MONITOR = 1u << 10,
+    ETHERCAT_CACHE_SM2_TYPE = 1u << 11,
+    ETHERCAT_CACHE_SM2_CYCLE = 1u << 12,
+    ETHERCAT_CACHE_SM3_TYPE = 1u << 13,
+    ETHERCAT_CACHE_SM3_CYCLE = 1u << 14,
+    ETHERCAT_CACHE_DC_ACTIVATION = 1u << 15,
+    ETHERCAT_CACHE_DC_CYCLE = 1u << 16,
+};
 #endif
 
 static int console_ethercat_validate_interface(const char *interface)
@@ -402,6 +462,261 @@ static int32_t console_ethercat_read_i32(const uint8_t *data)
 
     return (int32_t)value;
 }
+
+#ifdef HAVE_SOEM
+static bool console_ethercat_read_sdo_value(int slave,
+                                            uint16_t index,
+                                            uint8_t subindex,
+                                            void *value,
+                                            int value_size)
+{
+    int actual_size = value_size;
+
+    return ec_SDOread((uint16)slave, index, subindex, FALSE,
+                      &actual_size, value, EC_TIMEOUTRXM) > 0 &&
+           actual_size == value_size;
+}
+
+static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSLAVE],
+                                                 uint32_t sync0_cycle_ns,
+                                                 int32_t sync0_shift_ns)
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        ethercat_cached_slave snapshot;
+        uint8_t dc_cycle_data[4] = {0};
+
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        memset(&snapshot, 0, sizeof(snapshot));
+        snprintf(snapshot.name, sizeof(snapshot.name), "%s", ec_slave[slave].name);
+        snapshot.vendor = ec_slave[slave].eep_man;
+        snapshot.product = ec_slave[slave].eep_id;
+        snapshot.revision = ec_slave[slave].eep_rev;
+        snapshot.state = (uint8_t)ec_slave[slave].state;
+        snapshot.dc_supported = ec_slave[slave].hasdc != 0u;
+        snapshot.obytes = ec_slave[slave].Obytes;
+        snapshot.ibytes = ec_slave[slave].Ibytes;
+        snapshot.obits = ec_slave[slave].Obits;
+        snapshot.ibits = ec_slave[slave].Ibits;
+        snapshot.sync0_cycle_ns = sync0_cycle_ns;
+        snapshot.sync0_shift_ns = sync0_shift_ns;
+
+#define ETHERCAT_CACHE_SDO(index, subindex, field, mask) \
+        if (console_ethercat_read_sdo_value(slave, (index), (subindex), \
+                                            &snapshot.field, (int)sizeof(snapshot.field))) { \
+            snapshot.config_valid_mask |= (mask); \
+        }
+        ETHERCAT_CACHE_SDO(0x2001u, 0u, pn001, ETHERCAT_CACHE_PN001);
+        ETHERCAT_CACHE_SDO(0x2002u, 0u, pn002, ETHERCAT_CACHE_PN002);
+        ETHERCAT_CACHE_SDO(0x2070u, 0u, pn070, ETHERCAT_CACHE_PN070);
+        ETHERCAT_CACHE_SDO(0x2075u, 0u, pn075, ETHERCAT_CACHE_PN075);
+        ETHERCAT_CACHE_SDO(0x2077u, 0u, pn077, ETHERCAT_CACHE_PN077);
+        ETHERCAT_CACHE_SDO(0x2079u, 0u, pn079, ETHERCAT_CACHE_PN079);
+        ETHERCAT_CACHE_SDO(0x2085u, 0u, pn085, ETHERCAT_CACHE_PN085);
+        ETHERCAT_CACHE_SDO(0x2088u, 0u, pn088, ETHERCAT_CACHE_PN088);
+        ETHERCAT_CACHE_SDO(0x6061u, 0u, mode_display, ETHERCAT_CACHE_MODE_DISPLAY);
+        ETHERCAT_CACHE_SDO(0x603fu, 0u, error_code, ETHERCAT_CACHE_ERROR_CODE);
+        ETHERCAT_CACHE_SDO(0x3000u, 0u, monitor_value, ETHERCAT_CACHE_MONITOR);
+        ETHERCAT_CACHE_SDO(0x1c32u, 1u, sm2_sync_type, ETHERCAT_CACHE_SM2_TYPE);
+        ETHERCAT_CACHE_SDO(0x1c32u, 2u, sm2_cycle_ns, ETHERCAT_CACHE_SM2_CYCLE);
+        ETHERCAT_CACHE_SDO(0x1c33u, 1u, sm3_sync_type, ETHERCAT_CACHE_SM3_TYPE);
+        ETHERCAT_CACHE_SDO(0x1c33u, 2u, sm3_cycle_ns, ETHERCAT_CACHE_SM3_CYCLE);
+#undef ETHERCAT_CACHE_SDO
+
+        if (ec_FPRD(ec_slave[slave].configadr, 0x0981u,
+                    (uint16)sizeof(snapshot.dc_activation),
+                    &snapshot.dc_activation, EC_TIMEOUTRET) > 0) {
+            snapshot.config_valid_mask |= ETHERCAT_CACHE_DC_ACTIVATION;
+        }
+        if (ec_FPRD(ec_slave[slave].configadr, 0x09a0u,
+                    (uint16)sizeof(dc_cycle_data), dc_cycle_data, EC_TIMEOUTRET) > 0) {
+            snapshot.dc_cycle_ns = (uint32_t)dc_cycle_data[0] |
+                                   ((uint32_t)dc_cycle_data[1] << 8u) |
+                                   ((uint32_t)dc_cycle_data[2] << 16u) |
+                                   ((uint32_t)dc_cycle_data[3] << 24u);
+            snapshot.config_valid_mask |= ETHERCAT_CACHE_DC_CYCLE;
+        }
+        snapshot.valid = true;
+        pthread_mutex_lock(&ethercat_background_mutex);
+        ethercat_cached_slaves[slave] = snapshot;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+    }
+}
+
+static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+    uint64_t timestamp_us = time_us();
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        ethercat_cached_slave *snapshot = &ethercat_cached_slaves[slave];
+
+        if (selected[slave] == 0u || !snapshot->valid ||
+            ec_slave[slave].outputs == NULL || ec_slave[slave].inputs == NULL ||
+            ec_slave[slave].Obytes < sizeof(snapshot->outputs) ||
+            ec_slave[slave].Ibytes < sizeof(snapshot->inputs)) {
+            continue;
+        }
+        memcpy(snapshot->outputs, ec_slave[slave].outputs, sizeof(snapshot->outputs));
+        memcpy(snapshot->inputs, ec_slave[slave].inputs, sizeof(snapshot->inputs));
+        snapshot->state = (uint8_t)ec_slave[slave].state;
+        snapshot->live_timestamp_us = timestamp_us;
+        snapshot->live_valid = true;
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+}
+
+static int console_ethercat_print_background_info(bool chinese,
+                                                  const char *interface,
+                                                  const char *selection)
+{
+    ethercat_cached_slave snapshots[EC_MAXSLAVE];
+    bool print_slave[EC_MAXSLAVE] = {false};
+    unsigned int slave_id;
+    bool all_slaves;
+    bool active;
+    size_t count = 0u;
+    int slave;
+
+    if (console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
+        return -1;
+    }
+    pthread_mutex_lock(&ethercat_background_mutex);
+    active = ethercat_background_running;
+    if (!active) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        return 0;
+    }
+    if (ethercat_background_arguments.disable_task ||
+        strcmp(ethercat_background_arguments.interface, interface) != 0) {
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        return -1;
+    }
+    memset(snapshots, 0, sizeof(snapshots));
+    for (slave = 1; slave < EC_MAXSLAVE; slave++) {
+        if (!ethercat_cached_slaves[slave].valid ||
+            (!all_slaves && (unsigned int)slave != slave_id)) {
+            continue;
+        }
+        snapshots[slave] = ethercat_cached_slaves[slave];
+        print_slave[slave] = true;
+        count++;
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    if (count == 0u) {
+        return -1;
+    }
+
+    printf("%s: interface=%s slave=%s (%s)\n",
+           chinese ? "ethercat_info: 后台快照" : "ethercat_info: background snapshot",
+           interface, selection,
+           chinese ? "SDO 为使能前缓存，PDO 为实时采样" :
+           "SDO cached before enable; PDO sampled live");
+    for (slave = 1; slave < EC_MAXSLAVE; slave++) {
+        const ethercat_cached_slave *snapshot = &snapshots[slave];
+        uint16_t status_word;
+        uint16_t control_word;
+        int32_t position_actual;
+        int32_t velocity_actual;
+        int16_t torque_actual;
+        int32_t target_position;
+        int32_t target_velocity;
+        int16_t target_torque;
+        int8_t mode_command;
+        uint64_t age_us;
+        uint64_t now_us;
+
+        if (!print_slave[slave]) {
+            continue;
+        }
+        if (!snapshot->live_valid) {
+            printf("[slave%d] %s\n", slave,
+                   chinese ? "尚无有效 PDO 实时样本" : "no valid live PDO sample yet");
+            continue;
+        }
+        status_word = console_ethercat_read_u16(snapshot->inputs);
+        control_word = console_ethercat_read_u16(snapshot->outputs);
+        position_actual = console_ethercat_read_i32(snapshot->inputs + 2u);
+        velocity_actual = console_ethercat_read_i32(snapshot->inputs + 6u);
+        torque_actual = (int16_t)console_ethercat_read_u16(snapshot->inputs + 10u);
+        target_position = console_ethercat_read_i32(snapshot->outputs + 2u);
+        target_velocity = console_ethercat_read_i32(snapshot->outputs + 6u);
+        target_torque = (int16_t)console_ethercat_read_u16(snapshot->outputs + 10u);
+        mode_command = (int8_t)snapshot->outputs[12];
+        now_us = time_us();
+        age_us = now_us >= snapshot->live_timestamp_us ?
+                 now_us - snapshot->live_timestamp_us : 0u;
+
+        printf("[slave%d] %s state=0x%02x(%s) identity=%08x:%08x rev=%08x\n",
+               slave, snapshot->name, snapshot->state,
+               console_ethercat_state_name(snapshot->state), snapshot->vendor,
+               snapshot->product, snapshot->revision);
+        printf("  config snapshot: Pn001=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN001) printf("%d", snapshot->pn001); else printf("?");
+        printf(" Pn002=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN002) printf("%d", snapshot->pn002); else printf("?");
+        printf(" Pn070=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN070) printf("%d", snapshot->pn070); else printf("?");
+        printf(" Pn075=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN075) printf("%d", snapshot->pn075); else printf("?");
+        printf(" Pn077=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN077) printf("%d\n", snapshot->pn077); else printf("?\n");
+        printf("  params snapshot: Pn079=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
+        printf(" Pn085=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN085) printf("%d (0.01A)", snapshot->pn085); else printf("?");
+        printf(" Pn088=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN088) printf("%d", snapshot->pn088); else printf("?");
+        printf(" mode_display(snapshot)=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_MODE_DISPLAY) printf("%d", snapshot->mode_display); else printf("?");
+        printf(" error_before_enable=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_ERROR_CODE) printf("0x%04x", snapshot->error_code); else printf("?");
+        printf(" monitor_before_enable=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_MONITOR) printf("%d(Pn002)\n", snapshot->monitor_value); else printf("?\n");
+        printf("  bus snapshot: PDO out=%uB/%ubit in=%uB/%ubit DC_supported=%s active-reg=",
+               snapshot->obytes, snapshot->obits, snapshot->ibytes, snapshot->ibits,
+               snapshot->dc_supported ? "yes" : "no");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_DC_ACTIVATION) printf("0x%02x", snapshot->dc_activation); else printf("?");
+        printf(" cycle=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_DC_CYCLE) printf("%uns", snapshot->dc_cycle_ns); else printf("?");
+        printf(" shift=%dns Sync0=%uns\n", snapshot->sync0_shift_ns, snapshot->sync0_cycle_ns);
+        printf("  sync snapshot: SM2 type=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM2_TYPE) printf("0x%04x", snapshot->sm2_sync_type); else printf("?");
+        printf(" cycle=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM2_CYCLE) printf("%uns", snapshot->sm2_cycle_ns); else printf("?");
+        printf(" | SM3 type=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_TYPE) printf("0x%04x", snapshot->sm3_sync_type); else printf("?");
+        printf(" cycle=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_CYCLE) printf("%uns\n", snapshot->sm3_cycle_ns); else printf("?\n");
+        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d\n",
+               (unsigned long long)age_us, control_word, status_word, (int)mode_command);
+        printf("  actual: pos=%.6frad (%d count) vel=",
+               (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
+               ETHERCAT_KAIXUAN_COUNTS_PER_REV, position_actual);
+        if ((snapshot->config_valid_mask & ETHERCAT_CACHE_PN088) && snapshot->pn088 == 0) {
+            printf("%.6frad/s (%d rpm)",
+                   (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI / 60.0,
+                   velocity_actual);
+        } else if ((snapshot->config_valid_mask & ETHERCAT_CACHE_PN088) && snapshot->pn088 == 1) {
+            printf("%.6frad/s (%d count/s)",
+                   (double)velocity_actual * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV, velocity_actual);
+        } else {
+            printf("%d (unit unknown)", velocity_actual);
+        }
+        printf(" torque=%d (0.01A) current=not-mapped\n", (int)torque_actual);
+        printf("  target PDO: pos=%.6frad (%d count) vel=%d count/s torque=%d (0.01A); digital_inputs=not-mapped\n",
+               (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
+               ETHERCAT_KAIXUAN_COUNTS_PER_REV,
+               target_position, target_velocity, (int)target_torque);
+    }
+    return 1;
+}
+#endif
 
 static void console_ethercat_write_u16(uint8_t *data, uint16_t value)
 {
@@ -931,6 +1246,7 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
     }
+    console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
     if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
         console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 初始 PDO 通信失败" :
@@ -1010,6 +1326,7 @@ static int console_ethercat_enable(bool chinese,
         console_ethercat_print_selected_status(selected, 0x000fu);
         goto cleanup;
     }
+    console_ethercat_capture_live_pdo(selected);
     printf("%s\n", chinese ?
            "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
            "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
@@ -1022,6 +1339,7 @@ static int console_ethercat_enable(bool chinese,
                    "ethercat_enable: PDO communication lost");
             goto cleanup;
         }
+        console_ethercat_capture_live_pdo(selected);
         console_ethercat_wait_next_cycle();
     }
     result = stop_requested || console_ethercat_background_should_stop() ? -1 : 0;
@@ -1189,6 +1507,9 @@ static int console_ethercat_background_start(bool chinese,
         return -1;
     }
     memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
+#ifdef HAVE_SOEM
+    memset(ethercat_cached_slaves, 0, sizeof(ethercat_cached_slaves));
+#endif
     ethercat_background_arguments.chinese = chinese;
     ethercat_background_arguments.hold_ms = hold_ms;
     snprintf(ethercat_background_arguments.interface,
@@ -1652,6 +1973,18 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
 #else
     int slave;
     int failed = 0;
+    int background_info_result;
+
+    background_info_result = console_ethercat_print_background_info(chinese, interface, selection);
+    if (background_info_result > 0) {
+        return 0;
+    }
+    if (background_info_result < 0) {
+        console_ethercat_background_stop();
+        printf("%s\n", chinese ?
+               "请求节点不在后台缓存中；已先安全停止后台循环，再执行独立 SDO 查询。" :
+               "Requested slave is not in the background snapshot; stopped the cycle before opening a read-only SDO session.");
+    }
 
     printf("%s: interface=%s slave=%s\n",
            chinese ? "ethercat_info: 开始读取" : "ethercat_info: read start", interface, selection);

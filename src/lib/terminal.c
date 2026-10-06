@@ -63,7 +63,9 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    "EtherCAT background master is running; use ethercat_disable before starting another master."));
             return -1;
         }
-        if (strncmp(cmd, "ethercat_", 9u) == 0 && strcmp(cmd, "ethercat_disable") != 0) {
+        if (strncmp(cmd, "ethercat_", 9u) == 0 &&
+            strcmp(cmd, "ethercat_disable") != 0 &&
+            strcmp(cmd, "ethercat_info") != 0) {
             if (console_ethercat_background_stop() > 0) {
                 printf("%s\n", console_text(state,
                        "为交接 EtherCAT 主站，已先失能后台控制；正在执行本条命令。",
