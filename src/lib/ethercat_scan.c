@@ -440,6 +440,7 @@ static int ethercat_expected_work_counter;
 static int ethercat_min_work_counter;
 static unsigned int ethercat_incomplete_work_counter_count;
 static uint64_t ethercat_last_exchange_us;
+static uint64_t ethercat_last_exchange_interval_us;
 static uint64_t ethercat_max_exchange_interval_us;
 static struct timespec ethercat_next_cycle;
 static bool ethercat_cycle_initialized;
@@ -718,13 +719,24 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
     pthread_mutex_unlock(&ethercat_background_mutex);
     for (slave = 1; slave < EC_MAXSLAVE; slave++) {
         if (report_fault[slave]) {
-            printf("[slave%d] %s: SW=0x%04x CIA402=%s PDO_error=0x%04x\n",
-                   slave,
+            printf("[slave%d] %s\n", slave,
                    ethercat_background_arguments.chinese ?
-                   "实时状态离开 operation-enabled" :
-                   "live state left operation-enabled",
+                   "实时状态首次离开 operation-enabled" :
+                   "first live state transition out of operation-enabled");
+            printf("  drive: SW=0x%04x CIA402=%s PDO_error=0x%04x\n",
                    status_words[slave],
-                   console_ethercat_cia402_state_name(status_words[slave]), error_codes[slave]);
+                   console_ethercat_cia402_state_name(status_words[slave]),
+                   error_codes[slave]);
+            printf("  exchange: WKC last=%d expected=%d min=%d incomplete=%u\n",
+                   ethercat_last_work_counter, ethercat_expected_work_counter,
+                   ethercat_min_work_counter, ethercat_incomplete_work_counter_count);
+            printf("  timing: target=%uus last_interval=%lluus max_interval=%lluus\n",
+                   ethercat_control_period_ns / 1000u,
+                   (unsigned long long)ethercat_last_exchange_interval_us,
+                   (unsigned long long)ethercat_max_exchange_interval_us);
+            printf("  DC: error=%lldns adjustment=%lldns\n",
+                   (long long)ethercat_dc_sync_phase_error_ns,
+                   (long long)ethercat_dc_sync_adjustment_ns);
         }
     }
 }
@@ -935,9 +947,12 @@ static int console_ethercat_exchange(void)
     if (ethercat_last_exchange_us != 0u && now_us >= ethercat_last_exchange_us) {
         uint64_t interval_us = now_us - ethercat_last_exchange_us;
 
+        ethercat_last_exchange_interval_us = interval_us;
         if (interval_us > ethercat_max_exchange_interval_us) {
             ethercat_max_exchange_interval_us = interval_us;
         }
+    } else {
+        ethercat_last_exchange_interval_us = 0u;
     }
     ethercat_last_exchange_us = now_us;
     ec_send_processdata();
@@ -963,6 +978,7 @@ static void console_ethercat_reset_exchange_diagnostics(void)
     ethercat_min_work_counter = INT_MAX;
     ethercat_incomplete_work_counter_count = 0u;
     ethercat_last_exchange_us = 0u;
+    ethercat_last_exchange_interval_us = 0u;
     ethercat_max_exchange_interval_us = 0u;
     ethercat_cycle_initialized = false;
     ethercat_dc_sync_enabled = false;
