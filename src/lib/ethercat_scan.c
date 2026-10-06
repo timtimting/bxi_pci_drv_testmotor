@@ -49,6 +49,8 @@ static void console_ethercat_background_mark_ready(void)
 typedef struct {
     bool valid;
     bool live_valid;
+    bool live_error_valid;
+    bool runtime_fault_reported;
     char name[80];
     uint32_t vendor;
     uint32_t product;
@@ -81,12 +83,15 @@ typedef struct {
     uint32_t sync0_cycle_ns;
     int32_t sync0_shift_ns;
     uint32_t config_valid_mask;
+    uint16_t live_error_code;
     uint8_t outputs[13];
     uint8_t inputs[14];
     uint64_t live_timestamp_us;
 } ethercat_cached_slave;
 
 static ethercat_cached_slave ethercat_cached_slaves[EC_MAXSLAVE];
+
+static const char *console_ethercat_cia402_state_name(uint16_t status_word);
 
 enum {
     ETHERCAT_CACHE_PN001 = 1u << 0,
@@ -624,6 +629,9 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
 
 static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE])
 {
+    bool report_fault[EC_MAXSLAVE] = {false};
+    uint16_t status_words[EC_MAXSLAVE] = {0};
+    uint16_t error_codes[EC_MAXSLAVE] = {0};
     int slave;
     uint64_t timestamp_us = time_us();
 
@@ -639,11 +647,32 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
         }
         memcpy(snapshot->outputs, ec_slave[slave].outputs, sizeof(snapshot->outputs));
         memcpy(snapshot->inputs, ec_slave[slave].inputs, sizeof(snapshot->inputs));
+        status_words[slave] = console_ethercat_read_u16(snapshot->inputs);
+        error_codes[slave] = console_ethercat_read_u16(snapshot->inputs + 12u);
+        snapshot->live_error_code = error_codes[slave];
+        snapshot->live_error_valid = true;
+        if ((status_words[slave] & 0x006fu) != 0x0027u) {
+            report_fault[slave] = !snapshot->runtime_fault_reported;
+            snapshot->runtime_fault_reported = true;
+        } else {
+            snapshot->runtime_fault_reported = false;
+        }
         snapshot->state = (uint8_t)ec_slave[slave].state;
         snapshot->live_timestamp_us = timestamp_us;
         snapshot->live_valid = true;
     }
     pthread_mutex_unlock(&ethercat_background_mutex);
+    for (slave = 1; slave < EC_MAXSLAVE; slave++) {
+        if (report_fault[slave]) {
+            printf("[slave%d] %s: SW=0x%04x CIA402=%s PDO_error=0x%04x\n",
+                   slave,
+                   ethercat_background_arguments.chinese ?
+                   "实时状态离开 operation-enabled" :
+                   "live state left operation-enabled",
+                   status_words[slave],
+                   console_ethercat_cia402_state_name(status_words[slave]), error_codes[slave]);
+        }
+    }
 }
 
 static int console_ethercat_print_background_info(bool chinese,
@@ -785,8 +814,9 @@ static int console_ethercat_print_background_info(bool chinese,
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_TYPE) printf("0x%04x", snapshot->sm3_sync_type); else printf("?");
         printf(" cycle=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_CYCLE) printf("%uns\n", snapshot->sm3_cycle_ns); else printf("?\n");
-        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d\n",
+        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d error_code=",
                (unsigned long long)age_us, control_word, status_word, (int)mode_command);
+        if (snapshot->live_error_valid) printf("0x%04x\n", snapshot->live_error_code); else printf("?\n");
         printf("  actual: motor_pos=%.6frad (%d count) output_pos=",
                (double)position_actual * ETHERCAT_KAIXUAN_TWO_PI /
                ETHERCAT_KAIXUAN_COUNTS_PER_REV, position_actual);
