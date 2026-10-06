@@ -113,7 +113,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      伺服失能后写 Pn101 的 0→1→0；完成后必须同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
-        printf("      显示 Pn150 编码器配置（0=双编码器，1=单编码器/多圈）；使能时显示缓存配置与实时 PDO。\n");
+        printf("      显示 Pn051 减速比和 Pn150 编码器配置；使能时显示缓存配置与实时 PDO。\n");
         printf("  ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
         printf("      读取 Pn 参数并显示原始字节及整数解释；参数类型和单位以手册为准。\n");
         printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -214,7 +214,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      Disable servo, write Pn101 0->1->0, then restart main and USB power for zero to take effect.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");
-    printf("      Show Pn150 encoder configuration (0=dual, 1=single multi-turn); during enable show cached config and live PDO.\n");
+    printf("      Show Pn051 reduction ratio and Pn150 encoder configuration; during enable show cached config and live PDO.\n");
     printf("  ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
     printf("      Read a Pn parameter and print raw bytes plus integer interpretations; consult the manual for type/units.\n");
     printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");

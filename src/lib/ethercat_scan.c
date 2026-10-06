@@ -66,6 +66,7 @@ typedef struct {
     int16_t pn079;
     int16_t pn085;
     int16_t pn088;
+    int16_t pn051;
     int16_t pn150;
     int8_t mode_display;
     uint16_t error_code;
@@ -106,6 +107,7 @@ enum {
     ETHERCAT_CACHE_DC_ACTIVATION = 1u << 15,
     ETHERCAT_CACHE_DC_CYCLE = 1u << 16,
     ETHERCAT_CACHE_PN150 = 1u << 17,
+    ETHERCAT_CACHE_PN051 = 1u << 18,
 };
 #endif
 
@@ -589,6 +591,7 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         ETHERCAT_CACHE_SDO(0x2079u, 0u, pn079, ETHERCAT_CACHE_PN079);
         ETHERCAT_CACHE_SDO(0x2085u, 0u, pn085, ETHERCAT_CACHE_PN085);
         ETHERCAT_CACHE_SDO(0x2088u, 0u, pn088, ETHERCAT_CACHE_PN088);
+        ETHERCAT_CACHE_SDO(0x2051u, 0u, pn051, ETHERCAT_CACHE_PN051);
         ETHERCAT_CACHE_SDO(0x2150u, 0u, pn150, ETHERCAT_CACHE_PN150);
         ETHERCAT_CACHE_SDO(0x6061u, 0u, mode_display, ETHERCAT_CACHE_MODE_DISPLAY);
         ETHERCAT_CACHE_SDO(0x603fu, 0u, error_code, ETHERCAT_CACHE_ERROR_CODE);
@@ -746,6 +749,12 @@ static int console_ethercat_print_background_info(bool chinese,
                    (snapshot->pn150 == 1 ?
                     (chinese ? "单编码器/多圈" : "single multi-turn encoder") :
                     (chinese ? "未知配置值" : "unknown value")));
+        } else {
+            printf("?\n");
+        }
+        printf("  mechanics snapshot: Pn051=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN051) {
+            printf("%d (reduction ratio)\n", snapshot->pn051);
         } else {
             printf("?\n");
         }
@@ -2119,6 +2128,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t pn079;
         int16_t pn085;
         int16_t pn088;
+        int16_t pn051;
         int16_t pn150;
         int32_t position_actual;
         int32_t velocity_actual;
@@ -2151,6 +2161,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         bool pn079_ok;
         bool pn085_ok;
         bool pn088_ok;
+        bool pn051_ok;
         bool pn150_ok;
         bool monitor_value_ok;
         bool sm2_sync_type_ok;
@@ -2197,6 +2208,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         pn079_ok = ETHERCAT_INFO_READ(0x2079u, pn079);
         pn085_ok = ETHERCAT_INFO_READ(0x2085u, pn085);
         pn088_ok = ETHERCAT_INFO_READ(0x2088u, pn088);
+        pn051_ok = ETHERCAT_INFO_READ(0x2051u, pn051);
         pn150_ok = ETHERCAT_INFO_READ(0x2150u, pn150);
         monitor_value_ok = ETHERCAT_INFO_READ(0x3000u, monitor_value);
         sm2_sync_type_ok = (size = (int)sizeof(sm2_sync_type),
@@ -2235,6 +2247,9 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         printf(" Pn088=");
         if (pn088_ok) printf("%d(%s)", (int)pn088,
                              pn088 == 0 ? "rpm" : (pn088 == 1 ? "count/s" : "unit?"));
+        else printf("?");
+        printf("\n  mechanics: Pn051=");
+        if (pn051_ok) printf("%d (reduction ratio)", (int)pn051);
         else printf("?");
         printf("\n  encoder: Pn150=");
         if (pn150_ok) {
