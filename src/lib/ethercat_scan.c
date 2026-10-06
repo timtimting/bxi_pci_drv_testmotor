@@ -477,6 +477,39 @@ static bool console_ethercat_read_sdo_value(int slave,
            actual_size == value_size;
 }
 
+static int console_ethercat_write_pn101_verified(bool chinese,
+                                                 int slave,
+                                                 int16_t value,
+                                                 const char *step)
+{
+    int16_t readback = 0;
+
+    printf("[slave%d]: Pn101 %s: write %d\n", slave, step, (int)value);
+    if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(value),
+                    &value, EC_TIMEOUTRXM) <= 0) {
+        printf("[slave%d]: Pn101 %s: %s\n", slave, step,
+               chinese ? "SDO 写入未确认" : "SDO write was not acknowledged");
+        return -1;
+    }
+    printf("[slave%d]: Pn101 %s: %s\n", slave, step,
+           chinese ? "SDO 写入已确认，正在回读" : "SDO write acknowledged; reading back");
+    if (!console_ethercat_read_sdo_value(slave, 0x2101u, 0u,
+                                         &readback, (int)sizeof(readback))) {
+        printf("[slave%d]: Pn101 %s: %s\n", slave, step,
+               chinese ? "回读失败" : "readback failed");
+        return -1;
+    }
+    printf("[slave%d]: Pn101 %s: readback=%d\n", slave, step, (int)readback);
+    if (readback != value) {
+        printf("[slave%d]: Pn101 %s: %s (expected=%d actual=%d)\n",
+               slave, step,
+               chinese ? "回读值不匹配" : "readback mismatch",
+               (int)value, (int)readback);
+        return -1;
+    }
+    return 0;
+}
+
 static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSLAVE],
                                                  uint32_t sync0_cycle_ns,
                                                  int32_t sync0_shift_ns)
@@ -1829,7 +1862,6 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
     uint8_t selected[EC_MAXSLAVE] = {0};
     int32_t zero_positions[EC_MAXSLAVE] = {0};
-    int16_t parameter_value;
     int slave;
     int failed = 0;
     bool mapped = false;
@@ -1909,33 +1941,46 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
     console_ethercat_disable_selected(selected);
     operational = false;
     for (slave = 1; slave <= ec_slavecount; slave++) {
+        int sequence_result = 0;
+
         if (selected[slave] == 0u) {
             continue;
         }
-        parameter_value = 0;
-        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
-                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
+        if (console_ethercat_write_pn101_verified(
+                chinese, slave, 0, chinese ? "步骤 1/3 复位为 0" : "step 1/3 reset to 0") != 0) {
+            sequence_result = -1;
+        }
+        if (sequence_result == 0 &&
+            console_ethercat_write_pn101_verified(
+                chinese, slave, 1, chinese ? "步骤 2/3 触发上升沿" : "step 2/3 rising-edge trigger") != 0) {
+            sequence_result = -1;
+        }
+        if (sequence_result == 0 &&
+            console_ethercat_write_pn101_verified(
+                chinese, slave, 0, chinese ? "步骤 3/3 恢复为 0" : "step 3/3 restore to 0") != 0) {
+            sequence_result = -1;
+        }
+        if (sequence_result != 0) {
+            printf("[slave%d]: Pn101 %s\n", slave,
+                   chinese ? "序列未完整确认，尝试恢复为 0" :
+                   "sequence was not fully verified; attempting recovery to 0");
+            if (console_ethercat_write_pn101_verified(
+                    chinese, slave, 0, chinese ? "故障恢复" : "recovery") != 0) {
+                printf("[slave%d]: Pn101 %s\n", slave,
+                       chinese ? "恢复为 0 也未能确认，请勿断言零位请求状态" :
+                       "recovery to 0 was not verified; zero-request state is unknown");
+            }
             failed++;
             continue;
         }
-        parameter_value = 1;
-        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
-                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
-            failed++;
-            continue;
-        }
-        parameter_value = 0;
-        if (ec_SDOwrite((uint16)slave, 0x2101u, 0u, FALSE, (int)sizeof(parameter_value),
-                        &parameter_value, EC_TIMEOUTRXM) <= 0) {
-            failed++;
-            continue;
-        }
-        printf("[slave%d]: Pn101 0->1->0 sent\n", slave);
+        printf("[slave%d]: %s\n", slave, chinese ?
+               "Pn101 0->1->0 每步写入并回读确认；未增加固定延时" :
+               "Pn101 0->1->0 write/readback verified at each step; no fixed delay added");
     }
     if (failed == 0) {
         printf("%s\n", chinese ?
-               "ethercat_zero: Pn101 已写入。请同时重启执行器主电和 USB 电源，零位才会生效。" :
-               "ethercat_zero: Pn101 was written. Restart both actuator main power and USB power for zero to take effect.");
+               "ethercat_zero: Pn101 三步写入均已回读确认；按手册同时重启执行器主电和 USB 电源后，再读取 0x6064 验证零位。" :
+               "ethercat_zero: all three Pn101 writes were verified by readback; restart actuator main and USB power together per the manual, then verify zero via 0x6064.");
     } else {
         printf("%s: failed=%d\n", chinese ? "ethercat_zero: Pn101 写入失败" :
                "ethercat_zero: Pn101 write failed", failed);
