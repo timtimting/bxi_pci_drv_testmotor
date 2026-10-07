@@ -34,6 +34,10 @@ static void console_ethercat_session_tick(void)
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (ethercat_session.disable_at_us[slave] != 0u &&
             now >= ethercat_session.disable_at_us[slave]) {
+            console_output_context previous_context = console_output_current;
+
+            if (ethercat_session.motion_context[slave].sequence != 0u)
+                console_output_current = ethercat_session.motion_context[slave];
             ethercat_session.disable_at_us[slave] = 0u;
             ethercat_session.monitor[slave] = false;
             console_ethercat_write_u16(ec_slave[slave].outputs, 0u);
@@ -41,6 +45,7 @@ static void console_ethercat_session_tick(void)
                    ethercat_background_arguments.chinese ?
                    "到期，发送失能；后台主站保持通信" :
                    "expired, sending disable; background master keeps communicating");
+            console_output_current = previous_context;
         }
     }
 }
@@ -138,6 +143,7 @@ static int console_ethercat_session_enable(const ethercat_background_args *comma
         if (!selected[slave]) continue;
         ethercat_session.disable_at_us[slave] = to_enable[slave] || command->hold_ms == 0u ? 0u :
             console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
+        ethercat_session.motion_context[slave] = command->output_context;
     }
     if (!needs_enable) goto enabled;
     if (console_ethercat_selected_ready(to_enable, targets) != 0) return -1;
@@ -201,6 +207,7 @@ static int console_ethercat_session_position(const ethercat_background_args *com
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (!selected[slave]) continue;
         console_ethercat_write_i32((uint8_t *)ec_slave[slave].outputs + 2u, target);
+        ethercat_session.motion_context[slave] = command->output_context;
         ethercat_session.disable_at_us[slave] = command->hold_ms == 0u ? 0u :
             console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
     }
@@ -327,6 +334,7 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
         ethercat_session.monitor[slave] = true;
         ethercat_session.disable_at_us[slave] = hold_ms == 0u ? 0u :
             console_ethercat_monotonic_us() + (uint64_t)hold_ms * 1000u;
+        ethercat_session.motion_context[slave] = console_output_get_context();
     }
     if (ethercat_background_arguments.task == ETHERCAT_TASK_POSITION &&
         console_ethercat_session_position(&ethercat_background_arguments, selected) != 0) {
@@ -338,10 +346,15 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
             break;
         }
         if (console_ethercat_background_pop(&command)) {
-            int command_result = console_ethercat_session_command(&command);
+            console_output_context previous_context = console_output_current;
+            int command_result;
+
+            console_output_current = command.output_context;
+            command_result = console_ethercat_session_command(&command);
             printf("%s: %s\n", console_ethercat_task_name(command.task),
                    command_result == 0 ? (command.chinese ? "后台执行完成" : "background complete") :
                    (command.chinese ? "后台执行失败" : "background failed"));
+            console_output_current = previous_context;
         }
         if (ethercat_session.failed) result = -1;
     }
@@ -395,6 +408,7 @@ static void *console_ethercat_background_worker(void *argument)
     while (!stop_requested && !console_ethercat_background_should_stop()) {
         if (console_ethercat_background_pop(&command)) {
             int result;
+            console_output_current = command.output_context;
             ethercat_background_arguments = command;
             result = console_ethercat_background_execute(&command);
             printf("%s: %s\n", console_ethercat_task_name(command.task),
@@ -403,6 +417,7 @@ static void *console_ethercat_background_worker(void *argument)
 #ifdef HAVE_ETHERLAB
             if (result != 0) console_ethercat_cancel_pending();
 #endif
+            console_output_current = (console_output_context){0};
             continue;
         }
         pthread_mutex_lock(&ethercat_background_mutex);
@@ -475,6 +490,7 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     return -1;
 #endif
     command.task = task;
+    command.output_context = console_output_get_context();
     command.chinese = chinese;
     command.hold_ms = hold_ms;
     command.position_rad = position_rad;

@@ -3,10 +3,15 @@
 #define ETHERCAT_OUTPUT_QUEUE_SIZE 512u
 #define ETHERCAT_OUTPUT_CHUNK_SIZE 1024u
 
+typedef struct {
+    console_output_stamp stamp;
+    char text[ETHERCAT_OUTPUT_CHUNK_SIZE];
+} ethercat_output_message;
+
 static pthread_mutex_t ethercat_output_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ethercat_output_condition = PTHREAD_COND_INITIALIZER;
 static pthread_t ethercat_output_thread;
-static char ethercat_output_queue[ETHERCAT_OUTPUT_QUEUE_SIZE][ETHERCAT_OUTPUT_CHUNK_SIZE];
+static ethercat_output_message ethercat_output_queue[ETHERCAT_OUTPUT_QUEUE_SIZE];
 static unsigned int ethercat_output_head;
 static unsigned int ethercat_output_count;
 static unsigned int ethercat_output_dropped;
@@ -20,13 +25,14 @@ static int console_ethercat_printf(const char *format, ...)
 {
     va_list arguments;
     char message[ETHERCAT_OUTPUT_CHUNK_SIZE];
+    console_output_stamp stamp = console_output_capture();
     int length;
 
     va_start(arguments, format);
     pthread_mutex_lock(&ethercat_output_mutex);
     if (!ethercat_output_started) {
         pthread_mutex_unlock(&ethercat_output_mutex);
-        length = vprintf(format, arguments);
+        length = console_output_vfprintf(stdout, format, arguments);
         va_end(arguments);
         return length;
     }
@@ -35,7 +41,8 @@ static int console_ethercat_printf(const char *format, ...)
     if (length >= 0 && ethercat_output_count < ETHERCAT_OUTPUT_QUEUE_SIZE) {
         unsigned int slot = (ethercat_output_head + ethercat_output_count) %
                             ETHERCAT_OUTPUT_QUEUE_SIZE;
-        memcpy(ethercat_output_queue[slot], message,
+        ethercat_output_queue[slot].stamp = stamp;
+        memcpy(ethercat_output_queue[slot].text, message,
                (size_t)length < sizeof(message) ? (size_t)length + 1u : sizeof(message));
         ethercat_output_count++;
         if ((size_t)length >= sizeof(message)) ethercat_output_dropped++;
@@ -51,7 +58,7 @@ static void *console_ethercat_output_worker(void *argument)
 {
     (void)argument;
     for (;;) {
-        char message[ETHERCAT_OUTPUT_CHUNK_SIZE];
+        ethercat_output_message message;
         unsigned int dropped;
 
         pthread_mutex_lock(&ethercat_output_mutex);
@@ -62,14 +69,19 @@ static void *console_ethercat_output_worker(void *argument)
             pthread_mutex_unlock(&ethercat_output_mutex);
             break;
         }
-        memcpy(message, ethercat_output_queue[ethercat_output_head], sizeof(message));
+        message = ethercat_output_queue[ethercat_output_head];
         ethercat_output_head = (ethercat_output_head + 1u) % ETHERCAT_OUTPUT_QUEUE_SIZE;
         ethercat_output_count--;
         dropped = ethercat_output_dropped;
         ethercat_output_dropped = 0u;
         pthread_mutex_unlock(&ethercat_output_mutex);
-        if (dropped) fprintf(stdout, "\nEtherCAT: %u output chunks dropped/truncated\n", dropped);
-        fputs(message, stdout);
+        if (dropped) {
+            char warning[96];
+            int length = snprintf(warning, sizeof(warning),
+                                  "\nEtherCAT: %u output chunks dropped/truncated\n", dropped);
+            console_output_emit(stdout, warning, (size_t)length, message.stamp);
+        }
+        console_output_emit(stdout, message.text, strlen(message.text), message.stamp);
         fflush(stdout);
     }
     return NULL;

@@ -71,6 +71,7 @@ static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_nam
 typedef struct {
     ethercat_task task;
     bool chinese;
+    console_output_context output_context;
     unsigned int hold_ms;
     double position_rad;
     unsigned int value;
@@ -116,6 +117,7 @@ static struct {
     uint8_t configured[EC_MAXSLAVE];
     bool monitor[EC_MAXSLAVE];
     uint64_t disable_at_us[EC_MAXSLAVE];
+    console_output_context motion_context[EC_MAXSLAVE];
 } ethercat_session;
 
 static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
@@ -1131,6 +1133,10 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
     pthread_mutex_unlock(&ethercat_background_mutex);
     for (slave = 1; slave < EC_MAXSLAVE; slave++) {
         if (report_fault[slave]) {
+            console_output_context previous_context = console_output_current;
+
+            if (ethercat_session.active && ethercat_session.motion_context[slave].sequence != 0u)
+                console_output_current = ethercat_session.motion_context[slave];
             printf("[slave%d] %s\n", slave,
                    ethercat_background_arguments.chinese ?
                    "实时状态首次离开 operation-enabled" :
@@ -1149,6 +1155,7 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
             printf("  DC: error=%lldns adjustment=%lldns\n",
                    (long long)ethercat_dc_sync_phase_error_ns,
                    (long long)ethercat_dc_sync_adjustment_ns);
+            console_output_current = previous_context;
         }
     }
 }

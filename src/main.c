@@ -55,10 +55,12 @@ static const char *const console_command_words[] = {
 #include "lib/core.c"
 #include "lib/ethercat_esi.c"
 #include "lib/ethercat_output.c"
-#define printf console_ethercat_printf
+#undef printf
+#define printf(...) console_ethercat_printf(__VA_ARGS__)
 #include "lib/ethercat_scan.c"
 #include "lib/ethercat_background.c"
 #undef printf
+#define printf(...) console_output_printf(__VA_ARGS__)
 #include "lib/display.c"
 #include "lib/control.c"
 #include "lib/flash.c"
@@ -128,6 +130,7 @@ int main(int argc, char **argv)
         {0, 0, 0, 0},
     };
 
+    if (argc > 1) console_output_begin_command();
     while ((opt = getopt_long(argc, argv, "c:Cl:hE:M:D:P:Z:I:R:W:S:", options, NULL)) != -1) {
         if (opt == 'c') {
             config_path = optarg;

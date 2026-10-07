@@ -56,6 +56,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
     if (argc == 0) {
         return 0;
     }
+    console_output_begin_command();
     cmd = argv[0];
     motion_parameter = console_ethercat_motion_parameter_by_name(cmd);
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
@@ -531,12 +532,15 @@ static int console_terminal(flash_state *state)
             prompt = state->motor_power_on ? "motor[POWER-ON]> " : "motor[POWER-OFF]> ";
         }
 
+        console_output_raw = true;
         printf("%s", prompt);
         fflush(stdout);
         if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
             printf("\n");
+            console_output_raw = false;
             break;
         }
+        console_output_raw = false;
         argc = split_line(line, argv, (int)(sizeof(argv) / sizeof(argv[0])));
         ret = console_run_command(state, argc, argv);
         if (ret == CONSOLE_COMMAND_EXIT) {

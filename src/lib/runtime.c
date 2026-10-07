@@ -22,6 +22,7 @@
 
 #include "bxi_motor_comm.h"
 #include "bxi_pci_drv.h"
+#include "console_output.c"
 
 #define DEFAULT_FIRMWARE_DIR "firmware"
 #define DEFAULT_FIRMWARE_MAP "config/motor_console.yaml"
@@ -1862,7 +1863,7 @@ static void append_rx_text(char *buf, size_t *len, size_t cap, uint8_t byte, boo
             return;
         }
         if (byte == '\n' || byte == '\t' || byte >= 0x20u) {
-            fwrite(&byte, 1u, 1u, stdout);
+            putchar(byte);
         } else {
             printf("\\x%02x", byte);
         }
@@ -1953,7 +1954,7 @@ static void collect_text(flash_state *state, unsigned int quiet_ms, unsigned int
         if (rx_ring_pop(&state->rx, &byte, 20u)) {
             if (byte != '\r' && !state->suppress_boot_text) {
                 if (byte == '\n' || byte == '\t' || byte >= 0x20u) {
-                    fwrite(&byte, 1u, 1u, stdout);
+                    putchar(byte);
                 } else {
                     printf("\\x%02x", byte);
                 }
