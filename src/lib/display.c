@@ -116,6 +116,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      已有会话须先显式失能，再写 Pn101 的 0→1→0；完成后同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
         printf("      显示 Pn051 减速比、Pn150 编码器配置及电机端/输出端位置角度。\n");
+        printf("      同时显示 Pn028 转速限制、Pn106/107 加速度限制及 Pn044 速度滤波；后台使用使能前缓存。\n");
         printf("  ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
         printf("      读取 Pn 参数并显示原始字节及整数解释；参数类型和单位以手册为准。\n");
         printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -219,6 +220,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      In a running session, disable explicitly first; write Pn101 0->1->0, then restart main and USB power.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");
     printf("      Show Pn051, Pn150, and motor/output-side position angles; during enable show cached config and live PDO.\n");
+    printf("      Also show Pn028 speed limit, Pn106/107 acceleration limits and Pn044 speed filter (cached before enable).\n");
     printf("  ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
     printf("      Read a Pn parameter and print raw bytes plus integer interpretations; consult the manual for type/units.\n");
     printf("  ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");

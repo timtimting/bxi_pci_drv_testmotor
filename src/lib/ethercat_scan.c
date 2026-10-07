@@ -376,6 +376,10 @@ typedef struct {
     uint16_t ibits;
     int16_t pn001;
     int16_t pn002;
+    int16_t pn028;
+    int16_t pn044;
+    int16_t pn106;
+    int16_t pn107;
     int16_t pn070;
     int16_t pn075;
     int16_t pn077;
@@ -429,6 +433,10 @@ enum {
     ETHERCAT_CACHE_DC_CYCLE = 1u << 16,
     ETHERCAT_CACHE_PN150 = 1u << 17,
     ETHERCAT_CACHE_PN051 = 1u << 18,
+    ETHERCAT_CACHE_PN028 = 1u << 19,
+    ETHERCAT_CACHE_PN044 = 1u << 20,
+    ETHERCAT_CACHE_PN106 = 1u << 21,
+    ETHERCAT_CACHE_PN107 = 1u << 22,
 };
 #endif
 
@@ -956,6 +964,10 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         }
         ETHERCAT_CACHE_SDO(0x2001u, 0u, pn001, ETHERCAT_CACHE_PN001);
         ETHERCAT_CACHE_SDO(0x2002u, 0u, pn002, ETHERCAT_CACHE_PN002);
+        ETHERCAT_CACHE_SDO(0x2028u, 0u, pn028, ETHERCAT_CACHE_PN028);
+        ETHERCAT_CACHE_SDO(0x2044u, 0u, pn044, ETHERCAT_CACHE_PN044);
+        ETHERCAT_CACHE_SDO(0x2106u, 0u, pn106, ETHERCAT_CACHE_PN106);
+        ETHERCAT_CACHE_SDO(0x2107u, 0u, pn107, ETHERCAT_CACHE_PN107);
         ETHERCAT_CACHE_SDO(0x2070u, 0u, pn070, ETHERCAT_CACHE_PN070);
         ETHERCAT_CACHE_SDO(0x2075u, 0u, pn075, ETHERCAT_CACHE_PN075);
         ETHERCAT_CACHE_SDO(0x2077u, 0u, pn077, ETHERCAT_CACHE_PN077);
@@ -1192,6 +1204,19 @@ static int console_ethercat_print_background_info(bool chinese,
         } else {
             printf("?\n");
         }
+        printf("  motion snapshot: Pn028=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN028) printf("%d (rpm motor limit)", snapshot->pn028); else printf("?");
+        printf(" Pn106=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN106) printf("%d (accel limit)", snapshot->pn106); else printf("?");
+        printf(" Pn107=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN107) {
+            printf("%d (%s)", snapshot->pn107,
+                   snapshot->pn107 == 0 ? "accel limit disabled" :
+                   (snapshot->pn107 == 1 ? "accel limit enabled" : "unknown"));
+        } else printf("?");
+        printf(" Pn044=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN044) printf("%d (speed filter)", snapshot->pn044); else printf("?");
+        printf("\n");
         printf("  params snapshot: Pn079=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
         printf(" Pn085=");
@@ -2478,6 +2503,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t target_torque;
         int16_t pn001;
         int16_t pn002;
+        int16_t pn028;
+        int16_t pn044;
+        int16_t pn106;
+        int16_t pn107;
         int16_t pn070;
         int16_t pn075;
         int16_t pn077;
@@ -2511,6 +2540,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         bool digital_inputs_ok;
         bool pn001_ok;
         bool pn002_ok;
+        bool pn028_ok;
+        bool pn044_ok;
+        bool pn106_ok;
+        bool pn107_ok;
         bool pn070_ok;
         bool pn075_ok;
         bool pn077_ok;
@@ -2558,6 +2591,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         digital_inputs_ok = ETHERCAT_INFO_READ(0x60fdu, digital_inputs);
         pn001_ok = ETHERCAT_INFO_READ(0x2001u, pn001);
         pn002_ok = ETHERCAT_INFO_READ(0x2002u, pn002);
+        pn028_ok = ETHERCAT_INFO_READ(0x2028u, pn028);
+        pn044_ok = ETHERCAT_INFO_READ(0x2044u, pn044);
+        pn106_ok = ETHERCAT_INFO_READ(0x2106u, pn106);
+        pn107_ok = ETHERCAT_INFO_READ(0x2107u, pn107);
         pn070_ok = ETHERCAT_INFO_READ(0x2070u, pn070);
         pn075_ok = ETHERCAT_INFO_READ(0x2075u, pn075);
         pn077_ok = ETHERCAT_INFO_READ(0x2077u, pn077);
@@ -2596,6 +2633,18 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         if (pn075_ok) printf("%d", (int)pn075); else printf("?");
         printf(" Pn077=");
         if (pn077_ok) printf("%d", (int)pn077); else printf("?");
+        printf("\n  motion: Pn028=");
+        if (pn028_ok) printf("%d (rpm motor limit)", (int)pn028); else printf("?");
+        printf(" Pn106=");
+        if (pn106_ok) printf("%d (accel limit)", (int)pn106); else printf("?");
+        printf(" Pn107=");
+        if (pn107_ok) {
+            printf("%d (%s)", (int)pn107,
+                   pn107 == 0 ? "accel limit disabled" :
+                   (pn107 == 1 ? "accel limit enabled" : "unknown"));
+        } else printf("?");
+        printf(" Pn044=");
+        if (pn044_ok) printf("%d (speed filter)", (int)pn044); else printf("?");
         printf("\n  params: Pn079=");
         if (pn079_ok) printf("%d", (int)pn079); else printf("?");
         printf(" Pn085=");
