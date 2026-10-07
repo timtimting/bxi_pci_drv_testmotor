@@ -1691,7 +1691,7 @@ static int console_ethercat_enable(bool chinese,
         goto cleanup;
     }
     failure_stage = "pre-op-to-safe-op";
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
@@ -2180,7 +2180,7 @@ static int console_ethercat_position(bool chinese,
                "ethercat_position: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
                "ethercat_position: slaves did not reach SAFE-OP");
         goto cleanup;
@@ -2337,7 +2337,7 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
                "ethercat_zero: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP ||
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP ||
         console_ethercat_selected_ready(selected, zero_positions) != 0 ||
         console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_zero: PDO 映射或 SAFE-OP 初始化失败" :
@@ -3212,7 +3212,7 @@ static int console_ethercat_disable(bool chinese,
                "ethercat_disable: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_disable: 从站未进入 SAFE-OP" :
                "ethercat_disable: slaves did not reach SAFE-OP");
         goto cleanup;
