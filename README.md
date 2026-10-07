@@ -134,26 +134,26 @@ lang en
 Revision，用于确认项目内的 ESI 资产可用；该读取不会初始化 EtherCAT 主站，也不会
 向电机发送任何 EtherCAT、CAN 或 MIT 控制命令。
 
-当前终端仍使用 BXI PCI/CAN 通信。开璇 EtherCAT 控制需要后续集成 SOEM，并以
-运行中从站读取到的实际 PDO 映射为准。
+EtherCAT 命令通过 EtherLab (IgH) 主站运行，使用配置的 master 0。运行前需安装
+EtherLab 主站内核模块和用户态开发库，并在 `/etc/ethercat.conf` 中将
+`MASTER0_DEVICE` 绑定到 `enp86s0` 的 MAC 地址；`ethercat_*` 命令仍保留网卡参数，
+程序会将其 MAC 与 EtherLab master 0 的绑定进行校验。
 
 ### EtherCAT 扫描
 
-编译时检测到 SOEM 后，可用以下命令只扫描 EtherCAT 从站，不配置 PDO、不进入
-OP 状态，也不发送使能或运动指令：
+编译时检测到 EtherLab 后，可用以下命令扫描从站，不配置 PDO，也不发送使能或运动指令：
 
 ```bash
 sudo ./build/motor_console --ethercat-scan enp86s0
 ```
 
-所有 `--ethercat-*` 命令均直接通过 SOEM 扫描网卡上的实际 EtherCAT 从站；不会读取
+所有 `--ethercat-*` 命令均通过 EtherLab master 0 访问网卡上的实际 EtherCAT 从站；不会读取
 `config/motor_console.yaml` 中的 CAN 电机配置，也不会初始化 BXI PCI/CAN。电机身份和
 拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
 
 终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
 旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
-更适合只连接 EtherCAT 电机的电脑。SOEM 默认从 `$HOME/SOEM-v1.4.0` 检测；若安装
-在其他位置，重新构建时指定：
+更适合只连接 EtherCAT 电机的电脑。若 EtherLab 安装在非系统路径，重新构建时指定其前缀：
 
 交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
 `ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
@@ -161,10 +161,11 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 主站 Sync0 与 EtherCAT 循环会一起使用该周期。`hold_ms`、`sync0_shift_ns` 仍为可选位置参数，网卡覆盖参数放在最后。
 
 ```bash
-make FLAGS_USER="-DSOEM_ROOT=$HOME/SOEM-v1.4.0"
+cmake -S . -B build -DETHERLAB_ROOT=/opt/etherlab
+cmake --build build -j
 ```
 
-若未检测到 SOEM，命令会输出上述重建提示而不会尝试访问网卡。
+若未检测到 EtherLab，命令会提示安装用户态开发库后重新构建。master 0 必须在系统层绑定到命令指定网卡。
 
 ### EtherCAT 安全使能测试
 
@@ -180,13 +181,13 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1
 sudo ./build/motor_console --ethercat-enable enp86s0 1 0 100000
 ```
 
-其中 `0` 表示持续运行直到 `Ctrl-C`，`100000` 是传给 SOEM `ec_dcsync0()` 的主站 shift。周期参数可独立指定，不需要填写 hold 或 shift：
+其中 `0` 表示持续运行直到 `Ctrl-C`，`100000` 是传给 EtherLab DC 配置的主站 shift。周期参数可独立指定，不需要填写 hold 或 shift：
 
 ```bash
 sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 ```
 
-交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。交互模式下使能循环在后台运行并立即返回提示符；`ethercat_disable 1` 会停止后台循环并失能。指定 `hold_ms` 时，到期后后台任务自动失能。使能期间执行 `ethercat_info` 时，显示使能前读取并缓存的 SDO 配置和后台循环最新 PDO 样本，不另开主站也不停止使能；查询未缓存的从站会先安全停止后台循环，再执行独立查询。其他 EtherCAT 命令也会先交接主站，避免并发打开两个 SOEM 主站。独立命令行模式仍前台运行，按 `Ctrl-C` 退出并失能。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全。
+交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。交互模式下使能循环在后台运行并立即返回提示符；`ethercat_disable 1` 会停止后台循环并失能。指定 `hold_ms` 时，到期后后台任务自动失能。使能期间执行 `ethercat_info` 时，显示使能前读取并缓存的 SDO 配置和后台循环最新 PDO 样本，不另开主站也不停止使能；查询未缓存的从站会先安全停止后台循环，再执行独立查询。其他 EtherCAT 命令也会先交接 master，避免并发占用 EtherLab master 0。独立命令行模式仍前台运行，按 `Ctrl-C` 退出并失能。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全。
 
 使能总线上全部从站并保持当前位置 5 秒后自动失能：
 
@@ -210,7 +211,7 @@ sudo ./build/motor_console --ethercat-disable enp86s0 1
 sudo ./build/motor_console --ethercat-disable enp86s0 all
 ```
 
-交互模式下 `ethercat_disable <slave_id|all>` 会在后台完成失能并立即返回提示符；若使能循环正在后台运行，该命令会请求原循环发送失能并关闭主站。运行 `ethercat_scan` 等其他 EtherCAT 命令时，会先等待后台操作结束，再执行新命令。不要在另一个终端直接运行第二个 SOEM 主站，以免两个主站争用同一网卡和从站状态。
+交互模式下 `ethercat_disable <slave_id|all>` 会在后台完成失能并立即返回提示符；若使能循环正在后台运行，该命令会请求原循环发送失能并释放 EtherLab master。运行 `ethercat_scan` 等其他 EtherCAT 命令时，会先等待后台操作结束，再执行新命令。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
 
 ### EtherCAT CSP 位控
 

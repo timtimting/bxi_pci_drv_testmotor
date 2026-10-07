@@ -43,8 +43,9 @@ static void console_ethercat_background_mark_ready(void)
     pthread_mutex_unlock(&ethercat_background_mutex);
 }
 
-#ifdef HAVE_SOEM
-#include <soem/ethercat.h>
+#ifdef HAVE_ETHERLAB
+#include "etherlab_compat.h"
+#include "ethercat_etherlab_compat.c"
 
 typedef struct {
     bool valid;
@@ -434,7 +435,7 @@ static const char *const *console_ethercat_completion_words(const char *line,
     return NULL;
 }
 
-#ifdef HAVE_SOEM
+#ifdef HAVE_ETHERLAB
 static int ethercat_last_work_counter;
 static int ethercat_expected_work_counter;
 static int ethercat_min_work_counter;
@@ -560,7 +561,7 @@ static int32_t console_ethercat_read_i32(const uint8_t *data)
     return (int32_t)value;
 }
 
-#ifdef HAVE_SOEM
+#ifdef HAVE_ETHERLAB
 static bool console_ethercat_read_sdo_value(int slave,
                                             uint16_t index,
                                             uint8_t subindex,
@@ -1326,12 +1327,10 @@ static int console_ethercat_scan(bool chinese, const char *interface)
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法扫描 EtherCAT。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT scan is unavailable because this build has no SOEM support. Build again "
-           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法访问 EtherCAT。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT scan is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     int slave;
@@ -1401,12 +1400,10 @@ static int console_ethercat_enable(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法使能 EtherCAT 电机。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT enable is unavailable because this build has no SOEM support. Build again "
-           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法使能 EtherCAT 电机。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT enable is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
@@ -1458,14 +1455,14 @@ static int console_ethercat_enable(bool chinese,
     ethercat_expected_work_counter =
         ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
-        printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
-               "ethercat_enable: slaves did not reach SAFE-OP");
-        goto cleanup;
-    }
     if (console_ethercat_enable_dc_sync(selected, sync0_shift_ns, sync0_cycle_ns) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
                "ethercat_enable: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+        printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
+               "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
     }
     console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
@@ -1729,7 +1726,7 @@ static int console_ethercat_background_start(bool chinese,
         return -1;
     }
     memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
-#ifdef HAVE_SOEM
+#ifdef HAVE_ETHERLAB
     memset(ethercat_cached_slaves, 0, sizeof(ethercat_cached_slaves));
 #endif
     ethercat_background_arguments.chinese = chinese;
@@ -1796,7 +1793,7 @@ static int console_ethercat_background_disable_start(bool chinese,
                "Invalid ethercat_disable arguments; check the interface and slave selection.");
         return -1;
     }
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     return console_ethercat_disable(chinese, interface, selection);
 #else
     console_ethercat_background_reap();
@@ -1856,12 +1853,10 @@ static int console_ethercat_position(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法执行 EtherCAT 位控。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT position control is unavailable because this build has no SOEM support. "
-           "Build again with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法执行 EtherCAT 位控。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT position control is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
@@ -1923,15 +1918,15 @@ static int console_ethercat_position(bool chinese,
     ethercat_expected_work_counter =
         ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
-        printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
-               "ethercat_position: slaves did not reach SAFE-OP");
-        goto cleanup;
-    }
     if (console_ethercat_enable_dc_sync(selected, 0,
                                         ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 目标从站不支持 DC Sync0" :
                "ethercat_position: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
+        printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
+               "ethercat_position: slaves did not reach SAFE-OP");
         goto cleanup;
     }
     if (console_ethercat_selected_ready(selected, target_positions) != 0) {
@@ -2040,12 +2035,10 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法设置 EtherCAT 零位。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT zero setting is unavailable because this build has no SOEM support. "
-           "Build again with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法设置 EtherCAT 零位。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT zero setting is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
@@ -2082,6 +2075,12 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
+    if (console_ethercat_enable_dc_sync(selected, 0,
+                                        ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS) != 0) {
+        printf("%s\n", chinese ? "ethercat_zero: 目标从站不支持 DC Sync0" :
+               "ethercat_zero: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP ||
         console_ethercat_selected_ready(selected, zero_positions) != 0 ||
         console_ethercat_exchange() != 0) {
@@ -2197,12 +2196,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法读取 EtherCAT 电机信息。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT info is unavailable because this build has no SOEM support. Build again "
-           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法读取 EtherCAT 电机信息。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT info is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     int slave;
@@ -2516,10 +2513,10 @@ static int console_ethercat_pnread(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法读取 Pn 参数。请启用 SOEM 支持后重新构建。" :
-           "Pn parameter reads are unavailable because this build has no SOEM support.");
+           "当前程序未编译 EtherLab，无法读取 Pn 参数。请安装 EtherLab 主站开发库后重新构建。" :
+           "Pn parameter reads are unavailable because EtherLab is not installed.");
     return -1;
 #else
     uint8_t selected[EC_MAXSLAVE] = {0};
@@ -2630,10 +2627,10 @@ static int console_ethercat_pn077(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法写入 Pn077。从 SOEM 源码编译后，执行 make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "Pn077 write is unavailable because this build has no SOEM support. Rebuild with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\".");
+           "当前程序未编译 EtherLab，无法写入 Pn077。请安装 EtherLab 主站开发库后重新构建。" :
+           "Pn077 write is unavailable because EtherLab is not installed.");
     return -1;
 #else
     uint16_t selected_status[EC_MAXSLAVE] = {0};
@@ -2758,10 +2755,10 @@ static int console_ethercat_save(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法保存 EtherCAT 参数。从 SOEM 源码编译后，执行 make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT parameter save is unavailable because this build has no SOEM support. Rebuild with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\".");
+           "当前程序未编译 EtherLab，无法保存 EtherCAT 参数。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT parameter save is unavailable because EtherLab is not installed.");
     return -1;
 #else
     uint16_t selected_status[EC_MAXSLAVE] = {0};
@@ -2912,12 +2909,10 @@ static int console_ethercat_disable(bool chinese,
         return -1;
     }
 
-#ifndef HAVE_SOEM
+#ifndef HAVE_ETHERLAB
     printf("%s\n", chinese ?
-           "当前程序未编译 SOEM，无法失能 EtherCAT 电机。从 SOEM 源码编译后，执行 make "
-           "FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" 重新构建。" :
-           "EtherCAT disable is unavailable because this build has no SOEM support. Build again "
-           "with make FLAGS_USER=\"-DSOEM_ROOT=$HOME/SOEM-v1.4.0\" after building SOEM.");
+           "当前程序未编译 EtherLab，无法失能 EtherCAT 电机。请安装 EtherLab 主站开发库后重新构建。" :
+           "EtherCAT disable is unavailable because EtherLab is not installed; install the EtherLab master development library and rebuild.");
     return -1;
 #else
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
@@ -2955,6 +2950,12 @@ static int console_ethercat_disable(bool chinese,
     ec_config_map(process_image);
     mapped = true;
     ec_configdc();
+    if (console_ethercat_enable_dc_sync(selected, 0,
+                                        ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS) != 0) {
+        printf("%s\n", chinese ? "ethercat_disable: 目标从站不支持 DC Sync0" :
+               "ethercat_disable: selected slave does not support DC Sync0");
+        goto cleanup;
+    }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_disable: 从站未进入 SAFE-OP" :
                "ethercat_disable: slaves did not reach SAFE-OP");
@@ -3005,8 +3006,8 @@ static int console_ethercat_disable(bool chinese,
         goto cleanup;
     }
     console_ethercat_disable_selected(selected);
-    printf("%s\n", chinese ? "ethercat_disable: 已发送 0x0000 并切回 SAFE-OP" :
-           "ethercat_disable: sent 0x0000 and returned to SAFE-OP");
+    printf("%s\n", chinese ? "ethercat_disable: 已发送 0x0000；关闭主站并释放 EtherLab master" :
+           "ethercat_disable: sent 0x0000; deactivating and releasing the EtherLab master");
     result = 0;
 
 cleanup:
