@@ -533,8 +533,8 @@ enum {
     ETHERCAT_KAIXUAN_PRODUCT_CODE = 0x00000402u,
     ETHERCAT_KAIXUAN_RXPDO_BITS = 104u,
     ETHERCAT_KAIXUAN_TXPDO_MIN_BITS = 112u,
-    ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS = 1u,
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS = 1000000u,
+    ETHERCAT_KAIXUAN_STARTUP_PDO_TIMEOUT_NS = 250000000u,
     ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS = 60000u,
     ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE = 8192u,
     ETHERCAT_COMPLETION_INTERFACE_MAX = 32u,
@@ -1246,14 +1246,20 @@ static void console_ethercat_write_i32(uint8_t *data, int32_t value)
 static int console_ethercat_exchange(void)
 {
     struct timespec cycle_start;
-    uint64_t now_us = time_us();
+    uint64_t now_us;
     int work_counter;
+    int send_result;
+    int expected_work_counter =
+        ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC;
 
     if (!ethercat_cycle_initialized &&
         clock_gettime(CLOCK_MONOTONIC, &cycle_start) == 0) {
         ethercat_next_cycle = cycle_start;
         ethercat_cycle_initialized = true;
+    } else if (ethercat_cycle_initialized) {
+        console_ethercat_wait_next_cycle();
     }
+    now_us = time_us();
     if (ethercat_last_exchange_us != 0u && now_us >= ethercat_last_exchange_us) {
         uint64_t interval_us = now_us - ethercat_last_exchange_us;
 
@@ -1265,8 +1271,8 @@ static int console_ethercat_exchange(void)
         ethercat_last_exchange_interval_us = 0u;
     }
     ethercat_last_exchange_us = now_us;
-    ec_send_processdata();
     work_counter = ec_receive_processdata(EC_TIMEOUTRET);
+    send_result = ec_send_processdata();
     ethercat_last_work_counter = work_counter;
     if (work_counter < ethercat_min_work_counter) {
         ethercat_min_work_counter = work_counter;
@@ -1278,7 +1284,28 @@ static int console_ethercat_exchange(void)
     if (work_counter > 0) {
         console_ethercat_update_dc_sync();
     }
-    return work_counter > 0 ? 0 : -1;
+    return send_result >= 0 && expected_work_counter > 0 &&
+           work_counter == expected_work_counter ? 0 : -1;
+}
+
+static int console_ethercat_wait_for_initial_pdo(void)
+{
+    unsigned int attempt;
+    unsigned int consecutive = 0u;
+    unsigned int max_attempts =
+        (ETHERCAT_KAIXUAN_STARTUP_PDO_TIMEOUT_NS + ethercat_control_period_ns - 1u) /
+        ethercat_control_period_ns;
+
+    if (max_attempts < 3u) max_attempts = 3u;
+    for (attempt = 0u; attempt < max_attempts && !stop_requested &&
+         !console_ethercat_background_should_stop(); attempt++) {
+        if (console_ethercat_exchange() == 0) {
+            if (++consecutive == 3u) return 0;
+        } else {
+            consecutive = 0u;
+        }
+    }
+    return -1;
 }
 
 static void console_ethercat_reset_exchange_diagnostics(void)
@@ -1621,6 +1648,19 @@ static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
     return 0;
 }
 
+static bool console_ethercat_selected_operational(const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (selected[slave] != 0u &&
+            (ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void console_ethercat_set_control_word(const uint8_t selected[EC_MAXSLAVE],
                                                uint16_t control_word)
 {
@@ -1669,7 +1709,6 @@ static int console_ethercat_wait_for_status(const uint8_t selected[EC_MAXSLAVE],
         if (console_ethercat_selected_status_matches(selected, expected_state)) {
             return 0;
         }
-        console_ethercat_wait_next_cycle();
     }
     return -1;
 }
@@ -1687,10 +1726,7 @@ static void console_ethercat_disable_selected(const uint8_t selected[EC_MAXSLAVE
 
     console_ethercat_set_control_word(selected, 0u);
     for (cycle = 0u; cycle < disable_cycles; cycle++) {
-        if (console_ethercat_exchange() != 0) {
-            break;
-        }
-        console_ethercat_wait_next_cycle();
+        console_ethercat_exchange();
     }
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u) {
@@ -1871,10 +1907,10 @@ static int console_ethercat_enable(bool chinese,
     failure_stage = "post-safe-op-dc-snapshot";
     console_ethercat_cache_dc_registers(selected);
     failure_stage = "initial-pdo-exchange";
-    if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
-        console_ethercat_exchange() != 0) {
-        printf("%s\n", chinese ? "ethercat_enable: 初始 PDO 通信失败" :
-               "ethercat_enable: initial PDO exchange failed");
+    if (console_ethercat_wait_for_initial_pdo() != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 初始 PDO 未在 250ms 内连续 3 次获得完整 WKC" :
+               "ethercat_enable: initial PDO did not reach complete WKC for 3 cycles within 250ms");
         goto cleanup;
     }
     failure_stage = "pdo-identity-validation";
@@ -1919,16 +1955,14 @@ static int console_ethercat_enable(bool chinese,
         if (console_ethercat_exchange() != 0) {
             break;
         }
-        if (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) == EC_STATE_OPERATIONAL) {
+        if (console_ethercat_selected_operational(selected)) {
             break;
         }
-        console_ethercat_wait_next_cycle();
     }
     failure_stage = "wait-operational";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u &&
-            (ec_statecheck((uint16)slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
-            EC_STATE_OPERATIONAL) {
+            (ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL) {
             printf("%s: %d\n", chinese ? "ethercat_enable: 从站未进入 OP" :
                    "ethercat_enable: slave did not reach OP", slave);
             goto cleanup;
@@ -1976,7 +2010,6 @@ static int console_ethercat_enable(bool chinese,
             goto cleanup;
         }
         console_ethercat_capture_live_pdo(selected);
-        console_ethercat_wait_next_cycle();
     }
     result = stop_requested || console_ethercat_background_should_stop() ? -1 : 0;
 
@@ -2365,8 +2398,7 @@ static int console_ethercat_position(bool chinese,
                "ethercat_position: PDO mapping is not the required Kaixuan 13B output/14B input layout; control refused");
         goto cleanup;
     }
-    if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
-        console_ethercat_exchange() != 0) {
+    if (console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_position: 初始 PDO 通信失败" :
                "ethercat_position: initial PDO exchange failed");
         goto cleanup;
@@ -2378,29 +2410,16 @@ static int console_ethercat_position(bool chinese,
         }
     }
     for (slave = 0; slave < 100 && !stop_requested; slave++) {
-        bool all_operational = true;
-        int target;
-
         if (console_ethercat_exchange() != 0) {
             break;
         }
-        for (target = 1; target <= ec_slavecount; target++) {
-            if (selected[target] != 0u &&
-                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
-                EC_STATE_OPERATIONAL) {
-                all_operational = false;
-                break;
-            }
-        }
-        if (all_operational) {
+        if (console_ethercat_selected_operational(selected)) {
             break;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
     }
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u &&
-            (ec_statecheck((uint16)slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
-            EC_STATE_OPERATIONAL) {
+            (ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL) {
             printf("%s: %d\n", chinese ? "ethercat_position: 从站未进入 OP" :
                    "ethercat_position: slave did not reach OP", slave);
             goto cleanup;
@@ -2437,7 +2456,6 @@ static int console_ethercat_position(bool chinese,
                    "ethercat_position: PDO communication lost");
             goto cleanup;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
     }
     result = stop_requested ? -1 : 0;
 
@@ -2513,7 +2531,7 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
     }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP ||
         console_ethercat_selected_ready(selected, zero_positions) != 0 ||
-        console_ethercat_exchange() != 0) {
+        console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_zero: PDO 映射或 SAFE-OP 初始化失败" :
                "ethercat_zero: PDO mapping or SAFE-OP initialization failed");
         goto cleanup;
@@ -2525,25 +2543,13 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
         }
     }
     for (slave = 0; slave < 100 && !stop_requested; slave++) {
-        bool all_operational = true;
-        int target;
-
         if (console_ethercat_exchange() != 0) {
             break;
         }
-        for (target = 1; target <= ec_slavecount; target++) {
-            if (selected[target] != 0u &&
-                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
-                EC_STATE_OPERATIONAL) {
-                all_operational = false;
-                break;
-            }
-        }
-        if (all_operational) {
+        if (console_ethercat_selected_operational(selected)) {
             operational = true;
             break;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
     }
     if (!operational) {
         printf("%s\n", chinese ? "ethercat_zero: 从站未进入 OP，已拒绝写入 Pn101" :
@@ -3398,7 +3404,7 @@ static int console_ethercat_disable(bool chinese,
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0u);
-    if (console_ethercat_exchange() != 0) {
+    if (console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_disable: 初始 PDO 通信失败" :
                "ethercat_disable: initial PDO exchange failed");
         goto cleanup;
@@ -3410,25 +3416,13 @@ static int console_ethercat_disable(bool chinese,
         }
     }
     for (slave = 0; slave < 100 && !stop_requested; slave++) {
-        bool all_operational = true;
-        int target;
-
         if (console_ethercat_exchange() != 0) {
             break;
         }
-        for (target = 1; target <= ec_slavecount; target++) {
-            if (selected[target] != 0u &&
-                (ec_statecheck((uint16)target, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
-                EC_STATE_OPERATIONAL) {
-                all_operational = false;
-                break;
-            }
-        }
-        if (all_operational) {
+        if (console_ethercat_selected_operational(selected)) {
             operational = true;
             break;
         }
-        sleep_ms(ETHERCAT_KAIXUAN_CONTROL_PERIOD_MS);
     }
     if (!operational) {
         printf("%s\n", chinese ? "ethercat_disable: 从站未进入 OP，已尝试安全失能" :

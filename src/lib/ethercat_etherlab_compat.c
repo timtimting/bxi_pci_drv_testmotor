@@ -273,7 +273,7 @@ int ec_dcsync0(uint16 slave, boolean activate, uint32_t cycle_ns, int32_t shift_
 
 int ec_send_processdata(void)
 {
-    if (etherlab_master == NULL || etherlab_activate() != 0) return 0;
+    if (etherlab_master == NULL || etherlab_activate() != 0) return -1;
     etherlab_set_application_time();
     if (etherlab_dc_configured) {
         ecrt_master_sync_reference_clock(etherlab_master);
@@ -289,7 +289,11 @@ int ec_receive_processdata(int timeout_us)
     uint32_t reference_time;
     (void)timeout_us;
     if (etherlab_master == NULL || etherlab_activate() != 0) return 0;
-    ecrt_master_receive(etherlab_master);
+    if (ecrt_master_receive(etherlab_master) < 0) {
+        etherlab_working_counter = 0;
+        ec_DCtime = 0;
+        return 0;
+    }
     if (etherlab_domain != NULL) {
         ecrt_domain_process(etherlab_domain);
         ecrt_domain_state(etherlab_domain, &domain_state);
@@ -320,7 +324,6 @@ int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
     deadline = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u +
                (uint64_t)(timeout_us > 0 ? timeout_us : 1);
     do {
-        ec_send_processdata();
         ec_receive_processdata(EC_TIMEOUTRET);
         if (slave == 0) {
             int candidate;
@@ -340,6 +343,7 @@ int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
                 (target == EC_STATE_SAFE_OP &&
                  (ec_slave[slave].state & 0x0f) == EC_STATE_OPERATIONAL)) return target;
         }
+        if (ec_send_processdata() < 0) return 0;
         nanosleep(&delay, NULL);
         clock_gettime(CLOCK_MONOTONIC, &clock_now);
         now = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u;
@@ -388,12 +392,12 @@ int ec_FPRD(uint16 configadr, uint16 reg, uint16 length, void *data, int timeout
     if (ecrt_reg_request_state(request) == EC_REQUEST_BUSY) return 0;
     if (ecrt_reg_request_read(request, reg, length) != 0) return 0;
     for (attempt = 0; attempt < 20; ++attempt) {
-        ec_send_processdata();
         ec_receive_processdata(EC_TIMEOUTRET);
         if (ecrt_reg_request_state(request) == EC_REQUEST_SUCCESS) {
             memcpy(data, ecrt_reg_request_data(request), length);
             return 1;
         }
+        if (ec_send_processdata() < 0) return 0;
         usleep(1000);
     }
     return 0;

@@ -169,6 +169,7 @@ cmake --build build -j
 `ethercat_enable` 会在使能尝试期间临时启用 EtherLab `debug=1`；失败时把本次尝试的内核日志
 保存到 `/tmp/ethercat-enable-failure-*.log`，成功时删除临时日志并恢复 `debug=0`。此功能需要以
 root 运行且允许读取 `/dev/kmsg`；EtherLab 命令不在默认路径时，可通过 `ETHERLAB_CLI` 指定其绝对路径。
+周期 PDO 先处理上周期回包，再发送本周期数据；进入 SAFE-OP 后最多等待 250 ms，只有连续 3 个周期获得完整 WKC 才继续使能。
 
 ### EtherCAT 安全使能测试
 
