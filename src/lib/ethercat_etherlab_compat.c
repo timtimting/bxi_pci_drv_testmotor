@@ -171,6 +171,7 @@ int ec_init(char *interface)
     etherlab_sync_cycle_ns = 0;
     etherlab_sync_shift_ns = 0;
     etherlab_working_counter = 0;
+    ec_DCtime = 0;
     return 1;
 }
 
@@ -295,9 +296,14 @@ int ec_receive_processdata(int timeout_us)
         etherlab_working_counter = (int)domain_state.working_counter;
     }
     etherlab_update_slave_states();
+    ec_DCtime = 0;
     if (etherlab_dc_configured && etherlab_reference_clock_ready() &&
-        ecrt_master_reference_clock_time(etherlab_master, &reference_time) == 0)
+        ec_group[0].outputsWKC + ec_group[0].inputsWKC > 0 &&
+        etherlab_working_counter >=
+            ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC &&
+        ecrt_master_reference_clock_time(etherlab_master, &reference_time) == 0) {
         ec_DCtime = reference_time;
+    }
     return etherlab_working_counter;
 }
 
@@ -401,7 +407,8 @@ int ec_SDOread(uint16 slave, uint16 index, uint8 subindex, boolean complete_acce
     int result;
     (void)complete_access;
     (void)timeout_us;
-    if (etherlab_master == NULL || slave == 0 || slave > ec_slavecount || size == NULL ||
+    if (etherlab_master == NULL || etherlab_activated || slave == 0 ||
+        slave > ec_slavecount || size == NULL ||
         *size <= 0) return 0;
     result = ecrt_master_sdo_upload(etherlab_master, (uint16_t)(slave - 1), index,
         subindex, data, (size_t)*size, &actual, &abort_code);
@@ -416,7 +423,8 @@ int ec_SDOwrite(uint16 slave, uint16 index, uint8 subindex, boolean complete_acc
     uint32_t abort_code = 0;
     (void)complete_access;
     (void)timeout_us;
-    if (etherlab_master == NULL || slave == 0 || slave > ec_slavecount || size <= 0) return 0;
+    if (etherlab_master == NULL || etherlab_activated || slave == 0 ||
+        slave > ec_slavecount || size <= 0) return 0;
     return ecrt_master_sdo_download(etherlab_master, (uint16_t)(slave - 1), index,
         subindex, data, (size_t)size, &abort_code) == 0 ? size : 0;
 }

@@ -240,8 +240,14 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
     int header_length;
     bool saved = false;
     bool kernel_log_overrun = false;
+    size_t kernel_log_bytes = 0u;
 
     if (!capture->active) return;
+    if (capture->debug_enabled && console_ethercat_set_kernel_debug(0u) != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 未能恢复 EtherLab debug=0，请手动执行 sudo /usr/local/etherlab/bin/ethercat debug 0" :
+               "ethercat_enable: failed to restore EtherLab debug=0; run sudo /usr/local/etherlab/bin/ethercat debug 0 manually");
+    }
     if (failed && capture->temporary_log_fd >= 0) {
         if (clock_gettime(CLOCK_REALTIME, &now) == 0 &&
             localtime_r(&now.tv_sec, &local_time) != NULL &&
@@ -272,6 +278,14 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
                 if (result > 0) {
                     console_ethercat_write_all(capture->temporary_log_fd,
                                                kernel_message, (size_t)result);
+                    kernel_log_bytes += (size_t)result;
+                    if (kernel_log_bytes >= 8u * 1024u * 1024u) {
+                        static const char truncated[] =
+                            "\n[warning: kernel log capture truncated after 8 MiB]\n";
+                        console_ethercat_write_all(capture->temporary_log_fd,
+                                                   truncated, sizeof(truncated) - 1u);
+                        break;
+                    }
                     continue;
                 }
                 if (result < 0 && errno == EINTR) continue;
@@ -314,11 +328,6 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
     if (capture->kernel_log_fd >= 0) {
         close(capture->kernel_log_fd);
         capture->kernel_log_fd = -1;
-    }
-    if (capture->debug_enabled && console_ethercat_set_kernel_debug(0u) != 0) {
-        printf("%s\n", chinese ?
-               "ethercat_enable: 未能恢复 EtherLab debug=0，请手动执行 sudo /usr/local/etherlab/bin/ethercat debug 0" :
-               "ethercat_enable: failed to restore EtherLab debug=0; run sudo /usr/local/etherlab/bin/ethercat debug 0 manually");
     }
     capture->active = false;
 }
@@ -734,7 +743,7 @@ static void console_ethercat_update_dc_sync(void)
     int64_t integral_limit_ns;
     int64_t phase_ns;
 
-    if (!ethercat_dc_sync_enabled || cycle_ns <= 0) {
+    if (!ethercat_dc_sync_enabled || cycle_ns <= 0 || ec_DCtime == 0) {
         return;
     }
     phase_ns = ((int64_t)ec_DCtime - ethercat_dc_sync_target_ns) % cycle_ns;
@@ -892,7 +901,6 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
 
     for (slave = 1; slave <= ec_slavecount; slave++) {
         ethercat_cached_slave snapshot;
-        uint8_t dc_cycle_data[4] = {0};
 
         if (selected[slave] == 0u) {
             continue;
@@ -937,22 +945,47 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         ETHERCAT_CACHE_SDO(0x1c33u, 2u, sm3_cycle_ns, ETHERCAT_CACHE_SM3_CYCLE);
 #undef ETHERCAT_CACHE_SDO
 
-        if (ec_FPRD(ec_slave[slave].configadr, 0x0981u,
-                    (uint16)sizeof(snapshot.dc_activation),
-                    &snapshot.dc_activation, EC_TIMEOUTRET) > 0) {
-            snapshot.config_valid_mask |= ETHERCAT_CACHE_DC_ACTIVATION;
-        }
-        if (ec_FPRD(ec_slave[slave].configadr, 0x09a0u,
-                    (uint16)sizeof(dc_cycle_data), dc_cycle_data, EC_TIMEOUTRET) > 0) {
-            snapshot.dc_cycle_ns = (uint32_t)dc_cycle_data[0] |
-                                   ((uint32_t)dc_cycle_data[1] << 8u) |
-                                   ((uint32_t)dc_cycle_data[2] << 16u) |
-                                   ((uint32_t)dc_cycle_data[3] << 24u);
-            snapshot.config_valid_mask |= ETHERCAT_CACHE_DC_CYCLE;
-        }
         snapshot.valid = true;
         pthread_mutex_lock(&ethercat_background_mutex);
         ethercat_cached_slaves[slave] = snapshot;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+    }
+}
+
+static void console_ethercat_cache_dc_registers(const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint8_t dc_activation;
+        uint8_t dc_cycle_data[4];
+        uint32_t dc_cycle_ns;
+        bool activation_valid;
+        bool cycle_valid;
+
+        if (selected[slave] == 0u) {
+            continue;
+        }
+        activation_valid = ec_FPRD(ec_slave[slave].configadr, 0x0981u,
+                                    (uint16)sizeof(dc_activation),
+                                    &dc_activation, EC_TIMEOUTRET) > 0;
+        cycle_valid = ec_FPRD(ec_slave[slave].configadr, 0x09a0u,
+                               (uint16)sizeof(dc_cycle_data),
+                               dc_cycle_data, EC_TIMEOUTRET) > 0;
+        dc_cycle_ns = cycle_valid ?
+                      (uint32_t)dc_cycle_data[0] |
+                      ((uint32_t)dc_cycle_data[1] << 8u) |
+                      ((uint32_t)dc_cycle_data[2] << 16u) |
+                      ((uint32_t)dc_cycle_data[3] << 24u) : 0u;
+        pthread_mutex_lock(&ethercat_background_mutex);
+        if (activation_valid) {
+            ethercat_cached_slaves[slave].dc_activation = dc_activation;
+            ethercat_cached_slaves[slave].config_valid_mask |= ETHERCAT_CACHE_DC_ACTIVATION;
+        }
+        if (cycle_valid) {
+            ethercat_cached_slaves[slave].dc_cycle_ns = dc_cycle_ns;
+            ethercat_cached_slaves[slave].config_valid_mask |= ETHERCAT_CACHE_DC_CYCLE;
+        }
         pthread_mutex_unlock(&ethercat_background_mutex);
     }
 }
@@ -1821,13 +1854,22 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
     }
+    failure_stage = "pre-enable-sdo-snapshot";
+    printf("%s\n", chinese ? "ethercat_enable: 正在读取使能前 SDO 配置" :
+           "ethercat_enable: reading SDO configuration before activation");
+    console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
     failure_stage = "pre-op-to-safe-op";
+    printf("%s %ds\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
+           "ethercat_enable: waiting for SAFE-OP, up to", EC_TIMEOUTSTATE / 1000000);
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
     }
-    console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
+    printf("%s\n", chinese ? "ethercat_enable: SAFE-OP 已确认" :
+           "ethercat_enable: SAFE-OP confirmed");
+    failure_stage = "post-safe-op-dc-snapshot";
+    console_ethercat_cache_dc_registers(selected);
     failure_stage = "initial-pdo-exchange";
     if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
         console_ethercat_exchange() != 0) {
