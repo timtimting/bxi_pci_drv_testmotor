@@ -22,6 +22,7 @@ typedef struct {
     ec_slave_config_state_t state;
     unsigned int output_offset;
     unsigned int input_offset;
+    uint8_t output_shadow[13];
 } etherlab_slave_context;
 
 static ec_master_t *etherlab_master;
@@ -136,7 +137,7 @@ static int etherlab_activate(void)
     if (etherlab_mapped && etherlab_domain_data == NULL) return -1;
     for (slave = 1; slave <= (unsigned int)ec_slavecount; ++slave) {
         if (ec_slave[slave].Obits == 0) continue;
-        ec_slave[slave].outputs = etherlab_domain_data + etherlab_slaves[slave].output_offset;
+        ec_slave[slave].outputs = etherlab_slaves[slave].output_shadow;
         ec_slave[slave].inputs = etherlab_domain_data + etherlab_slaves[slave].input_offset;
     }
     return 0;
@@ -273,7 +274,17 @@ int ec_dcsync0(uint16 slave, boolean activate, uint32_t cycle_ns, int32_t shift_
 
 int ec_send_processdata(void)
 {
+    unsigned int slave;
+
     if (etherlab_master == NULL || etherlab_activate() != 0) return -1;
+    if (etherlab_domain_data != NULL) {
+        for (slave = 1; slave <= (unsigned int)ec_slavecount; ++slave) {
+            if (ec_slave[slave].Obits == 0) continue;
+            memcpy(etherlab_domain_data + etherlab_slaves[slave].output_offset,
+                   etherlab_slaves[slave].output_shadow,
+                   sizeof(etherlab_slaves[slave].output_shadow));
+        }
+    }
     etherlab_set_application_time();
     if (etherlab_dc_configured) {
         ecrt_master_sync_reference_clock(etherlab_master);
