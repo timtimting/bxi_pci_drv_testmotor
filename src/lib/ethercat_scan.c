@@ -1053,7 +1053,8 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE],
 }
 
 static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAXSLAVE],
-                                                   uint16_t requested_control_word)
+                                                   uint16_t requested_control_word,
+                                                   bool read_sdo_snapshot)
 {
     int slave;
 
@@ -1121,62 +1122,74 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
                ec_slave[slave].DCactive ? "yes" : "no",
                (unsigned int)ec_slave[slave].DCcycle, (int)ec_slave[slave].DCshift);
 
-        size = (int)sizeof(mode_display);
-        if (ec_SDOread((uint16)slave, 0x6061u, 0u, FALSE, &size, &mode_display,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(mode_display)) {
-            printf("  drive: mode_display=%d", (int)mode_display);
+        if (read_sdo_snapshot) {
+            size = (int)sizeof(mode_display);
+            if (ec_SDOread((uint16)slave, 0x6061u, 0u, FALSE, &size, &mode_display,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(mode_display)) {
+                printf("  drive: mode_display=%d", (int)mode_display);
+            } else {
+                printf("  drive: mode_display=unread");
+            }
+            size = (int)sizeof(error_code);
+            if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
+                printf(" error_code=0x%04x (%u)", (unsigned int)error_code,
+                       (unsigned int)error_code);
+            } else {
+                printf(" error_code=unread");
+            }
+            size = (int)sizeof(pn077);
+            if (ec_SDOread((uint16)slave, 0x2077u, 0u, FALSE, &size, &pn077,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn077)) {
+                printf(" Pn077=%u", (unsigned int)pn077);
+            } else {
+                printf(" Pn077=unread");
+            }
+            size = (int)sizeof(pn078);
+            if (ec_SDOread((uint16)slave, 0x2078u, 0u, FALSE, &size, &pn078,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn078)) {
+                printf(" Pn078=%u", (unsigned int)pn078);
+            } else {
+                printf(" Pn078=unread");
+            }
+            size = (int)sizeof(sync_type);
+            if (ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sync_type,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_type)) {
+                printf("\n  sync: SM2 type=0x%04x", (unsigned int)sync_type);
+            } else {
+                printf("\n  sync: SM2 type=unread");
+            }
+            size = (int)sizeof(sync_cycle_ns);
+            if (ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sync_cycle_ns,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_cycle_ns)) {
+                printf(" cycle=%uns", (unsigned int)sync_cycle_ns);
+            } else {
+                printf(" cycle=unread");
+            }
+            size = (int)sizeof(tx_sync_type);
+            if (ec_SDOread((uint16)slave, 0x1c33u, 1u, FALSE, &size, &tx_sync_type,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_type)) {
+                printf(" | SM3 type=0x%04x", (unsigned int)tx_sync_type);
+            } else {
+                printf(" | SM3 type=unread");
+            }
+            size = (int)sizeof(tx_sync_cycle_ns);
+            if (ec_SDOread((uint16)slave, 0x1c33u, 2u, FALSE, &size, &tx_sync_cycle_ns,
+                           EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_cycle_ns)) {
+                printf(" cycle=%uns", (unsigned int)tx_sync_cycle_ns);
+            } else {
+                printf(" cycle=unread");
+            }
         } else {
-            printf("  drive: mode_display=unread");
-        }
-        size = (int)sizeof(error_code);
-        if (ec_SDOread((uint16)slave, 0x603fu, 0u, FALSE, &size, &error_code,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(error_code)) {
-            printf(" error_code=0x%04x (%u)", (unsigned int)error_code,
-                   (unsigned int)error_code);
-        } else {
-            printf(" error_code=unread");
-        }
-        size = (int)sizeof(pn077);
-        if (ec_SDOread((uint16)slave, 0x2077u, 0u, FALSE, &size, &pn077,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn077)) {
-            printf(" Pn077=%u", (unsigned int)pn077);
-        } else {
-            printf(" Pn077=unread");
-        }
-        size = (int)sizeof(pn078);
-        if (ec_SDOread((uint16)slave, 0x2078u, 0u, FALSE, &size, &pn078,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(pn078)) {
-            printf(" Pn078=%u", (unsigned int)pn078);
-        } else {
-            printf(" Pn078=unread");
-        }
-        size = (int)sizeof(sync_type);
-        if (ec_SDOread((uint16)slave, 0x1c32u, 1u, FALSE, &size, &sync_type,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_type)) {
-            printf("\n  sync: SM2 type=0x%04x", (unsigned int)sync_type);
-        } else {
-            printf("\n  sync: SM2 type=unread");
-        }
-        size = (int)sizeof(sync_cycle_ns);
-        if (ec_SDOread((uint16)slave, 0x1c32u, 2u, FALSE, &size, &sync_cycle_ns,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(sync_cycle_ns)) {
-            printf(" cycle=%uns", (unsigned int)sync_cycle_ns);
-        } else {
-            printf(" cycle=unread");
-        }
-        size = (int)sizeof(tx_sync_type);
-        if (ec_SDOread((uint16)slave, 0x1c33u, 1u, FALSE, &size, &tx_sync_type,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_type)) {
-            printf(" | SM3 type=0x%04x", (unsigned int)tx_sync_type);
-        } else {
-            printf(" | SM3 type=unread");
-        }
-        size = (int)sizeof(tx_sync_cycle_ns);
-        if (ec_SDOread((uint16)slave, 0x1c33u, 2u, FALSE, &size, &tx_sync_cycle_ns,
-                       EC_TIMEOUTRXM) > 0 && size == (int)sizeof(tx_sync_cycle_ns)) {
-            printf(" cycle=%uns", (unsigned int)tx_sync_cycle_ns);
-        } else {
-            printf(" cycle=unread");
+            uint16_t pdo_error_code = 0xffffu;
+            if (ec_slave[slave].inputs != NULL && ec_slave[slave].Ibits >= 112u) {
+                pdo_error_code = console_ethercat_read_u16(
+                    (const uint8_t *)ec_slave[slave].inputs + 12u);
+            }
+            printf("  drive: mode_display=not-read error_code=0x%04x(PDO)"
+                   " Pn077=not-read Pn078=not-read\n"
+                   "  sync: SM2/SM3 SDO values not-read\n",
+                   (unsigned int)pdo_error_code);
         }
         printf("\n  DC registers: activation=");
         if (ec_FPRD(ec_slave[slave].configadr, 0x0981u, (uint16)sizeof(dc_activation),
@@ -1578,7 +1591,7 @@ cleanup:
         printf("%s\n", chinese ?
                "ethercat_enable: 使能失败，自动采集现场诊断信息（失能前）" :
                "ethercat_enable: enable failed; collecting diagnostics before disabling");
-        console_ethercat_print_selected_status(selected, diagnostic_control_word);
+        console_ethercat_print_selected_status(selected, diagnostic_control_word, false);
     }
     if (mapped) {
         console_ethercat_disable_selected(selected);
@@ -1996,21 +2009,21 @@ static int console_ethercat_position(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0006 状态确认失败" :
                "ethercat_position: 0x0006 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0006u);
+        console_ethercat_print_selected_status(selected, 0x0006u, true);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0007 状态确认失败" :
                "ethercat_position: 0x0007 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0007u);
+        console_ethercat_print_selected_status(selected, 0x0007u, true);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x000F 状态确认失败" :
                "ethercat_position: 0x000F state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x000fu);
+        console_ethercat_print_selected_status(selected, 0x000fu, true);
         goto cleanup;
     }
     printf("%s\n", chinese ?
