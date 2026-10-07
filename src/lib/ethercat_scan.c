@@ -162,7 +162,7 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
     char kernel_message[4096];
     struct timespec now;
     struct tm local_time;
-    char timestamp[32] = "unknown-time";
+    char timestamp[64] = "unknown-time";
     char date[24];
     int header_length;
     bool saved = false;
