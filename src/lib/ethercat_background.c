@@ -3,7 +3,8 @@ static const char *console_ethercat_task_name(ethercat_task task)
     static const char *names[] = {
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
         "ethercat_position", "ethercat_zero", "ethercat_info",
-        "ethercat_pnread", "ethercat_pn077", "ethercat_save"
+        "ethercat_pnread", "ethercat_pn077", "ethercat_save",
+        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044"
     };
     return names[task];
 }
@@ -254,7 +255,9 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
     }
     if (console_ethercat_mailbox_cycle() != 0) return -1;
     if ((command->task == ETHERCAT_TASK_ZERO || command->task == ETHERCAT_TASK_PN077 ||
-         command->task == ETHERCAT_TASK_SAVE) && !console_ethercat_session_disabled(selected)) {
+         command->task == ETHERCAT_TASK_SAVE ||
+         console_ethercat_motion_parameter_by_task(command->task) != NULL) &&
+        !console_ethercat_session_disabled(selected)) {
         printf("%s\n", command->chinese ?
                "参数写入/保存/设零要求失能；请先执行 ethercat_disable，不会自动失能。" :
                "Write/save/zero requires disabled drives; use ethercat_disable first. No implicit disable.");
@@ -279,6 +282,13 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
     case ETHERCAT_TASK_PN077:
         return console_ethercat_pn077(command->chinese, command->interface,
                                       command->selection, command->value);
+    case ETHERCAT_TASK_PN028:
+    case ETHERCAT_TASK_PN106:
+    case ETHERCAT_TASK_PN107:
+    case ETHERCAT_TASK_PN044:
+        return console_ethercat_write_motion_parameter(command->chinese, command->interface,
+            command->selection, console_ethercat_motion_parameter_by_task(command->task),
+            command->value);
     case ETHERCAT_TASK_SAVE:
         return console_ethercat_save(command->chinese, command->interface, command->selection);
     case ETHERCAT_TASK_ZERO:
@@ -364,6 +374,13 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
     case ETHERCAT_TASK_PN077:
         return console_ethercat_pn077(command->chinese, command->interface,
                                       command->selection, command->value);
+    case ETHERCAT_TASK_PN028:
+    case ETHERCAT_TASK_PN106:
+    case ETHERCAT_TASK_PN107:
+    case ETHERCAT_TASK_PN044:
+        return console_ethercat_write_motion_parameter(command->chinese, command->interface,
+            command->selection, console_ethercat_motion_parameter_by_task(command->task),
+            command->value);
     case ETHERCAT_TASK_SAVE:
         return console_ethercat_save(command->chinese, command->interface, command->selection);
     }
@@ -432,6 +449,7 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     bool all_slaves;
     int32_t parsed_shift;
     uint32_t parsed_cycle;
+    const ethercat_motion_parameter *parameter = console_ethercat_motion_parameter_by_task(task);
     double counts = position_rad * ETHERCAT_KAIXUAN_COUNTS_PER_REV / ETHERCAT_KAIXUAN_TWO_PI;
 
     if (console_ethercat_validate_interface(interface) != 0 ||
@@ -441,7 +459,8 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
         hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
         !isfinite(counts) || counts < INT32_MIN || counts > INT32_MAX ||
         (task == ETHERCAT_TASK_PN077 && value > 1u) ||
-        (task == ETHERCAT_TASK_PNREAD && value > 0xdfffu) ||
+        (task == ETHERCAT_TASK_PNREAD && value > 9999u) ||
+        (parameter != NULL && value > parameter->maximum) ||
         (shift != NULL && (strlen(shift) >= sizeof(command.sync0_shift) ||
          console_ethercat_parse_sync0_shift(shift, &parsed_shift) != 0)) ||
         (cycle != NULL && (strlen(cycle) >= sizeof(command.sync0_cycle_ms) ||

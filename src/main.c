@@ -41,6 +41,7 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_zero",
     "ethercat_info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
+    "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -92,6 +93,10 @@ int main(int argc, char **argv)
     const char *ethercat_pnread_selection = NULL;
     const char *ethercat_pn077_interface = NULL;
     const char *ethercat_pn077_selection = NULL;
+    const char *ethercat_motion_interface = NULL;
+    const char *ethercat_motion_selection = NULL;
+    const ethercat_motion_parameter *ethercat_motion_parameter_spec = NULL;
+    unsigned int ethercat_motion_value = 0u;
     const char *ethercat_save_interface = NULL;
     const char *ethercat_save_selection = NULL;
     unsigned int ethercat_enable_hold_ms = 0u;
@@ -114,6 +119,10 @@ int main(int argc, char **argv)
         {"ethercat-info", required_argument, NULL, 'I'},
         {"ethercat-pnread", required_argument, NULL, 'R'},
         {"ethercat-pn077", required_argument, NULL, 'W'},
+        {"ethercat-pn028", required_argument, NULL, 1000},
+        {"ethercat-pn106", required_argument, NULL, 1001},
+        {"ethercat-pn107", required_argument, NULL, 1002},
+        {"ethercat-pn044", required_argument, NULL, 1003},
         {"ethercat-save", required_argument, NULL, 'S'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
@@ -149,6 +158,13 @@ int main(int argc, char **argv)
             ethercat_pnread_interface = optarg;
         } else if (opt == 'W') {
             ethercat_pn077_interface = optarg;
+        } else if (opt >= 1000 && opt <= 1003) {
+            if (ethercat_motion_interface != NULL) {
+                fprintf(stderr, "Specify only one EtherCAT parameter write command.\n");
+                return 1;
+            }
+            ethercat_motion_parameter_spec = &ethercat_motion_parameters[opt - 1000];
+            ethercat_motion_interface = optarg;
         } else if (opt == 'S') {
             ethercat_save_interface = optarg;
         } else {
@@ -163,7 +179,24 @@ int main(int argc, char **argv)
                            verbose_help);
         return 0;
     }
-    if (ethercat_enable_interface != NULL) {
+    if (ethercat_motion_interface != NULL) {
+        if (ethercat_interface != NULL || ethercat_enable_interface != NULL ||
+            ethercat_disable_interface != NULL || ethercat_position_interface != NULL ||
+            ethercat_zero_interface != NULL || ethercat_info_interface != NULL ||
+            ethercat_pnread_interface != NULL || ethercat_pn077_interface != NULL ||
+            ethercat_save_interface != NULL || optind + 2 != argc ||
+            console_ethercat_parse_slave_selection(argv[optind],
+                &parsed_ethercat_slave_id, &parsed_ethercat_all_slaves) != 0 ||
+            parse_uint_arg(argv[optind + 1], &ethercat_motion_value) != 0 ||
+            ethercat_motion_value > ethercat_motion_parameter_spec->maximum) {
+            printf("用法：%s --ethercat-pn%03u <interface> <slave_id|all> <0..%u>\n",
+                   argv[0], ethercat_motion_parameter_spec->number,
+                   ethercat_motion_parameter_spec->maximum);
+            return 1;
+        }
+        ethercat_motion_selection = argv[optind];
+        optind += 2;
+    } else if (ethercat_enable_interface != NULL) {
         unsigned int positional_count = 0u;
 
         if (ethercat_interface != NULL || ethercat_disable_interface != NULL ||
@@ -310,7 +343,7 @@ int main(int argc, char **argv)
         ethercat_disable_interface != NULL || ethercat_position_interface != NULL ||
         ethercat_zero_interface != NULL || ethercat_info_interface != NULL ||
         ethercat_pnread_interface != NULL || ethercat_pn077_interface != NULL ||
-        ethercat_save_interface != NULL) {
+        ethercat_save_interface != NULL || ethercat_motion_interface != NULL) {
         bool chinese = language_override == NULL || strcmp(language_override, "zh") == 0;
 
         if (check_config) {
@@ -346,6 +379,11 @@ int main(int argc, char **argv)
             return console_ethercat_zero(chinese,
                                          ethercat_zero_interface,
                                          ethercat_zero_selection) == 0 ? 0 : 1;
+        }
+        if (ethercat_motion_interface != NULL) {
+            return console_ethercat_write_motion_parameter(chinese, ethercat_motion_interface,
+                ethercat_motion_selection, ethercat_motion_parameter_spec,
+                ethercat_motion_value) == 0 ? 0 : 1;
         }
         if (ethercat_pn077_interface != NULL) {
             return console_ethercat_pn077(chinese,

@@ -196,7 +196,7 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 
 使能成功后，后台持续交换 PDO。`ethercat_position` 直接更新原循环的绝对电机端目标，未使能或有故障时拒绝更新；首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。若要持续保持目标，请用 `ethercat_position 1 0.06`。
 
-`ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。`ethercat_zero`、`ethercat_pn077`、`ethercat_save` 在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会为了写参数偷偷失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。写入后配置快照不刷新，最新值请用 `ethercat_pnread` 查看。尚无周期会话时，扫描和读取仍由后台完成只读会话，不会自动使能。
+`ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。设零、参数写入及保存命令在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会自动失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。Pn028/044/106/107 写入回读后更新 `motion snapshot`，其他 SDO 配置仍为使能前快照；最新参数值可用 `ethercat_pnread` 查看。尚无周期会话时，扫描和读取仍由后台完成只读会话，不会自动使能。
 
 `power_off`、退出终端或 `Ctrl-C` 会取消待执行命令，失能并释放主站；PDO 通信失败也会关闭当前会话并取消待执行命令，避免恢复后执行旧运动目标。普通命令按队列处理，不能代替硬件急停。独立 `--ethercat-*` 命令行模式仍前台运行，生命周期不变。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 周期；不写 Pn077。运行中的周期/shift 不能更改，需要退出终端后重新配置；省略这些参数时沿用当前会话设置。
 
@@ -273,7 +273,9 @@ Pn051 显示减速比设定值。单项读取失败显示 `?`。读取不会配�
 `motion` 行显示 Pn028 电机端转速上限（rpm）、Pn106 加速度限制值（手册未注明单位）、
 Pn107 加速度限制开关（0 关闭、1 开启）及 Pn044 速度指令滤波档位（0 关闭，1～9 对应 200～1000us）。
 对应对象分别为 `0x2028:00`、`0x2106:00`、`0x2107:00`、`0x2044:00`，按 16 位有符号整数读取。
-后台会话中显示为 `motion snapshot`，沿用使能前 SDO 缓存，不额外读取 SDO 或中断 PDO。
+后台会话中显示为 `motion snapshot`，初始使用使能前 SDO 缓存。四项参数写入后使用回读值更新，
+并标记 `[write/readback updated]`；写入后未能回读的项显示 `?`，不继续显示旧值。
+`info` 本身不额外读取 SDO 或中断 PDO。
 
 需要读取其他 Pn 参数时，可指定编号（支持 `150` 或 `Pn150`）：
 
@@ -282,9 +284,47 @@ ethercat_pnread 1 Pn150
 ethercat_pnread all 150
 ```
 
-该命令仅对当前开璇驱动器按 Pn 编号 `N` 读取 SDO `0x2000 + N:00`，显示数据长度、原始字节和小端整数解释；
+该命令仅对当前开璇驱动器按十进制 Pn 编号（0～9999）的各位数字编码对象地址：
+如 Pn028 → `0x2028:00`、Pn106 → `0x2106:00`、Pn150 → `0x2150:00`，
+不是直接把十进制编号加到 `0x2000`。显示数据长度、原始字节和小端整数解释；
 数据类型与单位请以对应参数手册为准。它只读 SDO，不配置 PDO 或请求 OP；若后台使能循环正在运行，
 交互终端会通过现有后台主站异步读取，不失能、不重开主站。也可从 shell 执行 `sudo ./build/motor_console --ethercat-pnread enp86s0 1 Pn150`（不要与运行中的交互会话同时占用主站）。
+
+### EtherCAT 转速、加速度与滤波配置
+
+| 交互命令 | 数值范围 | 作用 | SDO 对象 |
+| --- | --- | --- | --- |
+| `ethercat_pn028 <slave_id\|all> <value> [network_interface]` | 0～5000 | 电机端转速上限，rpm | `0x2028:00` |
+| `ethercat_pn106 <slave_id\|all> <value> [network_interface]` | 0～300 | 加速度限制值，手册未注明单位 | `0x2106:00` |
+| `ethercat_pn107 <slave_id\|all> <value> [network_interface]` | 0、1 | 加速度限制开关，1 开启、0 关闭 | `0x2107:00` |
+| `ethercat_pn044 <slave_id\|all> <value> [network_interface]` | 0～9 | 速度指令滤波档位 | `0x2044:00` |
+
+四项均在后台执行，复用已有主站及 PDO 循环。先显式执行 `ethercat_disable 1` 并等待失能确认，
+再按需写入。以下数值仅为语法示例，不是针对你的机械系统推荐的调参值：
+
+```text
+ethercat_pn028 1 1000
+ethercat_pn106 1 150
+ethercat_pn107 1 1
+ethercat_pn044 1 9
+ethercat_info 1
+ethercat_pnread 1 Pn028
+```
+
+每条命令检查从站型号、失能状态、范围及原值，然后以 16 位有符号整数写入并回读。
+`all` 会在写入前预检全部目标，但多从站写入不是原子事务；中途失败时已写入的值不会自动回滚，
+应逐台回读确认。命令不会自动使能、保存参数或更改 PDO 周期。
+需要持久化时另行执行 `ethercat_save 1`，等待保存确认，再按厂商流程重启并回读验证。
+手册标注这些参数在线生效，但程序为安全起见要求先失能。不要直接调到最大限速或盲目关闭加速度限制。
+
+同样支持独立命令行模式，不初始化 PCI/CAN；不得与已占用主站的交互会话同时运行：
+
+```bash
+sudo ./build/motor_console --ethercat-pn028 enp86s0 1 1000
+sudo ./build/motor_console --ethercat-pn106 enp86s0 1 150
+sudo ./build/motor_console --ethercat-pn107 enp86s0 1 1
+sudo ./build/motor_console --ethercat-pn044 enp86s0 1 9
+```
 
 ### EtherCAT Pn077 配置
 

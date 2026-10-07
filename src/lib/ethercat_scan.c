@@ -23,8 +23,50 @@ typedef enum {
     ETHERCAT_TASK_INFO,
     ETHERCAT_TASK_PNREAD,
     ETHERCAT_TASK_PN077,
-    ETHERCAT_TASK_SAVE
+    ETHERCAT_TASK_SAVE,
+    ETHERCAT_TASK_PN028,
+    ETHERCAT_TASK_PN106,
+    ETHERCAT_TASK_PN107,
+    ETHERCAT_TASK_PN044
 } ethercat_task;
+
+typedef struct {
+    ethercat_task task;
+    const char *command;
+    uint16_t number;
+    unsigned int maximum;
+} ethercat_motion_parameter;
+
+static const ethercat_motion_parameter ethercat_motion_parameters[] = {
+    {ETHERCAT_TASK_PN028, "ethercat_pn028", 28u, 5000u},
+    {ETHERCAT_TASK_PN106, "ethercat_pn106", 106u, 300u},
+    {ETHERCAT_TASK_PN107, "ethercat_pn107", 107u, 1u},
+    {ETHERCAT_TASK_PN044, "ethercat_pn044", 44u, 9u},
+};
+
+static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_task(ethercat_task task)
+{
+    size_t parameter;
+
+    for (parameter = 0; parameter < sizeof(ethercat_motion_parameters) /
+         sizeof(ethercat_motion_parameters[0]); parameter++) {
+        if (ethercat_motion_parameters[parameter].task == task)
+            return &ethercat_motion_parameters[parameter];
+    }
+    return NULL;
+}
+
+static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_name(const char *name)
+{
+    size_t parameter;
+
+    for (parameter = 0; parameter < sizeof(ethercat_motion_parameters) /
+         sizeof(ethercat_motion_parameters[0]); parameter++) {
+        if (strcmp(ethercat_motion_parameters[parameter].command, name) == 0)
+            return &ethercat_motion_parameters[parameter];
+    }
+    return NULL;
+}
 
 typedef struct {
     ethercat_task task;
@@ -365,6 +407,7 @@ typedef struct {
     bool live_valid;
     bool live_error_valid;
     bool runtime_fault_reported;
+    bool motion_write_attempted;
     char name[80];
     uint32_t vendor;
     uint32_t product;
@@ -494,11 +537,18 @@ static int console_ethercat_parse_pn_number(const char *text, uint16_t *pn_numbe
     }
     errno = 0;
     parsed = strtoul(text, &end, 10);
-    if (errno != 0 || end == text || *end != '\0' || parsed > 0xdfffu) {
+    if (errno != 0 || end == text || *end != '\0' || parsed > 9999u) {
         return -1;
     }
     *pn_number = (uint16_t)parsed;
     return 0;
+}
+
+static uint16_t console_ethercat_pn_index(uint16_t number)
+{
+    return (uint16_t)(0x2000u + ((number / 1000u) << 12u) +
+                      (((number / 100u) % 10u) << 8u) +
+                      (((number / 10u) % 10u) << 4u) + number % 10u);
 }
 
 static int console_ethercat_parse_position_rad(const char *text, double *position_rad)
@@ -614,8 +664,8 @@ static const char *const ethercat_pn077_value_words[] = {
 };
 
 static const char *const ethercat_pn_number_words[] = {
-    "Pn001", "Pn002", "Pn070", "Pn075", "Pn077", "Pn079", "Pn085",
-    "Pn088", "Pn097", "Pn101", "Pn150",
+    "Pn001", "Pn002", "Pn028", "Pn044", "Pn070", "Pn075", "Pn077", "Pn079", "Pn085",
+    "Pn088", "Pn097", "Pn101", "Pn106", "Pn107", "Pn150",
 };
 
 static char ethercat_interface_storage[ETHERCAT_COMPLETION_INTERFACE_MAX][IFNAMSIZ];
@@ -683,6 +733,16 @@ static const char *const *console_ethercat_completion_words(const char *line,
     start = current_token_start(line, len);
     tokens_before = count_tokens_before(line, start);
     if (copy_nth_token(line, 0u, first, sizeof(first)) != 0) {
+        *count = 0u;
+        return NULL;
+    }
+    if (console_ethercat_motion_parameter_by_name(first) != NULL) {
+        if (tokens_before == 1u) return console_ethercat_slave_completion_words(count);
+        if (tokens_before >= 3u) return console_ethercat_interface_completion_words(count);
+        if (tokens_before == 2u && strcmp(first, "ethercat_pn107") == 0) {
+            *count = sizeof(ethercat_pn077_value_words) / sizeof(ethercat_pn077_value_words[0]);
+            return ethercat_pn077_value_words;
+        }
         *count = 0u;
         return NULL;
     }
@@ -1136,8 +1196,8 @@ static int console_ethercat_print_background_info(bool chinese,
     printf("%s: interface=%s slave=%s (%s)\n",
            chinese ? "ethercat_info: 后台快照" : "ethercat_info: background snapshot",
            interface, selection,
-           chinese ? "SDO 为使能前缓存，PDO 为实时采样" :
-           "SDO cached before enable; PDO sampled live");
+           chinese ? "SDO 为使能前缓存，motion 可由写入回读更新；PDO 为实时采样" :
+           "SDO cached before enable, motion may be updated by write/readback; PDO sampled live");
     for (slave = 1; slave < EC_MAXSLAVE; slave++) {
         const ethercat_cached_slave *snapshot = &snapshots[slave];
         uint16_t status_word;
@@ -1216,6 +1276,7 @@ static int console_ethercat_print_background_info(bool chinese,
         } else printf("?");
         printf(" Pn044=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN044) printf("%d (speed filter)", snapshot->pn044); else printf("?");
+        if (snapshot->motion_write_attempted) printf(" [write/readback updated]");
         printf("\n");
         printf("  params snapshot: Pn079=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
@@ -2786,7 +2847,7 @@ static int console_ethercat_pnread(bool chinese,
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
-        pn_number > 0xdfffu) {
+        pn_number > 9999u) {
         printf("%s: ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n",
                chinese ? "用法" : "usage");
         return -1;
@@ -2799,7 +2860,7 @@ static int console_ethercat_pnread(bool chinese,
     return -1;
 #else
     uint8_t selected[EC_MAXSLAVE] = {0};
-    uint16_t index = (uint16_t)(0x2000u + pn_number);
+    uint16_t index = console_ethercat_pn_index(pn_number);
     int slave;
     int failed = 0;
 
@@ -2887,6 +2948,172 @@ static int console_ethercat_pnread(bool chinese,
 close_socket:
     if (!ethercat_session.active) ec_close();
     return -1;
+#endif
+}
+
+#ifdef HAVE_ETHERLAB
+static void console_ethercat_update_motion_cache(int slave, uint16_t number,
+                                                 bool valid, int16_t value)
+{
+    ethercat_cached_slave *snapshot;
+    uint32_t mask = 0u;
+
+    if (!ethercat_session.active) return;
+    pthread_mutex_lock(&ethercat_background_mutex);
+    snapshot = &ethercat_cached_slaves[slave];
+    switch (number) {
+    case 28u:
+        snapshot->pn028 = value;
+        mask = ETHERCAT_CACHE_PN028;
+        break;
+    case 106u:
+        snapshot->pn106 = value;
+        mask = ETHERCAT_CACHE_PN106;
+        break;
+    case 107u:
+        snapshot->pn107 = value;
+        mask = ETHERCAT_CACHE_PN107;
+        break;
+    case 44u:
+        snapshot->pn044 = value;
+        mask = ETHERCAT_CACHE_PN044;
+        break;
+    }
+    snapshot->motion_write_attempted = true;
+    if (valid) snapshot->config_valid_mask |= mask;
+    else snapshot->config_valid_mask &= ~mask;
+    pthread_mutex_unlock(&ethercat_background_mutex);
+}
+#endif
+
+static int console_ethercat_write_motion_parameter(bool chinese, const char *interface,
+                                                    const char *selection,
+                                                    const ethercat_motion_parameter *parameter,
+                                                    unsigned int value)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+
+    if (parameter == NULL) return -1;
+    if (console_ethercat_validate_interface(interface) != 0 ||
+        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
+        value > parameter->maximum) {
+        printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
+               chinese ? "用法" : "usage", parameter->command, parameter->maximum);
+        return -1;
+    }
+#ifndef HAVE_ETHERLAB
+    printf("%s\n", chinese ? "当前程序未编译 EtherLab，无法写入电机参数。" :
+           "EtherLab is unavailable; cannot write drive parameters.");
+    return -1;
+#else
+    uint8_t selected[EC_MAXSLAVE] = {0};
+    int16_t previous[EC_MAXSLAVE] = {0};
+    uint16_t index = console_ethercat_pn_index(parameter->number);
+    uint8_t payload[2];
+    int slave;
+    int result = -1;
+    unsigned int verified = 0u;
+    bool write_attempted = false;
+
+    printf("%s: interface=%s slave=%s Pn%03u object=0x%04x:00 value=%u\n",
+           parameter->command, interface, selection, parameter->number, index, value);
+    if (!ethercat_session.active && ec_init((char *)interface) == 0) {
+        printf("%s: %s\n", parameter->command,
+               chinese ? "无法打开主站" : "cannot open master");
+        return -1;
+    }
+    if (!ethercat_session.active && ec_config_init(FALSE) <= 0) {
+        printf("%s: %s\n", parameter->command,
+               chinese ? "未发现从站" : "no slaves found");
+        goto finish;
+    }
+    if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        printf("%s: %s\n", parameter->command,
+               chinese ? "从站序号不存在" : "slave id out of range");
+        goto finish;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t status;
+        uint16_t drive_state;
+        uint8_t data[2];
+
+        if (!all_slaves && (unsigned int)slave != slave_id) continue;
+        selected[slave] = 1u;
+        if (stop_requested || console_ethercat_background_should_stop()) goto finish;
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE) {
+            printf("[slave%d] %s\n", slave,
+                   chinese ? "型号不支持，拒绝写入" : "unsupported drive; write refused");
+            goto finish;
+        }
+        if (!console_ethercat_read_sdo_value(slave, 0x6041u, 0u, data, sizeof(data))) {
+            printf("[slave%d] %s\n", slave,
+                   chinese ? "状态字读取失败，拒绝写入" : "statusword read failed; write refused");
+            goto finish;
+        }
+        status = console_ethercat_read_u16(data);
+        drive_state = status & 0x006fu;
+        if ((drive_state != 0x0040u && drive_state != 0u) ||
+            (ethercat_session.active &&
+             (ec_slave[slave].outputs == NULL ||
+              console_ethercat_read_u16(ec_slave[slave].outputs) != 0u))) {
+            printf("[slave%d] SW=0x%04x %s\n", slave, status,
+                   chinese ? "未确认失能；请先执行 ethercat_disable" :
+                   "disable not confirmed; use ethercat_disable first");
+            goto finish;
+        }
+        if (!console_ethercat_read_sdo_value(slave, index, 0u, data, sizeof(data))) {
+            printf("[slave%d] Pn%03u %s\n", slave, parameter->number,
+                   chinese ? "原值读取失败，未写入" : "old value read failed; not written");
+            goto finish;
+        }
+        previous[slave] = (int16_t)console_ethercat_read_u16(data);
+    }
+    console_ethercat_write_u16(payload, (uint16_t)value);
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint8_t data[2];
+        int16_t readback;
+
+        if (!selected[slave]) continue;
+        if (stop_requested || console_ethercat_background_should_stop() ||
+            (ethercat_session.active && ethercat_session.failed)) goto finish;
+        write_attempted = true;
+        console_ethercat_update_motion_cache(slave, parameter->number, false, 0);
+        if (ec_SDOwrite((uint16_t)slave, index, 0u, FALSE, sizeof(payload),
+                        payload, EC_TIMEOUTRXM) <= 0) {
+            printf("[slave%d] Pn%03u %s\n", slave, parameter->number,
+                   chinese ? "写入未确认" : "write not acknowledged");
+            goto finish;
+        }
+        if (!console_ethercat_read_sdo_value(slave, index, 0u, data, sizeof(data))) {
+            printf("[slave%d] Pn%03u %s\n", slave, parameter->number,
+                   chinese ? "写入后回读失败" : "readback failed after write");
+            goto finish;
+        }
+        readback = (int16_t)console_ethercat_read_u16(data);
+        console_ethercat_update_motion_cache(slave, parameter->number, true, readback);
+        if (readback != (int16_t)value) {
+            printf("[slave%d] Pn%03u %s: expected=%u actual=%d\n", slave, parameter->number,
+                   chinese ? "回读不匹配" : "readback mismatch", value, (int)readback);
+            goto finish;
+        }
+        verified++;
+        printf("[slave%d] Pn%03u: %d -> %d (readback=%d)\n",
+               slave, parameter->number, (int)previous[slave], (int)readback, (int)readback);
+    }
+    result = 0;
+    printf("%s: %s\n", parameter->command, chinese ?
+           "写入并回读确认；未使能、未自动保存。需要掉电保存请执行 ethercat_save。" :
+           "Write/readback verified; no enable or automatic save. Use ethercat_save for persistence.");
+finish:
+    if (result != 0 && write_attempted) {
+        printf("%s: verified=%u; %s\n", parameter->command, verified, chinese ?
+               "部分写入可能已生效；未自动回滚或保存，请逐台回读确认。" :
+               "Some writes may have taken effect; no automatic rollback/save. Read back each slave.");
+    }
+    if (!ethercat_session.active) ec_close();
+    return result;
 #endif
 }
 

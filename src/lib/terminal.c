@@ -48,6 +48,7 @@ static int console_reload_config(flash_state *state, const char *path)
 static int console_run_command(flash_state *state, int argc, char **argv)
 {
     const char *cmd;
+    const ethercat_motion_parameter *motion_parameter;
     unsigned int index;
     unsigned int timeout_ms;
     size_t slot;
@@ -56,6 +57,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return 0;
     }
     cmd = argv[0];
+    motion_parameter = console_ethercat_motion_parameter_by_name(cmd);
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "all") != 0)) {
             printf("%s: %s [all]\n", console_text(state, "用法", "usage"), cmd);
@@ -344,8 +346,10 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_PNREAD, state->config.chinese_ui,
             interface, selection, 0u, 0.0, pn_number, NULL, NULL);
-    } else if (strcmp(cmd, "ethercat_pn077") == 0) {
+    } else if (strcmp(cmd, "ethercat_pn077") == 0 || motion_parameter != NULL) {
         unsigned int value;
+        unsigned int maximum = motion_parameter != NULL ? motion_parameter->maximum : 1u;
+        ethercat_task task = motion_parameter != NULL ? motion_parameter->task : ETHERCAT_TASK_PN077;
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
         unsigned int slave_id;
@@ -354,29 +358,29 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         if ((argc != 3 && argc != 4) ||
             (argc == 4 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) != 0)) {
             if (argc != 4 || console_ethercat_parse_slave_selection(argv[2], &slave_id, &all_slaves) != 0) {
-                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
-                       console_text(state, "用法", "usage"));
+                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, maximum);
                 return -1;
             }
             interface = argv[1];
             selection = argv[2];
-            if (parse_uint_arg(argv[3], &value) != 0 || value > 1u) {
-                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
-                       console_text(state, "用法", "usage"));
+            if (parse_uint_arg(argv[3], &value) != 0 || value > maximum) {
+                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, maximum);
                 return -1;
             }
         } else {
             selection = argv[1];
-            if (parse_uint_arg(argv[2], &value) != 0 || value > 1u) {
-                printf("%s: ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n",
-                       console_text(state, "用法", "usage"));
+            if (parse_uint_arg(argv[2], &value) != 0 || value > maximum) {
+                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, maximum);
                 return -1;
             }
             if (argc == 4) {
                 interface = argv[3];
             }
         }
-        return console_ethercat_background_submit(ETHERCAT_TASK_PN077, state->config.chinese_ui,
+        return console_ethercat_background_submit(task, state->config.chinese_ui,
             interface, selection, 0u, 0.0, value, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_save") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
