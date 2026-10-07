@@ -56,27 +56,6 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return 0;
     }
     cmd = argv[0];
-    if (console_ethercat_background_is_running()) {
-        if (strcmp(cmd, "ethercat_enable") == 0) {
-            printf("%s\n", console_text(state,
-                   "EtherCAT 后台主站正在运行；请先执行 ethercat_disable，避免同时启动主站。",
-                   "EtherCAT background master is running; use ethercat_disable before starting another master."));
-            return -1;
-        }
-        if (strncmp(cmd, "ethercat_", 9u) == 0 &&
-            strcmp(cmd, "ethercat_disable") != 0 &&
-            strcmp(cmd, "ethercat_info") != 0) {
-            if (console_ethercat_background_stop() > 0) {
-                printf("%s\n", console_text(state,
-                       "为交接 EtherCAT 主站，已先失能后台控制；正在执行本条命令。",
-                       "Disabled the background drive before handing off the EtherCAT master to this command."));
-            }
-        } else if (strcmp(cmd, "power_off") == 0 || strcmp(cmd, "exit") == 0 ||
-                   strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0 ||
-                   strcmp(cmd, "qq") == 0) {
-            console_ethercat_background_stop();
-        }
-    }
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "?") == 0) {
         if (argc > 2 || (argc == 2 && strcmp(argv[1], "all") != 0)) {
             printf("%s: %s [all]\n", console_text(state, "用法", "usage"), cmd);
@@ -108,6 +87,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             printf("%s: power_off\n", console_text(state, "用法", "usage"));
             return -1;
         }
+        console_ethercat_background_stop();
         return console_power_off(state);
     } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
@@ -134,8 +114,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_scan(state->config.chinese_ui,
-                                     argc == 2 ? argv[1] : ETHERCAT_DEFAULT_INTERFACE);
+        return console_ethercat_background_submit(ETHERCAT_TASK_SCAN, state->config.chinese_ui,
+            argc == 2 ? argv[1] : ETHERCAT_DEFAULT_INTERFACE, NULL, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_enable") == 0) {
         unsigned int hold_ms = 0u;
         const char *sync0_shift_ns = NULL;
@@ -211,12 +191,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_background_start(state->config.chinese_ui,
-                                                 interface,
-                                                 argv[first_argument],
-                                                 hold_ms,
-                                                 sync0_shift_ns,
-                                                 sync0_cycle_ms);
+        return console_ethercat_background_submit(ETHERCAT_TASK_ENABLE, state->config.chinese_ui,
+            interface, argv[first_argument], hold_ms, 0.0, 0u, sync0_shift_ns, sync0_cycle_ms);
     } else if (strcmp(cmd, "ethercat_disable") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -237,25 +213,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             interface = argv[2];
             selection = argv[1];
         }
-        {
-            int background_disable = console_ethercat_background_disable(interface, selection);
-
-            if (background_disable < 0) {
-                printf("%s\n", console_text(state,
-                       "失能目标与后台 EtherCAT 主站的网卡或从站不匹配；后台循环保持运行。",
-                       "Disable target does not match the background master's interface or slave; the cycle remains active."));
-                return -1;
-            }
-            if (background_disable > 0) {
-                printf("%s\n", console_text(state,
-                       "后台 EtherCAT 循环已停止并发送失能。",
-                       "Background EtherCAT cycle stopped and disable sent."));
-                return 0;
-            }
-        }
-        return console_ethercat_background_disable_start(state->config.chinese_ui,
-                                                         interface,
-                                                         selection);
+        return console_ethercat_background_submit(ETHERCAT_TASK_DISABLE, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_position") == 0) {
         double position_rad;
         unsigned int hold_ms = 0u;
@@ -299,8 +258,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                 return -1;
             }
         }
-        return console_ethercat_position(state->config.chinese_ui, interface, selection,
-                                         position_rad, hold_ms);
+        return console_ethercat_background_submit(ETHERCAT_TASK_POSITION, state->config.chinese_ui,
+            interface, selection, hold_ms, position_rad, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_zero") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -321,7 +280,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_zero(state->config.chinese_ui, interface, selection);
+        return console_ethercat_background_submit(ETHERCAT_TASK_ZERO, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_info") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -342,7 +302,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_info(state->config.chinese_ui, interface, selection);
+        return console_ethercat_background_submit(ETHERCAT_TASK_INFO, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_pnread") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -381,8 +342,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_pnread(state->config.chinese_ui,
-                                       interface, selection, pn_number);
+        return console_ethercat_background_submit(ETHERCAT_TASK_PNREAD, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, pn_number, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_pn077") == 0) {
         unsigned int value;
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
@@ -415,8 +376,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                 interface = argv[3];
             }
         }
-        return console_ethercat_pn077(state->config.chinese_ui,
-                                      interface, selection, value);
+        return console_ethercat_background_submit(ETHERCAT_TASK_PN077, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, value, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_save") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -437,7 +398,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                    console_text(state, "用法", "usage"));
             return -1;
         }
-        return console_ethercat_save(state->config.chinese_ui, interface, selection);
+        return console_ethercat_background_submit(ETHERCAT_TASK_SAVE, state->config.chinese_ui,
+            interface, selection, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "mit_zero_set_all") == 0 || strcmp(cmd, "mit_zero_set") == 0) {
         if (argc != 1) {
             printf("%s: mit_zero_set_all\n", console_text(state, "用法", "usage"));

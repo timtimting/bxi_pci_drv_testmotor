@@ -192,7 +192,13 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 0 100000
 sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 ```
 
-交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。交互模式下使能循环在后台运行并立即返回提示符；`ethercat_disable 1` 会停止后台循环并失能。指定 `hold_ms` 时，到期后后台任务自动失能。使能期间执行 `ethercat_info` 时，显示使能前读取并缓存的 SDO 配置和后台循环最新 PDO 样本，不另开主站也不停止使能；查询未缓存的从站会先安全停止后台循环，再执行独立查询。其他 EtherCAT 命令也会先交接 master，避免并发占用 EtherLab master 0。独立命令行模式仍前台运行，按 `Ctrl-C` 退出并失能。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 循环周期；该参数不写驱动器 Pn077。修改周期或 shift 都会实际尝试使能电机，请确保机械安全。
+交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。所有交互式 `ethercat_*` 命令进入同一个后台队列，提交后立即返回提示符；“已提交”不等于执行成功，请等待后台结果。命令按提交顺序执行，最多等待 16 条，队列满时拒绝新命令。参数错误、从站或网卡不匹配不会停止已有主站。
+
+使能成功后，后台持续交换 PDO。`ethercat_position` 直接更新原循环的绝对电机端目标，未使能或有故障时拒绝更新；首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。若要持续保持目标，请用 `ethercat_position 1 0.06`。
+
+`ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。`ethercat_zero`、`ethercat_pn077`、`ethercat_save` 在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会为了写参数偷偷失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。写入后配置快照不刷新，最新值请用 `ethercat_pnread` 查看。尚无周期会话时，扫描和读取仍由后台完成只读会话，不会自动使能。
+
+`power_off`、退出终端或 `Ctrl-C` 会取消待执行命令，失能并释放主站；PDO 通信失败也会关闭当前会话并取消待执行命令，避免恢复后执行旧运动目标。普通命令按队列处理，不能代替硬件急停。独立 `--ethercat-*` 命令行模式仍前台运行，生命周期不变。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 周期；不写 Pn077。运行中的周期/shift 不能更改，需要退出终端后重新配置；省略这些参数时沿用当前会话设置。
 
 使能总线上全部从站并保持当前位置 5 秒后自动失能：
 
@@ -202,7 +208,7 @@ sudo ./build/motor_console --ethercat-enable enp86s0 all 5000
 
 该命令仅支持扫描到的开璇 `Kaiserdrive_ECAT` 和实测 `13 B` 输出、`14 B` 输入 PDO
 布局。它按指定周期（默认 `1 ms`）配置从站的 DC Sync0，再将目标位置写为每台电机的当前反馈位置，最后依次发送 CiA-402 控制字
-`0x0006`、`0x0007`、`0x000F`。命令持续发送对应周期的 PDO；到时、通信失败或停止请求时会发送 `0x0000` 失能并关闭主站。交互模式下循环在后台运行，之后可继续使用终端；独立命令行模式仍占用前台直到 `Ctrl-C`。不要从其他进程同时启动第二个 EtherCAT 主站。
+`0x0006`、`0x0007`、`0x000F`。命令持续发送对应周期的 PDO；到时会发送 `0x0000` 失能。交互会话定时失能后继续通信，通信失败或退出时关闭主站；独立命令行模式到时或 `Ctrl-C` 后关闭主站。不要从其他进程同时启动第二个 EtherCAT 主站。
 
 若使能流程失败，程序会在失能和关闭主站前自动输出现场诊断：EtherCAT AL 状态、PDO 原始字节、
 WKC 与循环间隔、CiA-402 状态和 ESC DC 激活/周期寄存器。失败快照不执行可能阻塞的 SDO 上传；
@@ -216,7 +222,7 @@ sudo ./build/motor_console --ethercat-disable enp86s0 1
 sudo ./build/motor_console --ethercat-disable enp86s0 all
 ```
 
-交互模式下 `ethercat_disable <slave_id|all>` 会在后台完成失能并立即返回提示符；若使能循环正在后台运行，该命令会请求原循环发送失能并释放 EtherLab master。运行 `ethercat_scan` 等其他 EtherCAT 命令时，会先等待后台操作结束，再执行新命令。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
+交互模式下 `ethercat_disable <slave_id|all>` 提交后台失能请求，执行后确认所选从站的 CiA-402 失能状态，其他从站不受影响。已有周期会话保留 OP 和 PDO 通信；要释放 EtherLab master 请退出终端或执行 `power_off`。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
 
 ### EtherCAT CSP 位控
 
@@ -233,13 +239,13 @@ sudo ./build/motor_console --ethercat-position enp86s0 1 0
 sudo ./build/motor_console --ethercat-position enp86s0 all 3.141593 5000
 ```
 
-该命令使用 CSP（`0x6060=8`），先配置目标位置，再按 `0x0006`、`0x0007`、`0x000F`
+独立命令行模式使用 CSP（`0x6060=8`），先配置目标位置，再按 `0x0006`、`0x0007`、`0x000F`
 使能，随后以默认 1 ms 周期持续发送 `0x607A`。目标值是绝对电机端弧度，不包含减速比、机械零位
 或方向换算；首次测试请从当前位置附近的小幅弧度开始，并预留机械限位空间。
 
 ### EtherCAT 零位设置
 
-在机械位置已摆正且无持续 EtherCAT 主站运行时，设置指定从站或全部从站的当前机械位置为零：
+在机械位置已摆正时可设置当前机械位置为零。交互会话中先执行 `ethercat_disable 1` 并等待确认，再执行 `ethercat_zero 1`，不关闭主站。下列独立命令行方式只能在没有其他主站进程占用时使用：
 
 ```bash
 sudo ./build/motor_console --ethercat-zero enp86s0 1
@@ -273,7 +279,7 @@ ethercat_pnread all 150
 
 该命令仅对当前开璇驱动器按 Pn 编号 `N` 读取 SDO `0x2000 + N:00`，显示数据长度、原始字节和小端整数解释；
 数据类型与单位请以对应参数手册为准。它只读 SDO，不配置 PDO 或请求 OP；若后台使能循环正在运行，
-交互终端会先停止并失能，再单独读取。也可从 shell 执行 `sudo ./build/motor_console --ethercat-pnread enp86s0 1 Pn150`。
+交互终端会通过现有后台主站异步读取，不失能、不重开主站。也可从 shell 执行 `sudo ./build/motor_console --ethercat-pnread enp86s0 1 Pn150`（不要与运行中的交互会话同时占用主站）。
 
 ### EtherCAT Pn077 配置
 

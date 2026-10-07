@@ -19,6 +19,8 @@ int64_t ec_DCtime;
 typedef struct {
     ec_slave_config_t *config;
     ec_reg_request_t *register_request;
+    ec_sdo_request_t *sdo_read_request;
+    ec_sdo_request_t *sdo_write_request;
     ec_slave_config_state_t state;
     unsigned int output_offset;
     unsigned int input_offset;
@@ -210,6 +212,14 @@ int ec_config_init(boolean use_table)
         if (etherlab_slaves[slave].config == NULL) return 0;
         etherlab_slaves[slave].register_request =
             ecrt_slave_config_create_reg_request(etherlab_slaves[slave].config, 8);
+        etherlab_slaves[slave].sdo_read_request =
+            ecrt_slave_config_create_sdo_request(etherlab_slaves[slave].config, 0x6041, 0, 256);
+        etherlab_slaves[slave].sdo_write_request =
+            ecrt_slave_config_create_sdo_request(etherlab_slaves[slave].config, 0x2077, 0, 2);
+        if (etherlab_slaves[slave].sdo_read_request == NULL ||
+            etherlab_slaves[slave].sdo_write_request == NULL ||
+            ecrt_sdo_request_timeout(etherlab_slaves[slave].sdo_read_request, 700) != 0 ||
+            ecrt_sdo_request_timeout(etherlab_slaves[slave].sdo_write_request, 700) != 0) return 0;
     }
     return ec_slavecount;
 }
@@ -335,6 +345,7 @@ int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
     deadline = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u +
                (uint64_t)(timeout_us > 0 ? timeout_us : 1);
     do {
+        if (stop_requested || console_ethercat_background_should_stop()) return 0;
         ec_receive_processdata(EC_TIMEOUTRET);
         if (slave == 0) {
             int candidate;
@@ -414,6 +425,19 @@ int ec_FPRD(uint16 configadr, uint16 reg, uint16 length, void *data, int timeout
     return 0;
 }
 
+static int etherlab_wait_sdo(ec_sdo_request_t *request, int timeout_us)
+{
+    uint64_t deadline = console_ethercat_monotonic_us() +
+                        (uint64_t)(timeout_us > 0 ? timeout_us : 700000);
+
+    do {
+        ec_request_state_t state = ecrt_sdo_request_state(request);
+        if (state == EC_REQUEST_SUCCESS) return 1;
+        if (state != EC_REQUEST_BUSY || console_ethercat_mailbox_cycle() != 0) return 0;
+    } while (console_ethercat_monotonic_us() < deadline);
+    return 0;
+}
+
 int ec_SDOread(uint16 slave, uint16 index, uint8 subindex, boolean complete_access,
                int *size, void *data, int timeout_us)
 {
@@ -422,9 +446,23 @@ int ec_SDOread(uint16 slave, uint16 index, uint8 subindex, boolean complete_acce
     int result;
     (void)complete_access;
     (void)timeout_us;
-    if (etherlab_master == NULL || etherlab_activated || slave == 0 ||
+    if (etherlab_master == NULL || slave == 0 ||
         slave > ec_slavecount || size == NULL ||
-        *size <= 0) return 0;
+        *size <= 0 || data == NULL) return 0;
+    if (etherlab_activated) {
+        ec_sdo_request_t *request = etherlab_slaves[slave].sdo_read_request;
+        if (stop_requested || console_ethercat_background_should_stop() ||
+            complete_access || request == NULL ||
+            ecrt_sdo_request_state(request) == EC_REQUEST_BUSY ||
+            ecrt_sdo_request_index(request, index, subindex) != 0 ||
+            ecrt_sdo_request_read(request) != 0 ||
+            !etherlab_wait_sdo(request, timeout_us)) return 0;
+        actual = ecrt_sdo_request_data_size(request);
+        if (actual == 0 || actual > (size_t)*size) return 0;
+        memcpy(data, ecrt_sdo_request_data(request), actual);
+        *size = (int)actual;
+        return (int)actual;
+    }
     result = ecrt_master_sdo_upload(etherlab_master, (uint16_t)(slave - 1), index,
         subindex, data, (size_t)*size, &actual, &abort_code);
     if (result != 0 || actual > INT_MAX) return 0;
@@ -438,8 +476,19 @@ int ec_SDOwrite(uint16 slave, uint16 index, uint8 subindex, boolean complete_acc
     uint32_t abort_code = 0;
     (void)complete_access;
     (void)timeout_us;
-    if (etherlab_master == NULL || etherlab_activated || slave == 0 ||
-        slave > ec_slavecount || size <= 0) return 0;
+    if (etherlab_master == NULL || slave == 0 ||
+        slave > ec_slavecount || size <= 0 || data == NULL) return 0;
+    if (etherlab_activated) {
+        ec_sdo_request_t *request = etherlab_slaves[slave].sdo_write_request;
+        if (stop_requested || console_ethercat_background_should_stop() ||
+            complete_access || size != 2 || request == NULL ||
+            ecrt_sdo_request_state(request) == EC_REQUEST_BUSY ||
+            ecrt_sdo_request_index(request, index, subindex) != 0) return 0;
+        memcpy(ecrt_sdo_request_data(request), data, (size_t)size);
+        if (ecrt_sdo_request_write(request) != 0 ||
+            !etherlab_wait_sdo(request, timeout_us)) return 0;
+        return size;
+    }
     return ecrt_master_sdo_download(etherlab_master, (uint16_t)(slave - 1), index,
         subindex, data, (size_t)size, &abort_code) == 0 ? size : 0;
 }

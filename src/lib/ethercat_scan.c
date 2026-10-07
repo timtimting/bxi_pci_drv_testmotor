@@ -6,27 +6,52 @@
 #include <sys/wait.h>
 #include <time.h>
 
+static uint64_t console_ethercat_monotonic_us(void)
+{
+    struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u;
+}
+
+typedef enum {
+    ETHERCAT_TASK_SCAN,
+    ETHERCAT_TASK_ENABLE,
+    ETHERCAT_TASK_DISABLE,
+    ETHERCAT_TASK_POSITION,
+    ETHERCAT_TASK_ZERO,
+    ETHERCAT_TASK_INFO,
+    ETHERCAT_TASK_PNREAD,
+    ETHERCAT_TASK_PN077,
+    ETHERCAT_TASK_SAVE
+} ethercat_task;
+
 typedef struct {
+    ethercat_task task;
     bool chinese;
     unsigned int hold_ms;
+    double position_rad;
+    unsigned int value;
     char interface[IFNAMSIZ];
     char selection[32];
     char sync0_shift[32];
     char sync0_cycle_ms[32];
     bool has_sync0_shift;
     bool has_sync0_cycle_ms;
-    bool disable_task;
 } ethercat_background_args;
+
+#define ETHERCAT_COMMAND_QUEUE_SIZE 16u
 
 static pthread_mutex_t ethercat_background_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ethercat_background_condition = PTHREAD_COND_INITIALIZER;
 static pthread_t ethercat_background_thread;
 static ethercat_background_args ethercat_background_arguments;
+static ethercat_background_args ethercat_command_queue[ETHERCAT_COMMAND_QUEUE_SIZE];
+static unsigned int ethercat_command_head;
+static unsigned int ethercat_command_count;
 static bool ethercat_background_started;
-static bool ethercat_background_running;
-static bool ethercat_background_ready;
 static bool ethercat_background_stop_requested;
-static int ethercat_background_result;
+static bool ethercat_background_owner;
 
 static bool console_ethercat_background_should_stop(void)
 {
@@ -38,19 +63,22 @@ static bool console_ethercat_background_should_stop(void)
     return should_stop;
 }
 
-static void console_ethercat_background_mark_ready(void)
-{
-    pthread_mutex_lock(&ethercat_background_mutex);
-    if (ethercat_background_started && ethercat_background_running) {
-        ethercat_background_ready = true;
-        pthread_cond_broadcast(&ethercat_background_condition);
-    }
-    pthread_mutex_unlock(&ethercat_background_mutex);
-}
-
 #ifdef HAVE_ETHERLAB
 #include "etherlab_compat.h"
+static int console_ethercat_mailbox_cycle(void);
 #include "ethercat_etherlab_compat.c"
+
+static struct {
+    bool active;
+    bool failed;
+    uint8_t configured[EC_MAXSLAVE];
+    bool monitor[EC_MAXSLAVE];
+    uint64_t disable_at_us[EC_MAXSLAVE];
+} ethercat_session;
+
+static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
+                                        unsigned int hold_ms);
+static void console_ethercat_session_tick(void);
 
 typedef struct {
     int slave;
@@ -1014,7 +1042,9 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
         error_codes[slave] = console_ethercat_read_u16(snapshot->inputs + 12u);
         snapshot->live_error_code = error_codes[slave];
         snapshot->live_error_valid = true;
-        if ((status_words[slave] & 0x006fu) != 0x0027u) {
+        if ((!ethercat_session.active || ethercat_session.monitor[slave]) &&
+            console_ethercat_read_u16(snapshot->outputs) == 0x000fu &&
+            (status_words[slave] & 0x006fu) != 0x0027u) {
             report_fault[slave] = !snapshot->runtime_fault_reported;
             snapshot->runtime_fault_reported = true;
         } else {
@@ -1067,13 +1097,12 @@ static int console_ethercat_print_background_info(bool chinese,
         return -1;
     }
     pthread_mutex_lock(&ethercat_background_mutex);
-    active = ethercat_background_running;
+    active = ethercat_session.active;
     if (!active) {
         pthread_mutex_unlock(&ethercat_background_mutex);
         return 0;
     }
-    if (ethercat_background_arguments.disable_task ||
-        strcmp(ethercat_background_arguments.interface, interface) != 0) {
+    if (strcmp(ethercat_background_arguments.interface, interface) != 0) {
         pthread_mutex_unlock(&ethercat_background_mutex);
         return -1;
     }
@@ -1272,6 +1301,7 @@ static int console_ethercat_exchange(void)
     }
     ethercat_last_exchange_us = now_us;
     work_counter = ec_receive_processdata(EC_TIMEOUTRET);
+    console_ethercat_session_tick();
     send_result = ec_send_processdata();
     ethercat_last_work_counter = work_counter;
     if (work_counter < ethercat_min_work_counter) {
@@ -1284,8 +1314,15 @@ static int console_ethercat_exchange(void)
     if (work_counter > 0) {
         console_ethercat_update_dc_sync();
     }
-    return send_result >= 0 && expected_work_counter > 0 &&
-           work_counter == expected_work_counter ? 0 : -1;
+    if (send_result < 0 || expected_work_counter <= 0 ||
+        work_counter != expected_work_counter) {
+        if (ethercat_session.active) ethercat_session.failed = true;
+        return -1;
+    }
+    if (ethercat_session.active) {
+        console_ethercat_capture_live_pdo(ethercat_session.configured);
+    }
+    return 0;
 }
 
 static int console_ethercat_wait_for_initial_pdo(void)
@@ -1757,21 +1794,21 @@ static int console_ethercat_scan(bool chinese, const char *interface)
 
     printf("%s: interface=%s\n", chinese ? "ethercat_scan: 开始扫描" :
            "ethercat_scan: scan start", interface);
-    if (ec_init((char *)interface) == 0) {
+    if (!ethercat_session.active && ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_scan: 打开网卡失败" :
                "ethercat_scan: failed to open interface", interface);
         return -1;
     }
 
-    slave_count = ec_config_init(FALSE);
+    slave_count = ethercat_session.active ? ec_slavecount : ec_config_init(FALSE);
     if (slave_count <= 0) {
         printf("%s: %s\n", chinese ? "ethercat_scan: 未发现 EtherCAT 从站" :
                "ethercat_scan: no EtherCAT slaves found", interface);
-        ec_close();
+        if (!ethercat_session.active) ec_close();
         return -1;
     }
 
-    ec_readstate();
+    if (!ethercat_session.active) ec_readstate();
     printf("%s: total=%d\n", chinese ? "ethercat_scan: 完成" :
            "ethercat_scan: complete", slave_count);
     for (slave = 1; slave <= slave_count; slave++) {
@@ -1787,10 +1824,12 @@ static int console_ethercat_scan(bool chinese, const char *interface)
                (unsigned int)ec_slave[slave].eep_rev,
                ec_slave[slave].hasdc ? "yes" : "no");
     }
-    printf("%s\n", chinese ?
-           "扫描未配置 PDO、未请求 OP 状态，也未向电机发送使能或运动指令。" :
-           "The scan did not configure PDOs, request OP state, or send drive-enable/motion commands.");
-    ec_close();
+    printf("%s\n", ethercat_session.active ?
+           (chinese ? "显示后台已有拓扑及实时状态；未重新扫描或改变使能状态。" :
+            "Showing background topology and live states; no rescan or enable-state change.") :
+           (chinese ? "扫描未配置 PDO、未请求 OP 状态，也未向电机发送使能或运动指令。" :
+            "The scan did not configure PDOs, request OP state, or send drive-enable/motion commands."));
+    if (!ethercat_session.active) ec_close();
     return 0;
 #endif
 }
@@ -1828,6 +1867,7 @@ static int console_ethercat_enable(bool chinese,
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
     uint8_t selected[EC_MAXSLAVE] = {0};
     int32_t target_positions[EC_MAXSLAVE] = {0};
+    uint8_t configured[EC_MAXSLAVE] = {0};
     uint64_t deadline;
     int slave;
     uint16_t diagnostic_control_word = 0u;
@@ -1875,17 +1915,26 @@ static int console_ethercat_enable(bool chinese,
         if (all_slaves || (unsigned int)slave == slave_id) {
             selected[slave] = 1u;
         }
+        if (selected[slave] || (ethercat_background_owner &&
+            ec_slave[slave].eep_man == ETHERCAT_KAIXUAN_VENDOR_ID &&
+            ec_slave[slave].eep_id == ETHERCAT_KAIXUAN_PRODUCT_CODE)) {
+            configured[slave] = 1u;
+        }
     }
 
     failure_stage = "pdo-configuration";
-    ec_config_map(process_image);
+    if (ec_config_map(process_image) <= 0) {
+        printf("%s\n", chinese ? "ethercat_enable: PDO 配置失败" :
+               "ethercat_enable: PDO configuration failed");
+        goto cleanup;
+    }
     mapped = true;
     console_ethercat_reset_exchange_diagnostics();
     ethercat_expected_work_counter =
         ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
     failure_stage = "sync0-configuration";
-    if (console_ethercat_enable_dc_sync(selected, sync0_shift_ns, sync0_cycle_ns) != 0) {
+    if (console_ethercat_enable_dc_sync(configured, sync0_shift_ns, sync0_cycle_ns) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
@@ -1893,7 +1942,7 @@ static int console_ethercat_enable(bool chinese,
     failure_stage = "pre-enable-sdo-snapshot";
     printf("%s\n", chinese ? "ethercat_enable: 正在读取使能前 SDO 配置" :
            "ethercat_enable: reading SDO configuration before activation");
-    console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
+    console_ethercat_cache_configuration(configured, sync0_cycle_ns, sync0_shift_ns);
     failure_stage = "pre-op-to-safe-op";
     printf("%s %ds\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
            "ethercat_enable: waiting for SAFE-OP, up to", EC_TIMEOUTSTATE / 1000000);
@@ -1905,7 +1954,7 @@ static int console_ethercat_enable(bool chinese,
     printf("%s\n", chinese ? "ethercat_enable: SAFE-OP 已确认" :
            "ethercat_enable: SAFE-OP confirmed");
     failure_stage = "post-safe-op-dc-snapshot";
-    console_ethercat_cache_dc_registers(selected);
+    console_ethercat_cache_dc_registers(configured);
     failure_stage = "initial-pdo-exchange";
     if (console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ?
@@ -1999,7 +2048,12 @@ static int console_ethercat_enable(bool chinese,
     printf("%s\n", chinese ?
            "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
            "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
-    console_ethercat_background_mark_ready();
+    if (ethercat_background_owner) {
+        failure_stage = "background-pdo-session";
+        memcpy(ethercat_session.configured, configured, sizeof(configured));
+        result = console_ethercat_run_session(selected, hold_ms);
+        goto cleanup;
+    }
     deadline = hold_ms == 0u ? UINT64_MAX : time_us() + (uint64_t)hold_ms * 1000u;
     failure_stage = "enabled-pdo-hold";
     while (!stop_requested && !console_ethercat_background_should_stop() &&
@@ -2023,7 +2077,7 @@ cleanup:
                                                &failure_capture);
     }
     if (mapped) {
-        console_ethercat_disable_selected(selected);
+        console_ethercat_disable_selected(configured);
     }
     printf("%s\n", chinese ? "ethercat_enable: 已发送失能并关闭 EtherCAT 主站" :
            "ethercat_enable: disable sent and EtherCAT master closed");
@@ -2036,266 +2090,6 @@ close_socket:
         chinese, interface, selection, sync0_cycle_ns, sync0_shift_ns,
         failure_stage);
     return result;
-#endif
-}
-
-static int console_ethercat_disable(bool chinese,
-                                    const char *interface,
-                                    const char *selection);
-
-static void *console_ethercat_background_worker(void *argument)
-{
-    ethercat_background_args *args = argument;
-    int result;
-
-    if (args->disable_task) {
-        result = console_ethercat_disable(args->chinese,
-                                          args->interface,
-                                          args->selection);
-    } else {
-        result = console_ethercat_enable(args->chinese,
-                                         args->interface,
-                                         args->selection,
-                                         args->hold_ms,
-                                         args->has_sync0_shift ? args->sync0_shift : NULL,
-                                         args->has_sync0_cycle_ms ? args->sync0_cycle_ms : NULL);
-    }
-
-    pthread_mutex_lock(&ethercat_background_mutex);
-    ethercat_background_result = result;
-    ethercat_background_running = false;
-    pthread_cond_broadcast(&ethercat_background_condition);
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    return NULL;
-}
-
-static int console_ethercat_background_stop(void);
-
-static void console_ethercat_background_reap(void)
-{
-    pthread_t thread;
-    bool should_join;
-
-    pthread_mutex_lock(&ethercat_background_mutex);
-    should_join = ethercat_background_started && !ethercat_background_running;
-    thread = ethercat_background_thread;
-    if (should_join) {
-        ethercat_background_started = false;
-    }
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    if (should_join) {
-        pthread_join(thread, NULL);
-    }
-}
-
-static bool console_ethercat_background_is_running(void)
-{
-    bool running;
-
-    pthread_mutex_lock(&ethercat_background_mutex);
-    running = ethercat_background_running;
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    return running;
-}
-
-static int console_ethercat_background_stop(void)
-{
-    pthread_t thread;
-    bool should_join;
-    bool was_running;
-
-    pthread_mutex_lock(&ethercat_background_mutex);
-    was_running = ethercat_background_running;
-    if (was_running) {
-        ethercat_background_stop_requested = true;
-    }
-    should_join = ethercat_background_started;
-    thread = ethercat_background_thread;
-    pthread_mutex_unlock(&ethercat_background_mutex);
-
-    if (should_join) {
-        pthread_join(thread, NULL);
-        pthread_mutex_lock(&ethercat_background_mutex);
-        ethercat_background_started = false;
-        ethercat_background_running = false;
-        ethercat_background_ready = false;
-        ethercat_background_stop_requested = false;
-        pthread_mutex_unlock(&ethercat_background_mutex);
-    }
-    return was_running ? 1 : 0;
-}
-
-static int console_ethercat_background_disable(const char *interface,
-                                              const char *selection)
-{
-    bool active;
-    bool selection_matches;
-
-    pthread_mutex_lock(&ethercat_background_mutex);
-    active = ethercat_background_running;
-    selection_matches = strcmp(ethercat_background_arguments.selection, "all") == 0 ?
-                        strcmp(selection, "all") == 0 :
-                        (strcmp(ethercat_background_arguments.selection, selection) == 0 ||
-                         strcmp(selection, "all") == 0);
-    if (!active) {
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        return 0;
-    }
-    if (strcmp(ethercat_background_arguments.interface, interface) != 0 ||
-        !selection_matches) {
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        return -1;
-    }
-    ethercat_background_stop_requested = true;
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    console_ethercat_background_stop();
-    return 1;
-}
-
-static int console_ethercat_background_start(bool chinese,
-                                             const char *interface,
-                                             const char *selection,
-                                             unsigned int hold_ms,
-                                             const char *sync0_shift,
-                                             const char *sync0_cycle_ms)
-{
-    int wait_result = 0;
-    bool ready;
-    bool running;
-    unsigned int slave_id;
-    bool all_slaves;
-    int32_t parsed_shift_ns;
-    uint32_t parsed_cycle_ns;
-
-    if (console_ethercat_validate_interface(interface) != 0 ||
-        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
-        hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
-        (sync0_shift != NULL &&
-         console_ethercat_parse_sync0_shift(sync0_shift, &parsed_shift_ns) != 0) ||
-        (sync0_cycle_ms != NULL &&
-         console_ethercat_parse_cycle_ms(sync0_cycle_ms, &parsed_cycle_ns) != 0)) {
-        printf("%s\n", chinese ?
-               "ethercat_enable 参数无效；检查从站、保持时间、shift 和 Sync0 周期。" :
-               "Invalid ethercat_enable arguments; check slave, hold time, shift, and Sync0 cycle.");
-        return -1;
-    }
-
-    console_ethercat_background_reap();
-    pthread_mutex_lock(&ethercat_background_mutex);
-    if (ethercat_background_running) {
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        printf("%s\n", chinese ? "EtherCAT 后台主站已在运行；先使用 ethercat_disable 停止。" :
-               "EtherCAT background master is already running; stop it with ethercat_disable first.");
-        return -1;
-    }
-    memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
-#ifdef HAVE_ETHERLAB
-    memset(ethercat_cached_slaves, 0, sizeof(ethercat_cached_slaves));
-#endif
-    ethercat_background_arguments.chinese = chinese;
-    ethercat_background_arguments.hold_ms = hold_ms;
-    snprintf(ethercat_background_arguments.interface,
-             sizeof(ethercat_background_arguments.interface), "%s", interface);
-    snprintf(ethercat_background_arguments.selection,
-             sizeof(ethercat_background_arguments.selection), "%s", selection);
-    if (sync0_shift != NULL) {
-        snprintf(ethercat_background_arguments.sync0_shift,
-                 sizeof(ethercat_background_arguments.sync0_shift), "%s", sync0_shift);
-        ethercat_background_arguments.has_sync0_shift = true;
-    }
-    if (sync0_cycle_ms != NULL) {
-        snprintf(ethercat_background_arguments.sync0_cycle_ms,
-                 sizeof(ethercat_background_arguments.sync0_cycle_ms), "%s", sync0_cycle_ms);
-        ethercat_background_arguments.has_sync0_cycle_ms = true;
-    }
-    ethercat_background_stop_requested = false;
-    ethercat_background_ready = false;
-    ethercat_background_running = true;
-    ethercat_background_started = true;
-    if (pthread_create(&ethercat_background_thread, NULL,
-                       console_ethercat_background_worker,
-                       &ethercat_background_arguments) != 0) {
-        ethercat_background_running = false;
-        ethercat_background_started = false;
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        printf("%s\n", chinese ? "无法创建 EtherCAT 后台任务。" :
-               "Failed to create EtherCAT background task.");
-        return -1;
-    }
-    while (ethercat_background_running && !ethercat_background_ready && wait_result == 0) {
-        wait_result = pthread_cond_wait(&ethercat_background_condition,
-                                        &ethercat_background_mutex);
-    }
-    ready = ethercat_background_ready;
-    running = ethercat_background_running;
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    if (wait_result != 0) {
-        console_ethercat_background_stop();
-        return -1;
-    }
-    if (!ready || !running) {
-        console_ethercat_background_reap();
-        return -1;
-    }
-    printf("%s\n", chinese ? "EtherCAT 后台循环已启动；可继续输入命令。" :
-           "EtherCAT background cycle is running; you can continue entering commands.");
-    return 0;
-}
-
-static int console_ethercat_background_disable_start(bool chinese,
-                                                     const char *interface,
-                                                     const char *selection)
-{
-    unsigned int slave_id;
-    bool all_slaves;
-
-    if (console_ethercat_validate_interface(interface) != 0 ||
-        console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0) {
-        printf("%s\n", chinese ?
-               "ethercat_disable 参数无效；请检查网卡和从站编号。" :
-               "Invalid ethercat_disable arguments; check the interface and slave selection.");
-        return -1;
-    }
-#ifndef HAVE_ETHERLAB
-    return console_ethercat_disable(chinese, interface, selection);
-#else
-    console_ethercat_background_reap();
-    pthread_mutex_lock(&ethercat_background_mutex);
-    if (ethercat_background_running) {
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        printf("%s\n", chinese ?
-               "EtherCAT 后台主站仍在运行；请等待当前操作完成或先停止它。" :
-               "The EtherCAT background master is busy; wait for it to finish or stop it first.");
-        return -1;
-    }
-    memset(&ethercat_background_arguments, 0, sizeof(ethercat_background_arguments));
-    ethercat_background_arguments.chinese = chinese;
-    ethercat_background_arguments.disable_task = true;
-    snprintf(ethercat_background_arguments.interface,
-             sizeof(ethercat_background_arguments.interface), "%s", interface);
-    snprintf(ethercat_background_arguments.selection,
-             sizeof(ethercat_background_arguments.selection), "%s", selection);
-    ethercat_background_stop_requested = false;
-    ethercat_background_ready = false;
-    ethercat_background_running = true;
-    ethercat_background_started = true;
-    printf("%s: interface=%s slave=%s %s\n",
-           chinese ? "ethercat_disable: 开始" : "ethercat_disable: start",
-           interface, selection,
-           chinese ? "正在后台失能并释放 EtherCAT 主站。" :
-           "disabling in background and releasing the EtherCAT master.");
-    if (pthread_create(&ethercat_background_thread, NULL,
-                       console_ethercat_background_worker,
-                       &ethercat_background_arguments) != 0) {
-        ethercat_background_running = false;
-        ethercat_background_started = false;
-        pthread_mutex_unlock(&ethercat_background_mutex);
-        printf("%s\n", chinese ? "无法创建 EtherCAT 后台任务。" :
-               "Failed to create EtherCAT background task.");
-        return -1;
-    }
-    pthread_mutex_unlock(&ethercat_background_mutex);
-    return 0;
 #endif
 }
 
@@ -2647,10 +2441,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         return 0;
     }
     if (background_info_result < 0) {
-        console_ethercat_background_stop();
         printf("%s\n", chinese ?
-               "请求节点不在后台缓存中；已先安全停止后台循环，再执行独立 SDO 查询。" :
-               "Requested slave is not in the background snapshot; stopped the cycle before opening a read-only SDO session.");
+               "请求节点不在后台缓存中或网卡不匹配；后台循环保持运行。" :
+               "Slave is not cached or interface does not match; background cycle unchanged.");
+        return -1;
     }
 
     printf("%s: interface=%s slave=%s\n",
@@ -2963,12 +2757,12 @@ static int console_ethercat_pnread(bool chinese,
     printf("%s: interface=%s slave=%s Pn%u index=0x%04x:00\n",
            chinese ? "ethercat_pnread: 开始读取" : "ethercat_pnread: reading",
            interface, selection, (unsigned int)pn_number, (unsigned int)index);
-    if (ec_init((char *)interface) == 0) {
+    if (!ethercat_session.active && ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_pnread: 打开网卡失败" :
                "ethercat_pnread: failed to open interface", interface);
         return -1;
     }
-    if (ec_config_init(FALSE) <= 0) {
+    if (!ethercat_session.active && ec_config_init(FALSE) <= 0) {
         printf("%s\n", chinese ? "ethercat_pnread: 未发现 EtherCAT 从站" :
                "ethercat_pnread: no EtherCAT slaves found");
         goto close_socket;
@@ -3036,13 +2830,13 @@ static int console_ethercat_pnread(bool chinese,
         printf("\n");
     }
     printf("%s\n", chinese ?
-           "读取完成；未配置 PDO 或请求 OP。输出为 SDO 原始字节及小端数值，类型/单位请以驱动器手册为准。" :
-           "Read complete; no PDO configuration or OP request. Raw bytes and little-endian values shown; consult the manual for type and units.");
-    ec_close();
+           "读取完成；未更改 PDO 或请求 OP。输出为 SDO 原始字节及小端数值，类型/单位请以驱动器手册为准。" :
+           "Read complete; PDO configuration and OP request unchanged. Raw bytes and little-endian values shown; consult the manual for type and units.");
+    if (!ethercat_session.active) ec_close();
     return failed == 0 ? 0 : -1;
 
 close_socket:
-    ec_close();
+    if (!ethercat_session.active) ec_close();
     return -1;
 #endif
 }
@@ -3080,12 +2874,12 @@ static int console_ethercat_pn077(bool chinese,
     printf("%s: interface=%s slave=%s value=%u\n",
            chinese ? "ethercat_pn077: 开始" : "ethercat_pn077: start",
            interface, selection, value);
-    if (ec_init((char *)interface) == 0) {
+    if (!ethercat_session.active && ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_pn077: 打开网卡失败" :
                "ethercat_pn077: failed to open interface", interface);
         return -1;
     }
-    if (ec_config_init(FALSE) <= 0) {
+    if (!ethercat_session.active && ec_config_init(FALSE) <= 0) {
         printf("%s\n", chinese ? "ethercat_pn077: 未发现 EtherCAT 从站" :
                "ethercat_pn077: no EtherCAT slaves found");
         goto close_socket;
@@ -3168,11 +2962,11 @@ static int console_ethercat_pn077(bool chinese,
     printf("%s\n", chinese ?
            "Pn077 已写入并回读。根据手册，需重启执行器后生效；该参数不是主站 Sync0 shift。" :
            "Pn077 was written and verified. Restart the actuator for it to take effect; this is not the master Sync0 shift.");
-    ec_close();
+    if (!ethercat_session.active) ec_close();
     return 0;
 
 close_socket:
-    ec_close();
+    if (!ethercat_session.active) ec_close();
     return -1;
 #endif
 }
@@ -3208,12 +3002,12 @@ static int console_ethercat_save(bool chinese,
     printf("%s: interface=%s slave=%s object=0x2097:00 sequence=1->0\n",
            chinese ? "ethercat_save: 开始" : "ethercat_save: start",
            interface, selection);
-    if (ec_init((char *)interface) == 0) {
+    if (!ethercat_session.active && ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_save: 打开网卡失败" :
                "ethercat_save: failed to open interface", interface);
         return -1;
     }
-    if (ec_config_init(FALSE) <= 0) {
+    if (!ethercat_session.active && ec_config_init(FALSE) <= 0) {
         printf("%s\n", chinese ? "ethercat_save: 未发现 EtherCAT 从站" :
                "ethercat_save: no EtherCAT slaves found");
         goto close_socket;
@@ -3297,7 +3091,14 @@ static int console_ethercat_save(bool chinese,
         printf("[slave%d]: %s\n", slave, chinese ?
                "Pn097=1 已回读确认，保持 100ms 供驱动器处理保存请求" :
                "Pn097=1 readback confirmed; holding for 100ms so the drive can process the save request");
-        sleep_ms(100u);
+        if (ethercat_session.active) {
+            uint64_t save_deadline = console_ethercat_monotonic_us() + 100000u;
+            while (console_ethercat_monotonic_us() < save_deadline) {
+                if (console_ethercat_mailbox_cycle() != 0) goto close_socket;
+            }
+        } else {
+            sleep_ms(100u);
+        }
         size = (int)sizeof(save_off);
         if (ec_SDOwrite((uint16)slave, 0x2097u, 0u, FALSE, size,
                         &save_off, EC_TIMEOUTRXM) <= 0) {
@@ -3322,11 +3123,11 @@ static int console_ethercat_save(bool chinese,
     printf("%s\n", chinese ?
            "参数保存触发已发送；请按厂商流程重启执行器并回读参数确认持久化。" :
            "Parameter save trigger sent; restart the actuator and read back parameters to verify persistence.");
-    ec_close();
+    if (!ethercat_session.active) ec_close();
     return 0;
 
 close_socket:
-    ec_close();
+    if (!ethercat_session.active) ec_close();
     return -1;
 #endif
 }

@@ -53,7 +53,11 @@ static const char *const console_command_words[] = {
 
 #include "lib/core.c"
 #include "lib/ethercat_esi.c"
+#include "lib/ethercat_output.c"
+#define printf console_ethercat_printf
 #include "lib/ethercat_scan.c"
+#include "lib/ethercat_background.c"
+#undef printf
 #include "lib/display.c"
 #include "lib/control.c"
 #include "lib/flash.c"
