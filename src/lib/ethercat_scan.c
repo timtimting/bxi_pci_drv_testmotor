@@ -1036,7 +1036,9 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE],
         if (ec_slave[slave].hasdc == 0u) {
             return -1;
         }
-        ec_dcsync0((uint16)slave, TRUE, cycle_ns, shift_ns);
+        if (ec_dcsync0((uint16)slave, TRUE, cycle_ns, shift_ns) != 0) {
+            return -1;
+        }
     }
     ethercat_dc_sync_target_ns = ((int64_t)cycle_ns / 2) + (int64_t)shift_ns;
     ethercat_dc_sync_target_ns %= (int64_t)cycle_ns;

@@ -30,6 +30,8 @@ static uint8_t *etherlab_domain_data;
 static etherlab_slave_context etherlab_slaves[EC_MAXSLAVE];
 static bool etherlab_activated;
 static bool etherlab_mapped;
+static bool etherlab_dc_configured;
+static bool etherlab_reference_clock_selected;
 static uint32_t etherlab_sync_cycle_ns;
 static int32_t etherlab_sync_shift_ns;
 static int etherlab_working_counter;
@@ -150,6 +152,8 @@ int ec_init(char *interface)
     etherlab_domain_data = NULL;
     etherlab_activated = false;
     etherlab_mapped = false;
+    etherlab_dc_configured = false;
+    etherlab_reference_clock_selected = false;
     etherlab_sync_cycle_ns = 0;
     etherlab_sync_shift_ns = 0;
     etherlab_working_counter = 0;
@@ -231,22 +235,35 @@ int ec_configdc(void)
 
 int ec_dcsync0(uint16 slave, boolean activate, uint32_t cycle_ns, int32_t shift_ns)
 {
+    int result;
+
     if (slave == 0 || slave > ec_slavecount || !activate) return -1;
+    result = ecrt_slave_config_dc(etherlab_slaves[slave].config, 0x0300,
+                                  cycle_ns, shift_ns, 0, 0);
+    if (result != 0) return result;
+    if (!etherlab_reference_clock_selected) {
+        result = ecrt_master_select_reference_clock(
+            etherlab_master, etherlab_slaves[slave].config);
+        if (result != 0) return result;
+        etherlab_reference_clock_selected = true;
+    }
     etherlab_sync_cycle_ns = cycle_ns;
     etherlab_sync_shift_ns = shift_ns;
+    etherlab_dc_configured = true;
     ec_slave[slave].DCactive = 1;
     ec_slave[slave].DCcycle = cycle_ns;
     ec_slave[slave].DCshift = shift_ns;
-    return ecrt_slave_config_dc(etherlab_slaves[slave].config, 0x0300,
-                                cycle_ns, shift_ns, 0, 0);
+    return 0;
 }
 
 int ec_send_processdata(void)
 {
     if (etherlab_master == NULL || etherlab_activate() != 0) return 0;
     etherlab_set_application_time();
-    ecrt_master_sync_reference_clock(etherlab_master);
-    ecrt_master_sync_slave_clocks(etherlab_master);
+    if (etherlab_dc_configured) {
+        ecrt_master_sync_reference_clock(etherlab_master);
+        ecrt_master_sync_slave_clocks(etherlab_master);
+    }
     if (etherlab_domain != NULL) ecrt_domain_queue(etherlab_domain);
     return ecrt_master_send(etherlab_master);
 }
@@ -263,7 +280,8 @@ int ec_receive_processdata(int timeout_us)
         ecrt_domain_state(etherlab_domain, &domain_state);
         etherlab_working_counter = (int)domain_state.working_counter;
     }
-    if (ecrt_master_reference_clock_time(etherlab_master, &reference_time) == 0)
+    if (etherlab_dc_configured &&
+        ecrt_master_reference_clock_time(etherlab_master, &reference_time) == 0)
         ec_DCtime = reference_time;
     etherlab_update_slave_states();
     return etherlab_working_counter;
@@ -397,6 +415,8 @@ int ec_close(void)
     etherlab_master = NULL;
     etherlab_activated = false;
     etherlab_mapped = false;
+    etherlab_dc_configured = false;
+    etherlab_reference_clock_selected = false;
     etherlab_domain = NULL;
     etherlab_domain_data = NULL;
     return 1;
