@@ -533,8 +533,7 @@ static int console_terminal(flash_state *state)
         }
 
         console_output_raw = true;
-        printf("%s", prompt);
-        fflush(stdout);
+        console_output_prompt_begin(prompt);
         if (read_line_with_completion(prompt, line, sizeof(line)) != 0) {
             printf("\n");
             console_output_raw = false;

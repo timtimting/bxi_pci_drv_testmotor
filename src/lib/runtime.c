@@ -4610,6 +4610,7 @@ static const char *const *completion_words_for_line(const char *line, size_t len
 
 static void redraw_prompt_cursor(const char *prompt, const char *line, size_t len, size_t cursor)
 {
+    if (console_output_prompt_update(line, len, cursor)) return;
     printf("\r\033[2K%s%s", prompt, line);
     if (cursor < len) {
         printf("\033[%zuD", len - cursor);
@@ -4815,7 +4816,7 @@ static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_le
     redraw_prompt_cursor(prompt, line, *len, *cursor);
 }
 
-static int read_line_with_completion(const char *prompt, char *line, size_t max_len)
+static int read_line_with_completion_impl(const char *prompt, char *line, size_t max_len)
 {
     struct termios old_term;
     struct termios new_term;
@@ -4857,7 +4858,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
             return -1;
         }
         if (ch == '\r' || ch == '\n') {
-            putchar('\n');
+            if (!console_output_prompt_finish(true)) putchar('\n');
             line[len] = '\0';
             history_push(line);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
@@ -4914,8 +4915,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
             if (seq[1] == 'C') {
                 if (cursor < len) {
                     cursor++;
-                    printf("\033[C");
-                    fflush(stdout);
+                    redraw_prompt_cursor(prompt, line, len, cursor);
                 } else {
                     putchar('\a');
                     fflush(stdout);
@@ -4925,8 +4925,7 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
             if (seq[1] == 'D') {
                 if (cursor > 0u) {
                     cursor--;
-                    printf("\033[D");
-                    fflush(stdout);
+                    redraw_prompt_cursor(prompt, line, len, cursor);
                 } else {
                     putchar('\a');
                     fflush(stdout);
@@ -4982,6 +4981,14 @@ static int read_line_with_completion(const char *prompt, char *line, size_t max_
 
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
     return -1;
+}
+
+static int read_line_with_completion(const char *prompt, char *line, size_t max_len)
+{
+    int result = read_line_with_completion_impl(prompt, line, max_len);
+
+    console_output_prompt_finish(false);
+    return result;
 }
 
 static int run_command(flash_state *state, int argc, char **argv)

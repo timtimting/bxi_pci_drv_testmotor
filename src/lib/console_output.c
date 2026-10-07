@@ -22,6 +22,98 @@ static console_output_context console_output_latest;
 static console_output_line console_output_lines[2];
 static __thread console_output_context console_output_current;
 static __thread bool console_output_raw;
+static __thread bool console_output_defer_prompt;
+static struct {
+    bool active;
+    bool visible;
+    char prompt[64];
+    char input[512];
+    size_t length;
+    size_t cursor;
+} console_output_editor;
+
+static void console_output_prompt_draw_locked(void)
+{
+    if (!console_output_editor.active ||
+        (!console_output_editor.visible && (console_output_lines[0].partial ||
+         (isatty(STDERR_FILENO) && console_output_lines[1].partial)))) return;
+    flockfile(stdout);
+    fprintf(stdout, "\r\033[2K%s%s", console_output_editor.prompt, console_output_editor.input);
+    if (console_output_editor.cursor < console_output_editor.length)
+        fprintf(stdout, "\033[%zuD", console_output_editor.length - console_output_editor.cursor);
+    fflush(stdout);
+    funlockfile(stdout);
+    console_output_editor.visible = true;
+    console_output_lines[0].partial = true;
+    console_output_lines[0].sequence = 0u;
+}
+
+static void console_output_prompt_begin(const char *prompt)
+{
+    pthread_mutex_lock(&console_output_stream_mutex);
+    console_output_editor.active = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    console_output_editor.visible = false;
+    snprintf(console_output_editor.prompt, sizeof(console_output_editor.prompt), "%s", prompt);
+    console_output_editor.input[0] = '\0';
+    console_output_editor.length = 0u;
+    console_output_editor.cursor = 0u;
+    if (console_output_editor.active) {
+        console_output_prompt_draw_locked();
+    } else {
+        fputs(prompt, stdout);
+        fflush(stdout);
+        console_output_lines[0].partial = true;
+        console_output_lines[0].sequence = 0u;
+    }
+    pthread_mutex_unlock(&console_output_stream_mutex);
+}
+
+static bool console_output_prompt_update(const char *input, size_t length, size_t cursor)
+{
+    bool active;
+
+    pthread_mutex_lock(&console_output_stream_mutex);
+    active = console_output_editor.active;
+    if (active) {
+        if (length >= sizeof(console_output_editor.input)) length = sizeof(console_output_editor.input) - 1u;
+        memcpy(console_output_editor.input, input, length);
+        console_output_editor.input[length] = '\0';
+        console_output_editor.length = length;
+        console_output_editor.cursor = cursor < length ? cursor : length;
+        console_output_prompt_draw_locked();
+    }
+    pthread_mutex_unlock(&console_output_stream_mutex);
+    return active;
+}
+
+static bool console_output_prompt_finish(bool newline)
+{
+    bool active;
+
+    pthread_mutex_lock(&console_output_stream_mutex);
+    active = console_output_editor.active;
+    if (active && newline) {
+        if (!console_output_editor.visible && console_output_lines[0].partial) {
+            fputc('\n', stdout);
+            console_output_lines[0].partial = false;
+        }
+        if (!console_output_editor.visible) console_output_prompt_draw_locked();
+        fputc('\n', stdout);
+        fflush(stdout);
+        console_output_lines[0].partial = false;
+    }
+    console_output_editor.active = false;
+    console_output_editor.visible = false;
+    pthread_mutex_unlock(&console_output_stream_mutex);
+    return active;
+}
+
+static void console_output_prompt_refresh(void)
+{
+    pthread_mutex_lock(&console_output_stream_mutex);
+    if (!console_output_editor.visible) console_output_prompt_draw_locked();
+    pthread_mutex_unlock(&console_output_stream_mutex);
+}
 
 static uint64_t console_output_monotonic_ns(void)
 {
@@ -76,6 +168,13 @@ static int console_output_emit(FILE *stream, const char *message, size_t length,
     elapsed_ms = stamp.emitted_ns >= stamp.context.started_ns ?
         (stamp.emitted_ns - stamp.context.started_ns) / 1000000u : 0u;
     pthread_mutex_lock(&console_output_stream_mutex);
+    if (length != 0u && stamp.context.sequence != 0u && console_output_editor.visible &&
+        (stream == stdout || isatty(STDERR_FILENO))) {
+        fputs("\r\033[2K", stdout);
+        fflush(stdout);
+        console_output_editor.visible = false;
+        console_output_lines[0].partial = false;
+    }
     flockfile(stream);
     line = &console_output_lines[stream == stderr ? 1 : 0];
     if (length != 0u && stamp.context.sequence != 0u && line->partial &&
@@ -100,6 +199,12 @@ static int console_output_emit(FILE *stream, const char *message, size_t length,
         offset = end;
     }
     funlockfile(stream);
+    if (length != 0u && stamp.context.sequence == 0u && stream == stdout &&
+        (memchr(message, '\n', length) != NULL || memchr(message, '\r', length) != NULL))
+        console_output_editor.visible = false;
+    if (length != 0u && stamp.context.sequence != 0u && !line->partial &&
+        !console_output_defer_prompt && !console_output_editor.visible)
+        console_output_prompt_draw_locked();
     pthread_mutex_unlock(&console_output_stream_mutex);
     return result;
 }

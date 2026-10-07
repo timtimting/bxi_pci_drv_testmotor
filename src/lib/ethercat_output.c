@@ -57,9 +57,11 @@ static int console_ethercat_printf(const char *format, ...)
 static void *console_ethercat_output_worker(void *argument)
 {
     (void)argument;
+    console_output_defer_prompt = true;
     for (;;) {
         ethercat_output_message message;
         unsigned int dropped;
+        bool drained;
 
         pthread_mutex_lock(&ethercat_output_mutex);
         while (ethercat_output_count == 0u && !ethercat_output_stopping) {
@@ -83,6 +85,10 @@ static void *console_ethercat_output_worker(void *argument)
         }
         console_output_emit(stdout, message.text, strlen(message.text), message.stamp);
         fflush(stdout);
+        pthread_mutex_lock(&ethercat_output_mutex);
+        drained = ethercat_output_count == 0u;
+        pthread_mutex_unlock(&ethercat_output_mutex);
+        if (drained) console_output_prompt_refresh();
     }
     return NULL;
 }
