@@ -112,6 +112,20 @@ static void etherlab_update_slave_states(void)
     }
 }
 
+static bool etherlab_reference_clock_ready(void)
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; ++slave) {
+        unsigned int state = (unsigned int)ec_slave[slave].state & 0x0fu;
+        if (ec_slave[slave].DCactive != 0u &&
+            (state == EC_STATE_SAFE_OP || state == EC_STATE_OPERATIONAL)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int etherlab_activate(void)
 {
     unsigned int slave;
@@ -280,10 +294,10 @@ int ec_receive_processdata(int timeout_us)
         ecrt_domain_state(etherlab_domain, &domain_state);
         etherlab_working_counter = (int)domain_state.working_counter;
     }
-    if (etherlab_dc_configured &&
+    etherlab_update_slave_states();
+    if (etherlab_dc_configured && etherlab_reference_clock_ready() &&
         ecrt_master_reference_clock_time(etherlab_master, &reference_time) == 0)
         ec_DCtime = reference_time;
-    etherlab_update_slave_states();
     return etherlab_working_counter;
 }
 

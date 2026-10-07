@@ -1060,11 +1060,17 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
     ec_readstate();
     printf("[EtherCAT diag]\n"
            "  request: control_word=0x%04x slaves=%d\n"
-           "  exchange: WKC expected=%d last=%d min=%d incomplete=%u\n"
-           "  timing: target=%uus max_interval=%lluus DC_error=%lldns DC_adjust=%lldns\n",
+           "  exchange: WKC expected=%d last=%d",
            (unsigned int)requested_control_word, ec_slavecount,
-           ethercat_expected_work_counter, ethercat_last_work_counter,
-           ethercat_min_work_counter, ethercat_incomplete_work_counter_count,
+           ethercat_expected_work_counter, ethercat_last_work_counter);
+    if (ethercat_min_work_counter == INT_MAX) {
+        printf(" min=n/a");
+    } else {
+        printf(" min=%d", ethercat_min_work_counter);
+    }
+    printf(" incomplete=%u\n"
+           "  timing: target=%uus max_interval=%lluus DC_error=%lldns DC_adjust=%lldns\n",
+           ethercat_incomplete_work_counter_count,
            ethercat_control_period_ns / 1000u,
            (unsigned long long)ethercat_max_exchange_interval_us,
            (long long)ethercat_dc_sync_phase_error_ns,
