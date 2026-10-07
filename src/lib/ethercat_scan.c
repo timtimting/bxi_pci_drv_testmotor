@@ -53,11 +53,23 @@ static void console_ethercat_background_mark_ready(void)
 #include "ethercat_etherlab_compat.c"
 
 typedef struct {
+    int slave;
+    bool al_control_read;
+    uint16_t al_control;
+    bool sm2_read;
+    uint8_t sm2[8];
+    bool sm3_read;
+    uint8_t sm3[8];
+} ethercat_failure_esc_snapshot;
+
+typedef struct {
     int kernel_log_fd;
     int temporary_log_fd;
     bool active;
     bool debug_enabled;
     char temporary_path[PATH_MAX];
+    size_t esc_snapshot_count;
+    ethercat_failure_esc_snapshot esc_snapshots[EC_MAXSLAVE];
 } ethercat_failure_log;
 
 static int console_ethercat_set_kernel_debug(unsigned int level)
@@ -148,6 +160,67 @@ static int console_ethercat_write_all(int fd, const char *data, size_t length)
     return 0;
 }
 
+static void console_ethercat_format_register_bytes(char *buffer, size_t buffer_size,
+                                                    bool readable,
+                                                    const uint8_t *data,
+                                                    size_t data_size)
+{
+    size_t offset;
+    size_t byte_index;
+    int length;
+
+    if (!readable) {
+        snprintf(buffer, buffer_size, "unread");
+        return;
+    }
+    length = snprintf(buffer, buffer_size, "[");
+    if (length < 0 || (size_t)length >= buffer_size) {
+        buffer[0] = '\0';
+        return;
+    }
+    offset = (size_t)length;
+    for (byte_index = 0; byte_index < data_size; ++byte_index) {
+        length = snprintf(buffer + offset, buffer_size - offset, "%s%02x",
+                          byte_index == 0u ? "" : " ", data[byte_index]);
+        if (length < 0 || (size_t)length >= buffer_size - offset) {
+            buffer[buffer_size - 1u] = '\0';
+            return;
+        }
+        offset += (size_t)length;
+    }
+    snprintf(buffer + offset, buffer_size - offset, "]");
+}
+
+static void console_ethercat_failure_log_write_esc_snapshot(
+    int fd, const ethercat_failure_esc_snapshot *snapshot)
+{
+    char al_control_text[16];
+    char sm2_text[32];
+    char sm3_text[32];
+    char line[256];
+    int length;
+
+    if (snapshot->al_control_read) {
+        snprintf(al_control_text, sizeof(al_control_text), "0x%04x",
+                 (unsigned int)snapshot->al_control);
+    } else {
+        snprintf(al_control_text, sizeof(al_control_text), "unread");
+    }
+    console_ethercat_format_register_bytes(sm2_text, sizeof(sm2_text),
+                                            snapshot->sm2_read, snapshot->sm2,
+                                            sizeof(snapshot->sm2));
+    console_ethercat_format_register_bytes(sm3_text, sizeof(sm3_text),
+                                            snapshot->sm3_read, snapshot->sm3,
+                                            sizeof(snapshot->sm3));
+    length = snprintf(line, sizeof(line),
+                      "[slave%d] ESC registers before teardown: AL_control=%s"
+                      " SM2(0x0810)=%s SM3(0x0818)=%s\n",
+                      snapshot->slave, al_control_text, sm2_text, sm3_text);
+    if (length > 0 && (size_t)length < sizeof(line)) {
+        console_ethercat_write_all(fd, line, (size_t)length);
+    }
+}
+
 static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
                                                  bool failed,
                                                  bool chinese,
@@ -186,6 +259,11 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
         if (header_length > 0 && (size_t)header_length < sizeof(header)) {
             console_ethercat_write_all(capture->temporary_log_fd, header,
                                        (size_t)header_length);
+        }
+        for (size_t snapshot_index = 0;
+             snapshot_index < capture->esc_snapshot_count; ++snapshot_index) {
+            console_ethercat_failure_log_write_esc_snapshot(
+                capture->temporary_log_fd, &capture->esc_snapshots[snapshot_index]);
         }
         if (capture->kernel_log_fd >= 0) {
             for (;;) {
@@ -1252,7 +1330,8 @@ static int console_ethercat_enable_dc_sync(const uint8_t selected[EC_MAXSLAVE],
 
 static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAXSLAVE],
                                                    uint16_t requested_control_word,
-                                                   bool read_sdo_snapshot)
+                                                   bool read_sdo_snapshot,
+                                                   ethercat_failure_log *failure_capture)
 {
     int slave;
 
@@ -1285,11 +1364,17 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
         uint16_t tx_sync_type;
         uint32_t tx_sync_cycle_ns;
         uint8_t dc_activation;
+        uint8_t al_control_data[2];
         uint8_t al_status_data[2];
         uint8_t dc_cycle_data[4];
         uint8_t dc_start_data[8];
+        uint8_t sm2_registers[8];
+        uint8_t sm3_registers[8];
         uint32_t dc_cycle_ns;
         int8_t mode_display;
+        int al_control_read;
+        int sm2_registers_read;
+        int sm3_registers_read;
         int size;
 
         if (selected[slave] == 0u) {
@@ -1319,6 +1404,52 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
                ec_slave[slave].hasdc ? "yes" : "no",
                ec_slave[slave].DCactive ? "yes" : "no",
                (unsigned int)ec_slave[slave].DCcycle, (int)ec_slave[slave].DCshift);
+
+        printf("  ESC registers: AL_control=");
+        al_control_read = ec_FPRD(ec_slave[slave].configadr, 0x0120u,
+                                  (uint16)sizeof(al_control_data), al_control_data,
+                                  EC_TIMEOUTRET) > 0;
+        if (al_control_read) {
+            printf("0x%04x", (unsigned int)console_ethercat_read_u16(al_control_data));
+        } else {
+            printf("unread");
+        }
+        printf(" SM2(0x0810)=");
+        sm2_registers_read = ec_FPRD(ec_slave[slave].configadr, 0x0810u,
+                                     (uint16)sizeof(sm2_registers), sm2_registers,
+                                     EC_TIMEOUTRET) > 0;
+        if (sm2_registers_read) {
+            console_ethercat_print_bytes(sm2_registers, (unsigned int)sizeof(sm2_registers));
+        } else {
+            printf("unread");
+        }
+        printf(" SM3(0x0818)=");
+        sm3_registers_read = ec_FPRD(ec_slave[slave].configadr, 0x0818u,
+                                     (uint16)sizeof(sm3_registers), sm3_registers,
+                                     EC_TIMEOUTRET) > 0;
+        if (sm3_registers_read) {
+            console_ethercat_print_bytes(sm3_registers, (unsigned int)sizeof(sm3_registers));
+        } else {
+            printf("unread");
+        }
+        printf("\n");
+        if (failure_capture != NULL && failure_capture->active &&
+            failure_capture->esc_snapshot_count < EC_MAXSLAVE) {
+            ethercat_failure_esc_snapshot *snapshot =
+                &failure_capture->esc_snapshots[failure_capture->esc_snapshot_count++];
+            snapshot->slave = slave;
+            snapshot->al_control_read = al_control_read != 0;
+            snapshot->al_control = al_control_read ?
+                                  console_ethercat_read_u16(al_control_data) : 0u;
+            snapshot->sm2_read = sm2_registers_read != 0;
+            snapshot->sm3_read = sm3_registers_read != 0;
+            if (snapshot->sm2_read) {
+                memcpy(snapshot->sm2, sm2_registers, sizeof(snapshot->sm2));
+            }
+            if (snapshot->sm3_read) {
+                memcpy(snapshot->sm3, sm3_registers, sizeof(snapshot->sm3));
+            }
+        }
 
         if (read_sdo_snapshot) {
             size = (int)sizeof(mode_display);
@@ -1813,7 +1944,8 @@ cleanup:
         printf("%s\n", chinese ?
                "ethercat_enable: 使能失败，自动采集现场诊断信息（失能前）" :
                "ethercat_enable: enable failed; collecting diagnostics before disabling");
-        console_ethercat_print_selected_status(selected, diagnostic_control_word, false);
+        console_ethercat_print_selected_status(selected, diagnostic_control_word, false,
+                                               &failure_capture);
     }
     if (mapped) {
         console_ethercat_disable_selected(selected);
@@ -2236,21 +2368,21 @@ static int console_ethercat_position(bool chinese,
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0006 状态确认失败" :
                "ethercat_position: 0x0006 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0006u, true);
+        console_ethercat_print_selected_status(selected, 0x0006u, true, NULL);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x0007u);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x0007 状态确认失败" :
                "ethercat_position: 0x0007 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0007u, true);
+        console_ethercat_print_selected_status(selected, 0x0007u, true, NULL);
         goto cleanup;
     }
     console_ethercat_set_control_word(selected, 0x000fu);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_position: 0x000F 状态确认失败" :
                "ethercat_position: 0x000F state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x000fu, true);
+        console_ethercat_print_selected_status(selected, 0x000fu, true, NULL);
         goto cleanup;
     }
     printf("%s\n", chinese ?
