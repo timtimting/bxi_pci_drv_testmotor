@@ -1413,6 +1413,7 @@ static int console_ethercat_enable(bool chinese,
     int32_t target_positions[EC_MAXSLAVE] = {0};
     uint64_t deadline;
     int slave;
+    uint16_t diagnostic_control_word = 0u;
     unsigned int op_attempt;
     unsigned int max_op_attempts;
     int result = -1;
@@ -1526,25 +1527,25 @@ static int console_ethercat_enable(bool chinese,
             goto cleanup;
         }
     }
-    console_ethercat_set_control_word(selected, 0x0006u);
+    diagnostic_control_word = 0x0006u;
+    console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0006 状态确认失败" :
                "ethercat_enable: 0x0006 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0006u);
         goto cleanup;
     }
-    console_ethercat_set_control_word(selected, 0x0007u);
+    diagnostic_control_word = 0x0007u;
+    console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0007 状态确认失败" :
                "ethercat_enable: 0x0007 state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x0007u);
         goto cleanup;
     }
-    console_ethercat_set_control_word(selected, 0x000fu);
+    diagnostic_control_word = 0x000fu;
+    console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x000F 状态确认失败" :
                "ethercat_enable: 0x000F state confirmation failed");
-        console_ethercat_print_selected_status(selected, 0x000fu);
         goto cleanup;
     }
     console_ethercat_capture_live_pdo(selected);
@@ -1566,6 +1567,13 @@ static int console_ethercat_enable(bool chinese,
     result = stop_requested || console_ethercat_background_should_stop() ? -1 : 0;
 
 cleanup:
+    if (result != 0 && !stop_requested &&
+        !console_ethercat_background_should_stop()) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 使能失败，自动采集现场诊断信息（失能前）" :
+               "ethercat_enable: enable failed; collecting diagnostics before disabling");
+        console_ethercat_print_selected_status(selected, diagnostic_control_word);
+    }
     if (mapped) {
         console_ethercat_disable_selected(selected);
     }
