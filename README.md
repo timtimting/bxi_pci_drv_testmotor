@@ -166,6 +166,9 @@ cmake --build build -j
 ```
 
 若未检测到 EtherLab，命令会提示安装用户态开发库后重新构建。master 0 必须在系统层绑定到命令指定网卡。
+`ethercat_enable` 会在使能尝试期间临时启用 EtherLab `debug=1`；失败时把本次尝试的内核日志
+保存到 `/tmp/ethercat-enable-failure-*.log`，成功时删除临时日志并恢复 `debug=0`。此功能需要以
+root 运行且允许读取 `/dev/kmsg`；EtherLab 命令不在默认路径时，可通过 `ETHERLAB_CLI` 指定其绝对路径。
 
 ### EtherCAT 安全使能测试
 

@@ -1,4 +1,9 @@
 #include <net/if.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 
 typedef struct {
@@ -46,6 +51,199 @@ static void console_ethercat_background_mark_ready(void)
 #ifdef HAVE_ETHERLAB
 #include "etherlab_compat.h"
 #include "ethercat_etherlab_compat.c"
+
+typedef struct {
+    int kernel_log_fd;
+    int temporary_log_fd;
+    bool active;
+    bool debug_enabled;
+    char temporary_path[PATH_MAX];
+} ethercat_failure_log;
+
+static int console_ethercat_set_kernel_debug(unsigned int level)
+{
+    const char *configured_cli = getenv("ETHERLAB_CLI");
+    const char *cli_path = NULL;
+    char level_text[8];
+    char *arguments[4];
+    pid_t child;
+    pid_t waited;
+    int status;
+
+    snprintf(level_text, sizeof(level_text), "%u", level);
+    arguments[0] = (char *)"ethercat";
+    arguments[1] = (char *)"debug";
+    arguments[2] = level_text;
+    arguments[3] = NULL;
+    if (configured_cli != NULL && configured_cli[0] != '\0' &&
+        configured_cli[0] == '/' && access(configured_cli, X_OK) == 0) {
+        cli_path = configured_cli;
+    } else if (access("/usr/local/etherlab/bin/ethercat", X_OK) == 0) {
+        cli_path = "/usr/local/etherlab/bin/ethercat";
+    } else if (access("/usr/bin/ethercat", X_OK) == 0) {
+        cli_path = "/usr/bin/ethercat";
+    }
+    if (cli_path == NULL) return -1;
+    child = fork();
+    if (child < 0) return -1;
+    if (child == 0) {
+        int null_fd = open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            dup2(null_fd, STDOUT_FILENO);
+            dup2(null_fd, STDERR_FILENO);
+            close(null_fd);
+        }
+        execv(cli_path, arguments);
+        _exit(127);
+    }
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child) return -1;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return -1;
+    return 0;
+}
+
+static void console_ethercat_failure_log_start(ethercat_failure_log *capture,
+                                                bool chinese)
+{
+    memset(capture, 0, sizeof(*capture));
+    capture->kernel_log_fd = -1;
+    capture->temporary_log_fd = -1;
+    snprintf(capture->temporary_path, sizeof(capture->temporary_path),
+             "/tmp/ethercat-enable-XXXXXX");
+    capture->temporary_log_fd = mkstemp(capture->temporary_path);
+    if (capture->temporary_log_fd < 0) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 无法创建内核日志临时文件；仍继续使能" :
+               "ethercat_enable: cannot create temporary kernel log; continuing enable");
+        return;
+    }
+    fchmod(capture->temporary_log_fd, S_IRUSR | S_IWUSR);
+    capture->kernel_log_fd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (capture->kernel_log_fd >= 0 && lseek(capture->kernel_log_fd, 0, SEEK_END) < 0) {
+        close(capture->kernel_log_fd);
+        capture->kernel_log_fd = -1;
+    }
+    capture->active = true;
+    if (console_ethercat_set_kernel_debug(1u) == 0) {
+        capture->debug_enabled = true;
+    } else {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 无法自动设置 EtherLab debug=1；将尽量保存现有内核日志" :
+               "ethercat_enable: could not set EtherLab debug=1; will save available kernel logs");
+    }
+}
+
+static int console_ethercat_write_all(int fd, const char *data, size_t length)
+{
+    size_t written = 0u;
+
+    while (written < length) {
+        ssize_t result = write(fd, data + written, length - written);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) return -1;
+        written += (size_t)result;
+    }
+    return 0;
+}
+
+static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
+                                                 bool failed,
+                                                 bool chinese,
+                                                 const char *interface,
+                                                 const char *selection,
+                                                 uint32_t sync0_cycle_ns,
+                                                 int32_t sync0_shift_ns,
+                                                 const char *failure_stage)
+{
+    char final_path[PATH_MAX];
+    char header[1024];
+    char kernel_message[4096];
+    struct timespec now;
+    struct tm local_time;
+    char timestamp[32] = "unknown-time";
+    char date[24];
+    int header_length;
+    bool saved = false;
+    bool kernel_log_overrun = false;
+
+    if (!capture->active) return;
+    if (failed && capture->temporary_log_fd >= 0) {
+        if (clock_gettime(CLOCK_REALTIME, &now) == 0 &&
+            localtime_r(&now.tv_sec, &local_time) != NULL &&
+            strftime(date, sizeof(date), "%Y%m%d-%H%M%S", &local_time) > 0u) {
+            snprintf(timestamp, sizeof(timestamp), "%s-%09ld", date, now.tv_nsec);
+        }
+        header_length = snprintf(header, sizeof(header),
+                                 "EtherCAT enable failure diagnostics\n"
+                                 "timestamp=%s\ninterface=%s\nslave=%s\n"
+                                 "sync0_cycle_ns=%u\nsync0_shift_ns=%d\n"
+                                 "failure_stage=%s\n"
+                                 "kernel_log_source=/dev/kmsg (messages since enable attempt)\n\n",
+                                 timestamp, interface, selection, sync0_cycle_ns,
+                                 (int)sync0_shift_ns, failure_stage);
+        if (header_length > 0 && (size_t)header_length < sizeof(header)) {
+            console_ethercat_write_all(capture->temporary_log_fd, header,
+                                       (size_t)header_length);
+        }
+        if (capture->kernel_log_fd >= 0) {
+            for (;;) {
+                ssize_t result = read(capture->kernel_log_fd, kernel_message,
+                                      sizeof(kernel_message));
+                if (result > 0) {
+                    console_ethercat_write_all(capture->temporary_log_fd,
+                                               kernel_message, (size_t)result);
+                    continue;
+                }
+                if (result < 0 && errno == EINTR) continue;
+                if (result < 0 && errno == EPIPE) {
+                    static const char overrun[] =
+                        "\n[warning: kernel log buffer overrun; some messages may be missing]\n";
+                    if (kernel_log_overrun) break;
+                    console_ethercat_write_all(capture->temporary_log_fd,
+                                               overrun, sizeof(overrun) - 1u);
+                    kernel_log_overrun = true;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            static const char unavailable[] =
+                "Unable to read /dev/kmsg; check root privileges and kernel.dmesg_restrict.\n";
+            console_ethercat_write_all(capture->temporary_log_fd,
+                                       unavailable, sizeof(unavailable) - 1u);
+        }
+        fsync(capture->temporary_log_fd);
+        close(capture->temporary_log_fd);
+        capture->temporary_log_fd = -1;
+        snprintf(final_path, sizeof(final_path),
+                 "/tmp/ethercat-enable-failure-%s-%ld.log", timestamp, (long)getpid());
+        saved = rename(capture->temporary_path, final_path) == 0;
+        if (saved) {
+            printf("%s: %s\n", chinese ? "EtherCAT 内核日志已保存" :
+                   "EtherCAT kernel log saved", final_path);
+        } else {
+            printf("%s: %s\n", chinese ? "EtherCAT 内核日志保存失败" :
+                   "Failed to save EtherCAT kernel log", capture->temporary_path);
+            unlink(capture->temporary_path);
+        }
+    } else if (capture->temporary_log_fd >= 0) {
+        close(capture->temporary_log_fd);
+        capture->temporary_log_fd = -1;
+        unlink(capture->temporary_path);
+    }
+    if (capture->kernel_log_fd >= 0) {
+        close(capture->kernel_log_fd);
+        capture->kernel_log_fd = -1;
+    }
+    if (capture->debug_enabled && console_ethercat_set_kernel_debug(0u) != 0) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: 未能恢复 EtherLab debug=0，请手动执行 sudo /usr/local/etherlab/bin/ethercat debug 0" :
+               "ethercat_enable: failed to restore EtherLab debug=0; run sudo /usr/local/etherlab/bin/ethercat debug 0 manually");
+    }
+    capture->active = false;
+}
 
 typedef struct {
     bool valid;
@@ -1437,6 +1635,8 @@ static int console_ethercat_enable(bool chinese,
     unsigned int max_op_attempts;
     int result = -1;
     bool mapped = false;
+    ethercat_failure_log failure_capture;
+    const char *failure_stage = "opening-master";
 
     if (hold_ms == 0u) {
         printf("%s: interface=%s slave=%s hold=until-Ctrl-C sync0_cycle_ns=%u sync0_shift_ns=%d\n",
@@ -1449,18 +1649,24 @@ static int console_ethercat_enable(bool chinese,
                interface, selection, hold_ms, sync0_cycle_ns,
                (int)sync0_shift_ns);
     }
+    console_ethercat_failure_log_start(&failure_capture, chinese);
     if (ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_enable: 打开网卡失败" :
                "ethercat_enable: failed to open interface", interface);
+        console_ethercat_failure_log_finish(&failure_capture, true, chinese,
+                                            interface, selection, sync0_cycle_ns,
+                                            sync0_shift_ns, failure_stage);
         return -1;
     }
     ethercat_control_period_ns = sync0_cycle_ns;
+    failure_stage = "slave-discovery";
     if (ec_config_init(FALSE) <= 0) {
         printf("%s\n", chinese ? "ethercat_enable: 未发现 EtherCAT 从站" :
                "ethercat_enable: no EtherCAT slaves found");
         goto close_socket;
     }
     if (!all_slaves && slave_id > (unsigned int)ec_slavecount) {
+        failure_stage = "slave-selection";
         printf("%s: %u (1..%d)\n", chinese ? "ethercat_enable: 从站序号不存在" :
                "ethercat_enable: slave id is out of range", slave_id, ec_slavecount);
         goto close_socket;
@@ -1471,29 +1677,34 @@ static int console_ethercat_enable(bool chinese,
         }
     }
 
+    failure_stage = "pdo-configuration";
     ec_config_map(process_image);
     mapped = true;
     console_ethercat_reset_exchange_diagnostics();
     ethercat_expected_work_counter =
         ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
+    failure_stage = "sync0-configuration";
     if (console_ethercat_enable_dc_sync(selected, sync0_shift_ns, sync0_cycle_ns) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
     }
+    failure_stage = "pre-op-to-safe-op";
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
     }
     console_ethercat_cache_configuration(selected, sync0_cycle_ns, sync0_shift_ns);
+    failure_stage = "initial-pdo-exchange";
     if (console_ethercat_exchange() != 0 || console_ethercat_exchange() != 0 ||
         console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 初始 PDO 通信失败" :
                "ethercat_enable: initial PDO exchange failed");
         goto cleanup;
     }
+    failure_stage = "pdo-identity-validation";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u) {
             if (ec_slave[slave].inputs == NULL ||
@@ -1509,17 +1720,20 @@ static int console_ethercat_enable(bool chinese,
                 (const uint8_t *)ec_slave[slave].inputs + 2u);
         }
     }
+    failure_stage = "pdo-layout-validation";
     if (console_ethercat_selected_ready(selected, target_positions) != 0) {
         printf("%s\n", chinese ?
                "ethercat_enable: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝使能" :
                "ethercat_enable: PDO mapping is not the required Kaixuan 13B output/14B input layout; enable refused");
         goto cleanup;
     }
+    failure_stage = "initial-position-write";
     if (console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 写入初始位置失败" :
                "ethercat_enable: failed to write initial positions");
         goto cleanup;
     }
+    failure_stage = "request-operational";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u) {
             ec_slave[slave].state = EC_STATE_OPERATIONAL;
@@ -1537,6 +1751,7 @@ static int console_ethercat_enable(bool chinese,
         }
         console_ethercat_wait_next_cycle();
     }
+    failure_stage = "wait-operational";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u &&
             (ec_statecheck((uint16)slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) & 0x0fu) !=
@@ -1547,6 +1762,7 @@ static int console_ethercat_enable(bool chinese,
         }
     }
     diagnostic_control_word = 0x0006u;
+    failure_stage = "cia402-shutdown-0x0006";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0006 状态确认失败" :
@@ -1554,6 +1770,7 @@ static int console_ethercat_enable(bool chinese,
         goto cleanup;
     }
     diagnostic_control_word = 0x0007u;
+    failure_stage = "cia402-switch-on-0x0007";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0007 状态确认失败" :
@@ -1561,18 +1778,23 @@ static int console_ethercat_enable(bool chinese,
         goto cleanup;
     }
     diagnostic_control_word = 0x000fu;
+    failure_stage = "cia402-enable-0x000f";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
     if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x000F 状态确认失败" :
                "ethercat_enable: 0x000F state confirmation failed");
         goto cleanup;
     }
+    console_ethercat_failure_log_finish(&failure_capture, false, chinese,
+                                        interface, selection, sync0_cycle_ns,
+                                        sync0_shift_ns, failure_stage);
     console_ethercat_capture_live_pdo(selected);
     printf("%s\n", chinese ?
            "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
            "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
     console_ethercat_background_mark_ready();
     deadline = hold_ms == 0u ? UINT64_MAX : time_us() + (uint64_t)hold_ms * 1000u;
+    failure_stage = "enabled-pdo-hold";
     while (!stop_requested && !console_ethercat_background_should_stop() &&
            time_us() < deadline) {
         if (console_ethercat_exchange() != 0) {
@@ -1601,6 +1823,11 @@ cleanup:
 close_socket:
     ethercat_control_period_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
     ec_close();
+    console_ethercat_failure_log_finish(
+        &failure_capture,
+        result != 0 && !stop_requested && !console_ethercat_background_should_stop(),
+        chinese, interface, selection, sync0_cycle_ns, sync0_shift_ns,
+        failure_stage);
     return result;
 #endif
 }
