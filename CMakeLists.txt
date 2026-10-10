@@ -18,3 +18,9 @@ target_link_libraries(motor_console
 set_property(TARGET motor_console APPEND PROPERTY
   OBJECT_DEPENDS "${BXI_PCI_CTL_LIB}"
 )
+
+add_executable(maita_scan ./src/maita_scan.c)
+target_link_libraries(maita_scan PRIVATE pthread "${BXI_PCI_CTL_LIB}")
+set_property(TARGET maita_scan APPEND PROPERTY
+  OBJECT_DEPENDS "${BXI_PCI_CTL_LIB}"
+)

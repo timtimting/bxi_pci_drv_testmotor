@@ -5,6 +5,8 @@
  * CAN is classic standard frame, 1 Mbps, DLC=8.
  */
 
+#include "maita_protocol.h"
+
 typedef struct
 {
     unsigned int id;
@@ -16,28 +18,6 @@ typedef struct
     float speed_dps;
     int angle_deg;
 } maita_reply;
-
-enum {
-    MAITA_CAN_ID_MIN = 1u,
-    MAITA_CAN_ID_MAX = 32u,
-    MAITA_SEND_BASE = 0x140u,
-    MAITA_REPLY_BASE = 0x240u,
-    MAITA_BROADCAST_ID = 0x280u,
-    MAITA_MIT_BASE = 0x400u,
-    MAITA_MIT_REPLY_BASE = 0x500u,
-    MAITA_CMD_FUNC = 0x20u,
-    MAITA_CMD_PID_READ = 0x30u,
-    MAITA_CMD_ACCEL_READ = 0x42u,
-    MAITA_CMD_ZERO_CURRENT = 0x64u,
-    MAITA_CMD_RUN_MODE = 0x70u,
-    MAITA_CMD_RESET = 0x76u,
-    MAITA_CMD_SHUTDOWN = 0x80u,
-    MAITA_CMD_STOP = 0x81u,
-    MAITA_CMD_STATUS1 = 0x9au,
-    MAITA_CMD_TORQUE = 0xa1u,
-    MAITA_CMD_SW_VERSION = 0xb2u,
-    MAITA_CMD_MODEL = 0xb5u,
-};
 
 #define MAITA_POS_MIN_RAD (-12.566f)
 #define MAITA_POS_MAX_RAD (12.566f)
