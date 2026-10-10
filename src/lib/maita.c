@@ -24,8 +24,7 @@ typedef struct
 #define MAITA_VEL_MIN_RAD_S (-45.0f)
 #define MAITA_VEL_MAX_RAD_S (45.0f)
 #define MAITA_KP_MAX (500.0f)
-/* 供应商确认脉塔 MIT kd 通信范围为 0~5；手册 V4.4 修订记录写 0~50，与实际不一致。 */
-#define MAITA_KD_MAX (5.0f)
+#define MAITA_KD_MAX (50.0f)
 /* x12 电机供应商确认 MIT 力矩通信范围为 ±320。 */
 #define MAITA_X12_TORQUE_MAX_NM (320.0f)
 /* mit_stream 用于排查底层 MIT，默认保留原来的力矩通信量程。 */

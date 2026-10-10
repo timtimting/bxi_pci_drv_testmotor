@@ -120,12 +120,13 @@ MIT 控制帧包含目标位置、目标速度、前馈力矩、`kp`、`kd`。
 | `p_des` | 目标位置 | `-12.566 ~ +12.566 rad` | 16 bit |
 | `v_des` | 目标速度 | `-45 ~ +45 rad/s` | 12 bit |
 | `kp` | 位置误差系数 | `0 ~ 500` | 12 bit |
-| `kd` | 速度误差系数 | `0 ~ 5` | 12 bit |
+| `kd` | 速度误差系数 | `0 ~ 50` | 12 bit |
 | `t_ff` | 前馈力矩 | `-Motor Max Torque ~ +Motor Max Torque Nm` | 12 bit |
 
 说明：
 
-- `kd=0~5` 为供应商确认范围。
+- 脉塔 `mit_set`、`maita_mit`、`maita_pos`、`mit_stream` 统一按 `kd=0~50` 编码，不改变命令参数顺序。
+- `kd` 按 `round(clamp(kd, 0, 50) / 50 * 4095)` 换算；电机固件必须使用相同量程，不能混用旧的 `0~5` 编码。
 - `t_ff` 的范围由电机最大力矩决定。
 - 对 `x12_4.0`，当前按 `Motor Max Torque = 320Nm` 使用。
 
@@ -326,7 +327,7 @@ DATA[7] = t_ff[7:0]
 p_raw  = (p_des + 12.566) / 25.132 * 65535
 v_raw  = (v_des + 45)     / 90     * 4095
 kp_raw = kp               / 500    * 4095
-kd_raw = kd               / 5      * 4095
+kd_raw = kd               / 50     * 4095
 t_raw  = (t_ff + T_MAX)   / (2*T_MAX) * 4095
 ```
 
