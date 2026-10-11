@@ -19,6 +19,9 @@ cmake_args=(-S . -B build
     -DENABLE_ETHERLAB=ON "-DREQUIRE_ETHERLAB=$require_etherlab"
     "-DETHERLAB_ROOT=${ETHERLAB_ROOT:-}")
 
+printf '%s\n' '---'
+trap 'printf "%s\n" "---"' EXIT
+
 if (( EUID == 0 )); then
     if [[ -z "${SUDO_USER:-}" || "$SUDO_USER" == root ]]; then
         printf '%s\n' '请通过普通用户的 sudo 启动，以便编译时使用原用户权限。' >&2
@@ -26,13 +29,15 @@ if (( EUID == 0 )); then
     fi
     sudo -u "$SUDO_USER" -- cmake "${cmake_args[@]}"
     sudo -u "$SUDO_USER" -- cmake --build build --parallel 4
-    exec ./build/internal/motor_console "$@"
+else
+    cmake "${cmake_args[@]}"
+    cmake --build build --parallel 4
 fi
 
-cmake "${cmake_args[@]}"
-cmake --build build --parallel 4
+trap - EXIT
+printf '%s\n' '---'
 
-if [[ "$require_etherlab" == OFF ]]; then
+if (( EUID == 0 )) || [[ "$require_etherlab" == OFF ]]; then
     exec ./build/internal/motor_console "$@"
 fi
 exec sudo ./build/internal/motor_console "$@"
