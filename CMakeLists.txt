@@ -8,29 +8,41 @@ include_directories(./src ./src/lib ./lib)
 set(BXI_PCI_CTL_LIB "${CMAKE_SOURCE_DIR}/lib/libbxi_pci_drv.a")
 set(ETHERLAB_ROOT "" CACHE PATH "EtherLab installation prefix")
 option(ENABLE_ETHERLAB "Enable EtherCAT through the EtherLab master" ON)
+option(REQUIRE_ETHERLAB "Fail configuration when EtherLab is unavailable" OFF)
+
+if(REQUIRE_ETHERLAB AND NOT ENABLE_ETHERLAB)
+  message(FATAL_ERROR "REQUIRE_ETHERLAB needs ENABLE_ETHERLAB=ON")
+endif()
 
 if(ENABLE_ETHERLAB)
+  set(ETHERLAB_SEARCH_ROOTS "${ETHERLAB_ROOT}" "$ENV{ETHERLAB_ROOT}" /usr/local/etherlab /opt/etherlab)
   find_path(ETHERLAB_INCLUDE_DIR
     NAMES ecrt.h
-    PATHS "${ETHERLAB_ROOT}" "$ENV{ETHERLAB_ROOT}"
+    HINTS ${ETHERLAB_SEARCH_ROOTS}
     PATH_SUFFIXES include
   )
   find_library(ETHERLAB_LIBRARY
     NAMES ethercat
-    PATHS "${ETHERLAB_ROOT}" "$ENV{ETHERLAB_ROOT}"
+    HINTS ${ETHERLAB_SEARCH_ROOTS}
     PATH_SUFFIXES lib lib64
   )
 endif()
 
-if(ETHERLAB_INCLUDE_DIR AND ETHERLAB_LIBRARY)
+if(ENABLE_ETHERLAB AND ETHERLAB_INCLUDE_DIR AND ETHERLAB_LIBRARY)
   include_directories("${ETHERLAB_INCLUDE_DIR}")
   add_definitions(-DHAVE_ETHERLAB=1)
   message(STATUS "EtherLab master enabled: ${ETHERLAB_LIBRARY}")
+elseif(REQUIRE_ETHERLAB)
+  message(FATAL_ERROR "EtherLab headers (ecrt.h) or libethercat not found. Install the EtherLab development library or set ETHERLAB_ROOT to its installation prefix.")
+elseif(ENABLE_ETHERLAB)
+  message(WARNING "EtherLab not found: EtherCAT commands will be unavailable. Install the development library and rebuild.")
 else()
-  message(STATUS "EtherLab not found: EtherCAT commands will report build instructions")
+  message(STATUS "EtherLab master disabled")
 endif()
 
 add_executable(motor_console ./src/main.c ./src/lib/bxi_motor_comm.c)
+set_target_properties(motor_console PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/internal")
+configure_file("${CMAKE_SOURCE_DIR}/run_motor_console.sh" "${CMAKE_BINARY_DIR}/motor_console" COPYONLY)
 
 target_link_libraries(motor_console
   PRIVATE
@@ -39,7 +51,7 @@ target_link_libraries(motor_console
   "${BXI_PCI_CTL_LIB}"
 )
 
-if(ETHERLAB_INCLUDE_DIR AND ETHERLAB_LIBRARY)
+if(ENABLE_ETHERLAB AND ETHERLAB_INCLUDE_DIR AND ETHERLAB_LIBRARY)
   target_link_libraries(motor_console PRIVATE "${ETHERLAB_LIBRARY}")
 endif()
 

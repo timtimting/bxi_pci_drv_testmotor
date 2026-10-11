@@ -19,7 +19,10 @@ make
 
 Built program:
 
-- `build/motor_console` — unified interactive terminal.
+- `build/motor_console` — launcher for the unified interactive terminal.
+
+The actual executable is `build/internal/motor_console`. After updating an older
+checkout, run `make` once to replace the old executable with the launcher.
 
 ## Configuration
 
@@ -57,6 +60,11 @@ Current topology:
 ```bash
 sudo ./build/motor_console
 ```
+
+The launcher is a build-directory copy of `run_motor_console.sh`; it detects
+and incrementally builds EtherLab support before starting the terminal. With `sudo`, it
+builds as the original user, not as root. Missing EtherLab development files
+stop startup instead of launching a binary without EtherCAT support.
 
 Startup loads the configuration and initializes PCI/CAN. It does not power,
 enable, reset, control, or flash a motor. The editor supports pasted text,

@@ -21,6 +21,10 @@ make -j4
 sudo ./build/motor_console
 ```
 
+`build/motor_console` 现在是 `run_motor_console.sh` 的启动副本：每次启动前自动
+检测 EtherLab 开发库并增量构建，再运行内部程序。通过 `sudo` 启动时，构建由原登录用户完成。
+首次更新到此版本后需执行一次 `make`，将旧的同名二进制替换为启动入口；此后只需上述启动命令。
+
 ## 1. 安全说明
 
 操作真实电机前请确认：
@@ -42,11 +46,13 @@ sudo ./build/motor_console
 make
 ```
 
-生成以下程序：
+生成以下启动入口：
 
 ```text
-build/motor_console   统一交互终端
+build/motor_console   统一交互终端启动入口
 ```
+
+实际可执行文件位于 `build/internal/motor_console`，由启动入口调用，不建议直接运行。
 
 仅检查统一配置文件，不初始化 PCI/CAN，也不操作电机：
 
@@ -179,19 +185,37 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 
 终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
 旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
-更适合只连接 EtherCAT 电机的电脑。若 EtherLab 安装在非系统路径，重新构建时指定其前缀：
+更适合只连接 EtherCAT 电机的电脑。启动前自动检测 `/usr/local/etherlab`、
+`/opt/etherlab` 或系统路径，缺少开发库时直接报错，不会运行不支持 EtherCAT 的程序：
 
-交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
-`ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
-使能命令可用独立命名参数 `sync0_cycle_ms=<周期>` 配置周期，支持 `0.5/1/2/4/5/8 ms`；
-主站 Sync0 与 EtherCAT 循环会一起使用该周期。`hold_ms`、`sync0_shift_ns` 仍为可选位置参数，网卡覆盖参数放在最后。
+```bash
+sudo ./build/motor_console
+```
+
+交互终端中执行 `power_on` 后可输入 `ethercat_scan`。启动入口也支持直接传入命令行参数，
+例如 `sudo ./build/motor_console --ethercat-scan enp86s0`。若 EtherLab 安装在其他路径，
+可用未提权的脚本入口指定前缀：
+
+```bash
+ETHERLAB_ROOT=/custom/etherlab ./run_motor_console.sh
+```
+
+脚本只自动配置和编译用户态程序，不会安装 EtherLab、修改主站网卡配置、启动内核模块或给电机上电。
+若仍需手动构建，可指定安装前缀：
 
 ```bash
 cmake -S . -B build -DETHERLAB_ROOT=/opt/etherlab
 cmake --build build -j
 ```
 
-若未检测到 EtherLab，命令会提示安装用户态开发库后重新构建。master 0 必须在系统层绑定到命令指定网卡。
+交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
+`ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
+使能命令可用独立命名参数 `sync0_cycle_ms=<周期>` 配置周期，支持 `0.5/1/2/4/5/8 ms`；
+主站 Sync0 与 EtherCAT 循环会一起使用该周期。`hold_ms`、`sync0_shift_ns` 仍为可选位置参数，网卡覆盖参数放在最后。
+
+若未检测到 EtherLab，直接运行 `make` 仍可能构建不含 EtherCAT 的程序，但会给出警告；
+启动入口会停止并提示安装开发库。`--check-config` 和 `--help` 不要求 EtherLab。
+master 0 必须在系统层绑定到命令指定网卡。
 `ethercat_enable` 会在使能尝试期间临时启用 EtherLab `debug=1`；失败时把本次尝试的内核日志
 保存到 `/tmp/ethercat-enable-failure-*.log`，成功时删除临时日志并恢复 `debug=0`。此功能需要以
 root 运行且允许读取 `/dev/kmsg`；EtherLab 命令不在默认路径时，可通过 `ETHERLAB_CLI` 指定其绝对路径。
