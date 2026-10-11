@@ -57,9 +57,12 @@ int ec_config_init(boolean use_table);
 int ec_config_map(void *process_image);
 int ec_configdc(void);
 int ec_dcsync0(uint16 slave, boolean activate, uint32_t cycle_ns, int32_t shift_ns);
+int ec_activate(void);
 int ec_send_processdata(void);
 int ec_receive_processdata(int timeout_us);
 int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us);
+int ec_statecheck_with_progress(uint16 slave, uint16 requested_state, int timeout_us,
+                                bool chinese);
 int ec_readstate(void);
 int ec_writestate(uint16 slave);
 int ec_close(void);

@@ -282,6 +282,11 @@ int ec_dcsync0(uint16 slave, boolean activate, uint32_t cycle_ns, int32_t shift_
     return 0;
 }
 
+int ec_activate(void)
+{
+    return etherlab_activate();
+}
+
 int ec_send_processdata(void)
 {
     unsigned int slave;
@@ -332,21 +337,60 @@ int ec_receive_processdata(int timeout_us)
     return etherlab_working_counter;
 }
 
-int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
+static const char *etherlab_al_state_name(uint8_t state)
+{
+    switch (state & 0x0fu) {
+    case EC_STATE_INIT: return "INIT";
+    case EC_STATE_PRE_OP: return "PRE-OP";
+    case EC_STATE_BOOT: return "BOOT";
+    case EC_STATE_SAFE_OP: return "SAFE-OP";
+    case EC_STATE_OPERATIONAL: return "OP";
+    default: return "UNKNOWN";
+    }
+}
+
+static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout_us,
+                               bool report_progress, bool chinese)
 {
     struct timespec delay = {0, 1000000L};
     uint64_t deadline;
     uint64_t now;
+    uint64_t started_us;
+    uint64_t next_progress_us;
     struct timespec clock_now;
     int target = requested_state & 0x0f;
     if (etherlab_master == NULL) return 0;
     if (!etherlab_activated && etherlab_mapped && etherlab_activate() != 0) return 0;
     clock_gettime(CLOCK_MONOTONIC, &clock_now);
-    deadline = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u +
-               (uint64_t)(timeout_us > 0 ? timeout_us : 1);
+    started_us = (uint64_t)clock_now.tv_sec * 1000000u +
+                 (uint64_t)clock_now.tv_nsec / 1000u;
+    deadline = started_us + (uint64_t)(timeout_us > 0 ? timeout_us : 1);
+    next_progress_us = started_us;
     do {
         if (stop_requested || console_ethercat_background_should_stop()) return 0;
         ec_receive_processdata(EC_TIMEOUTRET);
+        if (report_progress) {
+            ec_master_state_t master_state;
+            int candidate;
+
+            clock_gettime(CLOCK_MONOTONIC, &clock_now);
+            now = (uint64_t)clock_now.tv_sec * 1000000u +
+                  (uint64_t)clock_now.tv_nsec / 1000u;
+            if (now >= next_progress_us) {
+                ecrt_master_state(etherlab_master, &master_state);
+                printf("ethercat_enable: %s %.3fs master=%u/%d link=%s\n",
+                       chinese ? "SAFE-OP 等待进度:" : "SAFE-OP wait progress:",
+                       (double)(now - started_us) / 1000000.0,
+                       master_state.slaves_responding, ec_slavecount,
+                       master_state.link_up ? "UP" : "DOWN");
+                for (candidate = 1; candidate <= ec_slavecount; ++candidate) {
+                    printf("  slave=%d AL=%s(0x%02x)\n", candidate,
+                           etherlab_al_state_name(ec_slave[candidate].state),
+                           (unsigned int)ec_slave[candidate].state);
+                }
+                next_progress_us = now + 1000000u;
+            }
+        }
         if (slave == 0) {
             int candidate;
             bool all_ready = true;
@@ -371,6 +415,17 @@ int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
         now = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u;
     } while (now < deadline);
     return slave > 0 && slave <= ec_slavecount ? ec_slave[slave].state : 0;
+}
+
+int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
+{
+    return etherlab_statecheck(slave, requested_state, timeout_us, false, false);
+}
+
+int ec_statecheck_with_progress(uint16 slave, uint16 requested_state, int timeout_us,
+                                bool chinese)
+{
+    return etherlab_statecheck(slave, requested_state, timeout_us, true, chinese);
 }
 
 int ec_readstate(void)

@@ -111,6 +111,17 @@ static bool console_ethercat_background_should_stop(void)
 static int console_ethercat_mailbox_cycle(void);
 #include "ethercat_etherlab_compat.c"
 
+static uint64_t console_ethercat_log_enable_stage(bool chinese, const char *stage,
+                                                   uint64_t started_us)
+{
+    uint64_t finished_us = console_ethercat_monotonic_us();
+
+    printf("ethercat_enable: %s %s %.3fms\n",
+           chinese ? "阶段耗时:" : "phase duration:", stage,
+           (double)(finished_us - started_us) / 1000.0);
+    return finished_us;
+}
+
 static struct {
     bool active;
     bool failed;
@@ -1969,6 +1980,9 @@ static int console_ethercat_enable(bool chinese,
     int result = -1;
     bool mapped = false;
     ethercat_failure_log failure_capture;
+    uint64_t enable_started_us;
+    uint64_t stage_started_us;
+    int stage_result;
     const char *failure_stage = "opening-master";
 
     if (hold_ms == 0u) {
@@ -1982,8 +1996,15 @@ static int console_ethercat_enable(bool chinese,
                interface, selection, hold_ms, sync0_cycle_ns,
                (int)sync0_shift_ns);
     }
+    enable_started_us = console_ethercat_monotonic_us();
+    stage_started_us = enable_started_us;
     console_ethercat_failure_log_start(&failure_capture, chinese);
-    if (ec_init((char *)interface) == 0) {
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "内核诊断准备" : "kernel diagnostic setup", stage_started_us);
+    stage_result = ec_init((char *)interface);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "主站申请" : "master request", stage_started_us);
+    if (stage_result == 0) {
         printf("%s: %s\n", chinese ? "ethercat_enable: 打开网卡失败" :
                "ethercat_enable: failed to open interface", interface);
         console_ethercat_failure_log_finish(&failure_capture, true, chinese,
@@ -1993,7 +2014,10 @@ static int console_ethercat_enable(bool chinese,
     }
     ethercat_control_period_ns = sync0_cycle_ns;
     failure_stage = "slave-discovery";
-    if (ec_config_init(FALSE) <= 0) {
+    stage_result = ec_config_init(FALSE);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "从站发现" : "slave discovery", stage_started_us);
+    if (stage_result <= 0) {
         printf("%s\n", chinese ? "ethercat_enable: 未发现 EtherCAT 从站" :
                "ethercat_enable: no EtherCAT slaves found");
         goto close_socket;
@@ -2016,7 +2040,10 @@ static int console_ethercat_enable(bool chinese,
     }
 
     failure_stage = "pdo-configuration";
-    if (ec_config_map(process_image) <= 0) {
+    stage_result = ec_config_map(process_image);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "PDO 映射" : "PDO mapping", stage_started_us);
+    if (stage_result <= 0) {
         printf("%s\n", chinese ? "ethercat_enable: PDO 配置失败" :
                "ethercat_enable: PDO configuration failed");
         goto cleanup;
@@ -2027,7 +2054,11 @@ static int console_ethercat_enable(bool chinese,
         ((int)ec_group[0].outputsWKC * 2) + (int)ec_group[0].inputsWKC;
     ec_configdc();
     failure_stage = "sync0-configuration";
-    if (console_ethercat_enable_dc_sync(configured, sync0_shift_ns, sync0_cycle_ns) != 0) {
+    stage_result = console_ethercat_enable_dc_sync(configured, sync0_shift_ns,
+                                                    sync0_cycle_ns);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "DC/Sync0 配置" : "DC/Sync0 configuration", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 目标从站不支持 DC Sync0" :
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
@@ -2036,10 +2067,25 @@ static int console_ethercat_enable(bool chinese,
     printf("%s\n", chinese ? "ethercat_enable: 正在读取使能前 SDO 配置" :
            "ethercat_enable: reading SDO configuration before activation");
     console_ethercat_cache_configuration(configured, sync0_cycle_ns, sync0_shift_ns);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "使能前 SDO 快照" : "pre-enable SDO snapshot", stage_started_us);
+    failure_stage = "master-activation";
+    stage_result = ec_activate();
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "主站激活" : "master activation", stage_started_us);
+    if (stage_result != 0) {
+        printf("%s\n", chinese ? "ethercat_enable: 主站激活失败" :
+               "ethercat_enable: master activation failed");
+        goto cleanup;
+    }
     failure_stage = "pre-op-to-safe-op";
     printf("%s %ds\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
            "ethercat_enable: waiting for SAFE-OP, up to", EC_TIMEOUTSTATE / 1000000);
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
+    stage_result = ec_statecheck_with_progress(0, EC_STATE_SAFE_OP,
+                                               EC_TIMEOUTSTATE, chinese);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "等待所有从站 SAFE-OP" : "all-slave SAFE-OP wait", stage_started_us);
+    if ((stage_result & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_enable: 从站未进入 SAFE-OP" :
                "ethercat_enable: slaves did not reach SAFE-OP");
         goto cleanup;
@@ -2048,8 +2094,13 @@ static int console_ethercat_enable(bool chinese,
            "ethercat_enable: SAFE-OP confirmed");
     failure_stage = "post-safe-op-dc-snapshot";
     console_ethercat_cache_dc_registers(configured);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "DC 寄存器快照" : "DC register snapshot", stage_started_us);
     failure_stage = "initial-pdo-exchange";
-    if (console_ethercat_wait_for_initial_pdo() != 0) {
+    stage_result = console_ethercat_wait_for_initial_pdo();
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "初始 PDO/WKC 确认" : "initial PDO/WKC confirmation", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ?
                "ethercat_enable: 初始 PDO 未在 250ms 内连续 3 次获得完整 WKC" :
                "ethercat_enable: initial PDO did not reach complete WKC for 3 cycles within 250ms");
@@ -2078,8 +2129,14 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: PDO mapping is not the required Kaixuan 13B output/14B input layout; enable refused");
         goto cleanup;
     }
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "从站校验和初始目标" : "slave validation and initial target",
+        stage_started_us);
     failure_stage = "initial-position-write";
-    if (console_ethercat_exchange() != 0) {
+    stage_result = console_ethercat_exchange();
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "初始位置 PDO 发送" : "initial position PDO exchange", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 写入初始位置失败" :
                "ethercat_enable: failed to write initial positions");
         goto cleanup;
@@ -2101,6 +2158,8 @@ static int console_ethercat_enable(bool chinese,
             break;
         }
     }
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "从站进入 OP" : "slave OP transition", stage_started_us);
     failure_stage = "wait-operational";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u &&
@@ -2113,7 +2172,10 @@ static int console_ethercat_enable(bool chinese,
     diagnostic_control_word = 0x0006u;
     failure_stage = "cia402-shutdown-0x0006";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
-    if (console_ethercat_wait_for_status(selected, 0x0021u) != 0) {
+    stage_result = console_ethercat_wait_for_status(selected, 0x0021u);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "CiA402 0x0006 状态" : "CiA402 0x0006 state", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0006 状态确认失败" :
                "ethercat_enable: 0x0006 state confirmation failed");
         goto cleanup;
@@ -2121,7 +2183,10 @@ static int console_ethercat_enable(bool chinese,
     diagnostic_control_word = 0x0007u;
     failure_stage = "cia402-switch-on-0x0007";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
-    if (console_ethercat_wait_for_status(selected, 0x0023u) != 0) {
+    stage_result = console_ethercat_wait_for_status(selected, 0x0023u);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "CiA402 0x0007 状态" : "CiA402 0x0007 state", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x0007 状态确认失败" :
                "ethercat_enable: 0x0007 state confirmation failed");
         goto cleanup;
@@ -2129,7 +2194,10 @@ static int console_ethercat_enable(bool chinese,
     diagnostic_control_word = 0x000fu;
     failure_stage = "cia402-enable-0x000f";
     console_ethercat_set_control_word(selected, diagnostic_control_word);
-    if (console_ethercat_wait_for_status(selected, 0x0027u) != 0) {
+    stage_result = console_ethercat_wait_for_status(selected, 0x0027u);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "CiA402 0x000F 使能" : "CiA402 0x000F enable", stage_started_us);
+    if (stage_result != 0) {
         printf("%s\n", chinese ? "ethercat_enable: 0x000F 状态确认失败" :
                "ethercat_enable: 0x000F state confirmation failed");
         goto cleanup;
@@ -2138,6 +2206,10 @@ static int console_ethercat_enable(bool chinese,
                                         interface, selection, sync0_cycle_ns,
                                         sync0_shift_ns, failure_stage);
     console_ethercat_capture_live_pdo(selected);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "收尾与实时快照" : "finalization and live snapshot", stage_started_us);
+    console_ethercat_log_enable_stage(chinese,
+        chinese ? "使能初始化总计" : "enable initialization total", enable_started_us);
     printf("%s\n", chinese ?
            "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
            "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
