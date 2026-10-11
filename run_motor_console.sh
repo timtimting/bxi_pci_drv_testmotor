@@ -19,8 +19,8 @@ cmake_args=(-S . -B build
     -DENABLE_ETHERLAB=ON "-DREQUIRE_ETHERLAB=$require_etherlab"
     "-DETHERLAB_ROOT=${ETHERLAB_ROOT:-}")
 
-printf '%s\n' '---'
-trap 'printf "%s\n" "---"' EXIT
+printf '\n%s\n' '==================== EtherLab 启动检查与编译：开始 ===================='
+trap 'printf "%s\n\n" "==================== EtherLab 启动检查与编译：失败 ===================="' EXIT
 
 if (( EUID == 0 )); then
     if [[ -z "${SUDO_USER:-}" || "$SUDO_USER" == root ]]; then
@@ -35,7 +35,7 @@ else
 fi
 
 trap - EXIT
-printf '%s\n' '---'
+printf '%s\n\n' '==================== EtherLab 启动检查与编译：完成 ===================='
 
 if (( EUID == 0 )) || [[ "$require_etherlab" == OFF ]]; then
     exec ./build/internal/motor_console "$@"
