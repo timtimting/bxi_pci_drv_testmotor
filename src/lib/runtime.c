@@ -93,6 +93,8 @@ typedef struct
     unsigned int flags;
     uint8_t data[CANFD_MAX_DLEN];
     uint64_t time_us;
+    unsigned int raw_can_id;
+    uint64_t monotonic_us;
 } rx_can_frame;
 
 typedef struct
@@ -103,6 +105,7 @@ typedef struct
     size_t used;
     pthread_mutex_t lock;
     pthread_cond_t cond;
+    uint64_t can_errors[CANFD_DEVICE_NUM];
 } frame_ring;
 
 typedef struct
@@ -282,6 +285,14 @@ static uint64_t time_us(void)
 
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
+}
+
+static uint64_t monotonic_time_us(void)
+{
+    struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000ULL + (uint64_t)now.tv_nsec / 1000ULL;
 }
 
 static void sleep_ms(unsigned int ms)
@@ -1003,6 +1014,9 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     if (is_hardware_error_frame(msg->frame.can_id)) {
         unsigned int i;
 
+        pthread_mutex_lock(&state->frames.lock);
+        state->frames.can_errors[msg->bus]++;
+        pthread_mutex_unlock(&state->frames.lock);
         if (state->show_can_output) {
             flockfile(stdout);
             printf("\n【hardware】 bus=%u raw_id=0x%08x err=0x%08x len=%u flags=0x%02x data:",
@@ -1028,6 +1042,8 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     frame.len = msg->frame.len;
     frame.flags = msg->frame.flags;
     frame.time_us = time_us();
+    frame.raw_can_id = msg->frame.can_id;
+    frame.monotonic_us = monotonic_time_us();
     if (frame.len > CANFD_MAX_DLEN) {
         frame.len = CANFD_MAX_DLEN;
     }

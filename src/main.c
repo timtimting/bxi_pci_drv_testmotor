@@ -42,7 +42,7 @@ static const char *const console_command_words[] = {
     "maita_power_on", "maita_power_off", "maita_info", "maita_enable", "maita_disable",
     "maita_torque", "maita_zero", "maita_zero_reset", "maita_reset", "maita_version", "maita_pid",
     "maita_accel", "maita_temp", "maita_state", "maita_broadcast", "maita_pos",
-    "can_status",
+    "maita_scan", "motor_scan", "can_status",
     "language", "lang", "quit", "exit", "q", "qq",
 };
 
@@ -50,6 +50,7 @@ static const char *const console_command_words[] = {
 #include "lib/display.c"
 #include "lib/control.c"
 #include "lib/maita.c"
+#include "lib/maita_scan.c"
 #include "lib/flash.c"
 #include "lib/debug.c"
 #include "lib/terminal.c"

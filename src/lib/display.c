@@ -11,6 +11,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("统一电机终端命令（详细说明：help all 或 -h all）：\n");
             printf("  帮助/语言： help | -h | ?    language zh|en\n\n");
             printf("  电源/状态： power_on [wait_ms]    power_off    can_status [reset]\n\n");
+            printf("  脉塔扫描： maita_scan [timeout_ms] [attempts]（别名 motor_scan）\n\n");
             printf("  脉塔调试：  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
             printf("             maita_enable <bus> <id>    maita_disable <bus> <id>\n");
             printf("             maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>    maita_zero_reset <bus> <id>\n");
@@ -25,6 +26,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("Unified motor console commands (details: help all or -h all):\n");
             printf("  Help/lang:  help | -h | ?    language zh|en\n\n");
             printf("  Power/status: power_on [wait_ms]    power_off    can_status [reset]\n\n");
+            printf("  Maita scan: maita_scan [timeout_ms] [attempts] (alias: motor_scan)\n\n");
             printf("  Maita debug:   maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
             printf("                 maita_enable <bus> <id>    maita_disable <bus> <id>\n");
             printf("                 maita_torque <bus> <id> <iq_A>    maita_zero <bus> <id>    maita_zero_reset <bus> <id>\n");
@@ -49,6 +51,10 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      脉塔调试分支中只打开电机总电源并等待软启动，不扫描配置电机。\n");
         printf("  power_off\n");
         printf("      关闭电机总电源，不发送 BXI 失能帧。\n");
+        printf("  maita_scan|motor_scan [timeout_ms] [attempts]\n");
+        printf("      先 power_on；在本终端扫描全部 bus=0..4、ID=1..32，不依赖配置电机列表。\n");
+        printf("      仅发送 0x9A 状态查询；默认每次等待 100ms、最多尝试 2 次，范围分别为 1..5000、1..10。\n");
+        printf("      扫描完成保持供电和 PCI/CAN 连接，可继续控制；无回复不代表不存在电机。\n");
         printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
         printf("      通过 0x400+ID 发送一帧脉塔运动模式零命令，并解析 0x500+ID 回复。\n");
         printf("  maita_enable <bus> <id>\n");
@@ -98,6 +104,10 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      In the Maita branch, only turn motor power on and wait; no configured motor scan.\n");
     printf("  power_off\n");
     printf("      Turn motor power off without sending BXI disable frames.\n");
+    printf("  maita_scan|motor_scan [timeout_ms] [attempts]\n");
+    printf("      Run power_on first; scan every bus=0..4 and ID=1..32, independent of configured motors.\n");
+    printf("      Status 0x9A only; defaults: 100ms per attempt, up to 2 attempts; ranges: 1..5000 and 1..10.\n");
+    printf("      Keep power and PCI/CAN open for subsequent commands; no reply does not prove absence.\n");
     printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
     printf("      Send one 0x400+ID motion-mode zero frame and decode the 0x500+ID reply.\n");
     printf("  maita_enable <bus> <id>\n");

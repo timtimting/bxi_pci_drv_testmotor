@@ -48,7 +48,6 @@ static int console_reload_config(flash_state *state, const char *path)
 static int console_run_command(flash_state *state, int argc, char **argv)
 {
     const char *cmd;
-    unsigned int timeout_ms;
 
     if (argc == 0) {
         return 0;
@@ -116,13 +115,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_motor_probe(state);
-    } else if (strcmp(cmd, "motor_scan") == 0) {
-        timeout_ms = state->config.scan_timeout_ms;
-        if (argc > 2 || (argc == 2 && parse_uint_arg(argv[1], &timeout_ms) != 0)) {
-            printf("%s: motor_scan [timeout_ms]\n", console_text(state, "用法", "usage"));
-            return -1;
-        }
-        return console_probe_motors(state, timeout_ms);
+    } else if (strcmp(cmd, "maita_scan") == 0 || strcmp(cmd, "motor_scan") == 0) {
+        return console_maita_scan(state, argc, argv);
     } else if (strcmp(cmd, "motor_list") == 0) {
         if (argc != 1) {
             printf("%s: motor_list\n", console_text(state, "用法", "usage"));
