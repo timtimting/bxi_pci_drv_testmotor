@@ -17,6 +17,8 @@ static unsigned int ethercat_output_count;
 static unsigned int ethercat_output_dropped;
 static bool ethercat_output_started;
 static bool ethercat_output_stopping;
+static uint64_t ethercat_output_submitted;
+static uint64_t ethercat_output_emitted;
 
 static int console_ethercat_printf(const char *format, ...)
     __attribute__((format(printf, 1, 2)));
@@ -45,6 +47,7 @@ static int console_ethercat_printf(const char *format, ...)
         memcpy(ethercat_output_queue[slot].text, message,
                (size_t)length < sizeof(message) ? (size_t)length + 1u : sizeof(message));
         ethercat_output_count++;
+        ethercat_output_submitted++;
         if ((size_t)length >= sizeof(message)) ethercat_output_dropped++;
     } else {
         ethercat_output_dropped++;
@@ -86,11 +89,24 @@ static void *console_ethercat_output_worker(void *argument)
         console_output_emit(stdout, message.text, strlen(message.text), message.stamp);
         fflush(stdout);
         pthread_mutex_lock(&ethercat_output_mutex);
+        ethercat_output_emitted++;
         drained = ethercat_output_count == 0u;
+        pthread_cond_broadcast(&ethercat_output_condition);
         pthread_mutex_unlock(&ethercat_output_mutex);
         if (drained) console_output_prompt_refresh();
     }
     return NULL;
+}
+
+static void console_ethercat_output_flush(void)
+{
+    uint64_t target;
+
+    pthread_mutex_lock(&ethercat_output_mutex);
+    target = ethercat_output_submitted;
+    while (ethercat_output_started && ethercat_output_emitted < target)
+        pthread_cond_wait(&ethercat_output_condition, &ethercat_output_mutex);
+    pthread_mutex_unlock(&ethercat_output_mutex);
 }
 
 static int console_ethercat_output_start(void)

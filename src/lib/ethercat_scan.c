@@ -95,6 +95,22 @@ static unsigned int ethercat_command_count;
 static bool ethercat_background_started;
 static bool ethercat_background_stop_requested;
 static bool ethercat_background_owner;
+static uint64_t ethercat_scan_wait_sequence;
+static bool ethercat_scan_wait_done;
+static int ethercat_scan_wait_result;
+
+static void console_ethercat_scan_notify(int result)
+{
+    uint64_t sequence = console_output_get_context().sequence;
+
+    pthread_mutex_lock(&ethercat_background_mutex);
+    if (sequence != 0u && ethercat_scan_wait_sequence == sequence && !ethercat_scan_wait_done) {
+        ethercat_scan_wait_result = result;
+        ethercat_scan_wait_done = true;
+        pthread_cond_broadcast(&ethercat_background_condition);
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+}
 
 static bool console_ethercat_background_should_stop(void)
 {
@@ -1904,6 +1920,49 @@ static void console_ethercat_disable_selected(const uint8_t selected[EC_MAXSLAVE
     }
 }
 
+static void console_ethercat_print_scan_failure(const uint8_t configured[EC_MAXSLAVE])
+{
+    int slave;
+
+    printf("ethercat_scan: WKC=%d/%d min=%d incomplete=%u\n",
+           ethercat_last_work_counter, ethercat_expected_work_counter,
+           ethercat_min_work_counter == INT_MAX ? 0 : ethercat_min_work_counter,
+           ethercat_incomplete_work_counter_count);
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint8_t al_code_bytes[2] = {0};
+        uint16_t status_word = 0u;
+        uint16_t pdo_error = 0u;
+        int al_state;
+        int al_code_read;
+
+        if (!configured[slave]) continue;
+        al_state = ec_slave[slave].state;
+        if (ec_slave[slave].inputs != NULL) {
+            status_word = console_ethercat_read_u16(ec_slave[slave].inputs);
+            pdo_error = console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u);
+        }
+        al_code_read = ec_FPRD(ec_slave[slave].configadr, 0x0134u,
+                               (uint16)sizeof(al_code_bytes), al_code_bytes,
+                               EC_TIMEOUTRET);
+        printf("  slave=%d AL=%s(0x%02x) ALcode=", slave,
+               console_ethercat_state_name((uint8_t)al_state),
+               (unsigned int)al_state);
+        if (al_code_read > 0) {
+            printf("0x%04x", (unsigned int)al_code_bytes[0] |
+                   ((unsigned int)al_code_bytes[1] << 8u));
+        } else {
+            printf("not-read");
+        }
+        if (ec_slave[slave].inputs != NULL) {
+            printf(" SW=0x%04x PDO_error=0x%04x", status_word, pdo_error);
+        } else {
+            printf(" SW=not-read PDO_error=not-read");
+        }
+        printf(" CW=0x%04x\n", ec_slave[slave].outputs != NULL ?
+               console_ethercat_read_u16(ec_slave[slave].outputs) : 0u);
+    }
+}
+
 static int console_ethercat_prepare_scan_session(bool chinese)
 {
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
@@ -1911,7 +1970,7 @@ static int console_ethercat_prepare_scan_session(bool chinese)
     uint8_t unmonitored[EC_MAXSLAVE] = {0};
     int32_t target_positions[EC_MAXSLAVE] = {0};
     unsigned int max_op_attempts =
-        (400000000u + ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS - 1u) /
+        (2000000000u + ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS - 1u) /
         ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
     unsigned int attempt;
     uint64_t started_us;
@@ -1919,6 +1978,7 @@ static int console_ethercat_prepare_scan_session(bool chinese)
     int result = -1;
     bool mapped = false;
     bool operational = false;
+    bool exchange_failed = false;
 
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
@@ -1966,6 +2026,8 @@ static int console_ethercat_prepare_scan_session(bool chinese)
                "ethercat_scan: slaves did not reach SAFE-OP");
         goto cleanup;
     }
+    printf("%s\n", chinese ? "ethercat_scan: SAFE-OP 已确认；正在验证 PDO/WKC" :
+           "ethercat_scan: SAFE-OP confirmed; checking PDO/WKC");
     console_ethercat_cache_dc_registers(configured);
     if (console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_scan: 初始 PDO/WKC 确认失败" :
@@ -1992,17 +2054,34 @@ static int console_ethercat_prepare_scan_session(bool chinese)
         ec_slave[slave].state = EC_STATE_OPERATIONAL;
         ec_writestate((uint16)slave);
     }
+    printf("%s\n", chinese ? "ethercat_scan: 正在等待 OP，最长 2s" :
+           "ethercat_scan: waiting for OP, up to 2s");
     for (attempt = 0u; attempt < max_op_attempts && !stop_requested &&
          !console_ethercat_background_should_stop(); attempt++) {
-        if (console_ethercat_exchange() != 0) break;
+        if (console_ethercat_exchange() != 0) {
+            exchange_failed = true;
+            break;
+        }
         if (console_ethercat_selected_operational(configured)) {
             operational = true;
             break;
         }
     }
-    if (!operational || console_ethercat_wait_for_status(configured, 0x0040u) != 0) {
-        printf("%s\n", chinese ? "ethercat_scan: OP 或失能状态确认失败" :
-               "ethercat_scan: OP or disabled-state confirmation failed");
+    if (!operational) {
+        printf("%s\n", exchange_failed ?
+               (chinese ? "ethercat_scan: 等待 OP 时 PDO 通信中断" :
+                          "ethercat_scan: PDO exchange failed while waiting for OP") :
+               (chinese ? "ethercat_scan: 从站未在 2s 内进入 OP" :
+                          "ethercat_scan: slaves did not reach OP within 2s"));
+        console_ethercat_print_scan_failure(configured);
+        goto cleanup;
+    }
+    printf("%s\n", chinese ? "ethercat_scan: OP 已确认；正在确认伺服失能状态" :
+           "ethercat_scan: OP confirmed; checking disabled drive state");
+    if (console_ethercat_wait_for_status(configured, 0x0040u) != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: CiA402 失能状态确认失败" :
+               "ethercat_scan: CiA402 disabled-state confirmation failed");
+        console_ethercat_print_scan_failure(configured);
         goto cleanup;
     }
     memcpy(ethercat_session.configured, configured, sizeof(configured));
@@ -2012,6 +2091,7 @@ static int console_ethercat_prepare_scan_session(bool chinese)
            (double)(console_ethercat_monotonic_us() - started_us) / 1000000.0,
            chinese ? "从站处于 OP 且伺服失能，后台持续通信；后续使能复用主站。" :
            "slaves are OP with drives disabled; cyclic communication continues for fast enable.");
+    console_ethercat_scan_notify(0);
     result = console_ethercat_run_session(unmonitored, 0u);
 
 cleanup:

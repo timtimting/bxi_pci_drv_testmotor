@@ -379,6 +379,8 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
             printf("%s: %s\n", console_ethercat_task_name(command.task),
                    command_result == 0 ? (command.chinese ? "后台执行完成" : "background complete") :
                    (command.chinese ? "后台执行失败" : "background failed"));
+            if (command.task == ETHERCAT_TASK_SCAN)
+                console_ethercat_scan_notify(command_result);
             console_output_current = previous_context;
         }
         if (ethercat_session.failed) result = -1;
@@ -439,6 +441,8 @@ static void *console_ethercat_background_worker(void *argument)
             printf("%s: %s\n", console_ethercat_task_name(command.task),
                    result == 0 ? (command.chinese ? "后台执行完成" : "background complete") :
                    (command.chinese ? "后台执行失败" : "background failed"));
+            if (command.task == ETHERCAT_TASK_SCAN)
+                console_ethercat_scan_notify(result);
 #ifdef HAVE_ETHERLAB
             if (result != 0) console_ethercat_cancel_pending();
 #endif
@@ -553,9 +557,37 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     ethercat_command_queue[(ethercat_command_head + ethercat_command_count) %
                            ETHERCAT_COMMAND_QUEUE_SIZE] = command;
     ethercat_command_count++;
+    if (task == ETHERCAT_TASK_SCAN) {
+        ethercat_scan_wait_sequence = command.output_context.sequence;
+        ethercat_scan_wait_done = false;
+    }
     printf("%s: %s\n", console_ethercat_task_name(task),
            chinese ? "已提交后台队列（不代表执行成功）" : "queued (not execution confirmation)");
     pthread_cond_broadcast(&ethercat_background_condition);
     pthread_mutex_unlock(&ethercat_background_mutex);
+    if (task == ETHERCAT_TASK_SCAN) {
+        int result;
+
+        pthread_mutex_lock(&ethercat_background_mutex);
+        while (!ethercat_scan_wait_done && !stop_requested &&
+               !ethercat_background_stop_requested) {
+            struct timespec deadline;
+
+            clock_gettime(CLOCK_REALTIME, &deadline);
+            deadline.tv_nsec += 100000000L;
+            if (deadline.tv_nsec >= 1000000000L) {
+                deadline.tv_sec++;
+                deadline.tv_nsec -= 1000000000L;
+            }
+            pthread_cond_timedwait(&ethercat_background_condition,
+                                   &ethercat_background_mutex, &deadline);
+        }
+        result = ethercat_scan_wait_done ? ethercat_scan_wait_result : -1;
+        ethercat_scan_wait_sequence = 0u;
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        console_ethercat_output_flush();
+        if (isatty(STDIN_FILENO)) tcflush(STDIN_FILENO, TCIFLUSH);
+        return result;
+    }
     return 0;
 }
