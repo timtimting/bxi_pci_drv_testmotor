@@ -1903,6 +1903,122 @@ static void console_ethercat_disable_selected(const uint8_t selected[EC_MAXSLAVE
         }
     }
 }
+
+static int console_ethercat_prepare_scan_session(bool chinese)
+{
+    uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
+    uint8_t configured[EC_MAXSLAVE] = {0};
+    uint8_t unmonitored[EC_MAXSLAVE] = {0};
+    int32_t target_positions[EC_MAXSLAVE] = {0};
+    unsigned int max_op_attempts =
+        (400000000u + ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS - 1u) /
+        ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+    unsigned int attempt;
+    uint64_t started_us;
+    int slave;
+    int result = -1;
+    bool mapped = false;
+    bool operational = false;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE) {
+            printf("ethercat_scan: slave=%d %s\n", slave,
+                   chinese ? "不是开璇驱动器；仅显示拓扑，跳过 PDO 预热。" :
+                   "is not a Kaixuan drive; topology shown, PDO warm-up skipped.");
+            ec_close();
+            return 0;
+        }
+        configured[slave] = 1u;
+    }
+    started_us = console_ethercat_monotonic_us();
+    printf("%s\n", chinese ?
+           "ethercat_scan: 正在预热 PDO/DC（Sync0=1ms, shift=0）；保持控制字 0x0000，不使能电机。" :
+           "ethercat_scan: warming PDO/DC (Sync0=1ms, shift=0); keeping control word 0x0000, drives disabled.");
+    ethercat_control_period_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
+    if (ec_config_map(process_image) <= 0) {
+        printf("%s\n", chinese ? "ethercat_scan: PDO 映射失败" :
+               "ethercat_scan: PDO mapping failed");
+        goto cleanup;
+    }
+    mapped = true;
+    console_ethercat_reset_exchange_diagnostics();
+    ethercat_expected_work_counter =
+        ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC;
+    ec_configdc();
+    if (console_ethercat_enable_dc_sync(configured, 0,
+                                        ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS) != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: 从站 DC Sync0 配置失败" :
+               "ethercat_scan: slave DC Sync0 configuration failed");
+        goto cleanup;
+    }
+    console_ethercat_cache_configuration(configured, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, 0);
+    if (ec_activate() != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: 主站激活失败" :
+               "ethercat_scan: master activation failed");
+        goto cleanup;
+    }
+    printf("%s\n", chinese ? "ethercat_scan: 正在等待 SAFE-OP，最长 7s" :
+           "ethercat_scan: waiting for SAFE-OP, up to 7s");
+    if ((ec_statecheck_with_progress(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE,
+                                     chinese, "ethercat_scan") & 0x0fu) != EC_STATE_SAFE_OP) {
+        printf("%s\n", chinese ? "ethercat_scan: 从站未进入 SAFE-OP" :
+               "ethercat_scan: slaves did not reach SAFE-OP");
+        goto cleanup;
+    }
+    console_ethercat_cache_dc_registers(configured);
+    if (console_ethercat_wait_for_initial_pdo() != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: 初始 PDO/WKC 确认失败" :
+               "ethercat_scan: initial PDO/WKC confirmation failed");
+        goto cleanup;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (ec_slave[slave].inputs == NULL ||
+            ec_slave[slave].Ibits < ETHERCAT_KAIXUAN_TXPDO_MIN_BITS) {
+            printf("ethercat_scan: slave=%d %s\n", slave,
+                   chinese ? "PDO 输入映射不匹配" : "PDO input mapping mismatch");
+            goto cleanup;
+        }
+        target_positions[slave] = console_ethercat_read_i32(
+            (const uint8_t *)ec_slave[slave].inputs + 2u);
+    }
+    if (console_ethercat_selected_ready(configured, target_positions) != 0 ||
+        console_ethercat_exchange() != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: 初始位置 PDO 发送失败" :
+               "ethercat_scan: initial position PDO exchange failed");
+        goto cleanup;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        ec_slave[slave].state = EC_STATE_OPERATIONAL;
+        ec_writestate((uint16)slave);
+    }
+    for (attempt = 0u; attempt < max_op_attempts && !stop_requested &&
+         !console_ethercat_background_should_stop(); attempt++) {
+        if (console_ethercat_exchange() != 0) break;
+        if (console_ethercat_selected_operational(configured)) {
+            operational = true;
+            break;
+        }
+    }
+    if (!operational || console_ethercat_wait_for_status(configured, 0x0040u) != 0) {
+        printf("%s\n", chinese ? "ethercat_scan: OP 或失能状态确认失败" :
+               "ethercat_scan: OP or disabled-state confirmation failed");
+        goto cleanup;
+    }
+    memcpy(ethercat_session.configured, configured, sizeof(configured));
+    console_ethercat_capture_live_pdo(configured);
+    printf("ethercat_scan: %s %.3fs; %s\n",
+           chinese ? "PDO 预热完成，耗时" : "PDO warm-up complete in",
+           (double)(console_ethercat_monotonic_us() - started_us) / 1000000.0,
+           chinese ? "从站处于 OP 且伺服失能，后台持续通信；后续使能复用主站。" :
+           "slaves are OP with drives disabled; cyclic communication continues for fast enable.");
+    result = console_ethercat_run_session(unmonitored, 0u);
+
+cleanup:
+    if (mapped) console_ethercat_disable_selected(configured);
+    ec_close();
+    return result;
+}
 #endif
 
 static int console_ethercat_scan(bool chinese, const char *interface)
@@ -1955,13 +2071,20 @@ static int console_ethercat_scan(bool chinese, const char *interface)
                (unsigned int)ec_slave[slave].eep_rev,
                ec_slave[slave].hasdc ? "yes" : "no");
     }
-    printf("%s\n", ethercat_session.active ?
-           (chinese ? "显示后台已有拓扑及实时状态；未重新扫描或改变使能状态。" :
-            "Showing background topology and live states; no rescan or enable-state change.") :
-           (chinese ? "扫描未配置 PDO、未请求 OP 状态，也未向电机发送使能或运动指令。" :
-            "The scan did not configure PDOs, request OP state, or send drive-enable/motion commands."));
-    if (!ethercat_session.active) ec_close();
-    return 0;
+    if (ethercat_session.active) {
+        printf("%s\n", chinese ?
+               "显示后台已有拓扑及实时状态；未重新扫描或改变使能状态。" :
+               "Showing background topology and live states; no rescan or enable-state change.");
+        return 0;
+    }
+    if (!ethercat_background_owner) {
+        printf("%s\n", chinese ?
+               "独立扫描未配置 PDO、未请求 OP，也未发送使能或运动指令。" :
+               "Standalone scan did not configure PDOs, request OP, or command drive enable/motion.");
+        ec_close();
+        return 0;
+    }
+    return console_ethercat_prepare_scan_session(chinese);
 #endif
 }
 
@@ -2109,7 +2232,8 @@ static int console_ethercat_enable(bool chinese,
     printf("%s %ds\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
            "ethercat_enable: waiting for SAFE-OP, up to", EC_TIMEOUTSTATE / 1000000);
     stage_result = ec_statecheck_with_progress(0, EC_STATE_SAFE_OP,
-                                               EC_TIMEOUTSTATE, chinese);
+                                               EC_TIMEOUTSTATE, chinese,
+                                               "ethercat_enable");
     stage_started_us = console_ethercat_log_enable_stage(chinese,
         chinese ? "等待所有从站 SAFE-OP" : "all-slave SAFE-OP wait", stage_started_us);
     if ((stage_result & 0x0fu) != EC_STATE_SAFE_OP) {

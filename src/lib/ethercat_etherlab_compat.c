@@ -350,7 +350,8 @@ static const char *etherlab_al_state_name(uint8_t state)
 }
 
 static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout_us,
-                               bool report_progress, bool chinese)
+                               bool report_progress, bool chinese,
+                               const char *command_name)
 {
     struct timespec delay = {0, 1000000L};
     uint64_t deadline;
@@ -378,7 +379,7 @@ static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout
                   (uint64_t)clock_now.tv_nsec / 1000u;
             if (now >= next_progress_us) {
                 ecrt_master_state(etherlab_master, &master_state);
-                printf("ethercat_enable: %s %.3fs master=%u/%d link=%s\n",
+                printf("%s: %s %.3fs master=%u/%d link=%s\n", command_name,
                        chinese ? "SAFE-OP 等待进度:" : "SAFE-OP wait progress:",
                        (double)(now - started_us) / 1000000.0,
                        master_state.slaves_responding, ec_slavecount,
@@ -419,13 +420,14 @@ static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout
 
 int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us)
 {
-    return etherlab_statecheck(slave, requested_state, timeout_us, false, false);
+    return etherlab_statecheck(slave, requested_state, timeout_us, false, false, NULL);
 }
 
 int ec_statecheck_with_progress(uint16 slave, uint16 requested_state, int timeout_us,
-                                bool chinese)
+                                bool chinese, const char *command_name)
 {
-    return etherlab_statecheck(slave, requested_state, timeout_us, true, chinese);
+    return etherlab_statecheck(slave, requested_state, timeout_us, true, chinese,
+                               command_name);
 }
 
 int ec_readstate(void)

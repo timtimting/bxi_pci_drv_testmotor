@@ -175,7 +175,7 @@ EtherLab 主站内核模块和用户态开发库，并在 `/etc/ethercat.conf` �
 
 ### EtherCAT 扫描
 
-编译时检测到 EtherLab 后，可用以下命令扫描从站，不配置 PDO，也不发送使能或运动指令：
+编译时检测到 EtherLab 后，以下独立命令只读扫描从站，不配置 PDO，也不发送使能或运动指令：
 
 ```bash
 sudo ./build/motor_console --ethercat-scan enp86s0
@@ -186,6 +186,11 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
 
 终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
+交互扫描列出拓扑后，会为检测到的开璇从站配置 PDO/DC，等待 SAFE-OP 和 OP，再以约 1 kHz 持续交换 PDO；
+全程保持控制字 `0x0000` 和伺服失能，不发送使能或运动指令。首次扫描因此仍可能等待约 5 秒，
+但预热成功后再执行 `ethercat_enable 1` 可复用后台主站，避免重复等待 SAFE-OP。
+若拓扑含非开璇从站，交互扫描仅显示拓扑并跳过预热；独立 `--ethercat-scan` 始终只读。
+预热使用默认 `Sync0=1 ms`、`shift=0`；若需其他周期或相位，应在扫描前直接使用带参数的 `ethercat_enable`。
 旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
 更适合只连接 EtherCAT 电机的电脑。启动前自动检测 `/usr/local/etherlab`、
 `/opt/etherlab` 或系统路径，缺少开发库时直接报错，不会运行不支持 EtherCAT 的程序：
@@ -247,11 +252,11 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 
 交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。所有交互式 `ethercat_*` 命令进入同一个后台队列，提交后立即返回提示符；“已提交”不等于执行成功，请等待后台结果。命令按提交顺序执行，最多等待 16 条，队列满时拒绝新命令。参数错误、从站或网卡不匹配不会停止已有主站。
 
-首次使能时打印各阶段耗时（毫秒）和初始化总耗时，包括主站申请、从站发现、PDO/DC 配置、SDO 快照、主站激活、SAFE-OP 等待、PDO/WKC、OP 及 CiA402 使能。等待 SAFE-OP 时约每秒输出主站响应数、链路状态及各从站的 EtherCAT AL 状态；这能区分主站激活耗时与状态等待，但不能进一步显示 EtherLab 内核配置状态机的内部步骤。`7s` 是等待超时上限，不是固定延时。已运行的后台主站上再次执行 `ethercat_enable` 不重走这些初始化阶段。
+尚无周期会话时，首次使能会打印各阶段耗时（毫秒）和初始化总耗时，包括主站申请、从站发现、PDO/DC 配置、SDO 快照、主站激活、SAFE-OP 等待、PDO/WKC、OP 及 CiA402 使能。等待 SAFE-OP 时约每秒输出主站响应数、链路状态及各从站的 EtherCAT AL 状态；这能区分主站激活耗时与状态等待，但不能进一步显示 EtherLab 内核配置状态机的内部步骤。`7s` 是等待超时上限，不是固定延时。已运行的后台主站上再次执行 `ethercat_enable` 不重走这些初始化阶段。
 
 使能成功后，后台持续交换 PDO。`ethercat_position` 接收绝对输出端角度，按各从站 Pn051 换算后更新原循环的电机端目标；Pn051 无效、目标超出计数范围、未使能或有故障时拒绝更新。首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。
 
-`ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。设零、参数写入及保存命令在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会自动失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。Pn028/044/106/107 写入回读后更新 `motion snapshot`，其他 SDO 配置仍为使能前快照；最新参数值可用 `ethercat_pnread` 查看。尚无周期会话时，扫描和读取仍由后台完成只读会话，不会自动使能。
+`ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。设零、参数写入及保存命令在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会自动失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。Pn028/044/106/107 写入回读后更新 `motion snapshot`，其他 SDO 配置仍为使能前快照；最新参数值可用 `ethercat_pnread` 查看。尚无周期会话时，交互扫描会预热 PDO 并保持失能；只读 `ethercat_info` 仍不会自动启动 PDO 或使能。
 
 `power_off`、退出终端或 `Ctrl-C` 会取消待执行命令，失能并释放主站；PDO 通信失败也会关闭当前会话并取消待执行命令，避免恢复后执行旧运动目标。普通命令按队列处理，不能代替硬件急停。独立 `--ethercat-*` 命令行模式仍前台运行，生命周期不变。`0.5` 表示 `500000 ns`，同时改变 Sync0 和主站 PDO 周期；不写 Pn077。运行中的周期/shift 不能更改，需要退出终端后重新配置；省略这些参数时沿用当前会话设置。
 

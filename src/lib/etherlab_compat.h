@@ -62,7 +62,7 @@ int ec_send_processdata(void);
 int ec_receive_processdata(int timeout_us);
 int ec_statecheck(uint16 slave, uint16 requested_state, int timeout_us);
 int ec_statecheck_with_progress(uint16 slave, uint16 requested_state, int timeout_us,
-                                bool chinese);
+                                bool chinese, const char *command_name);
 int ec_readstate(void);
 int ec_writestate(uint16 slave);
 int ec_close(void);

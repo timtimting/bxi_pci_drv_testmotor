@@ -112,7 +112,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
         printf("  EtherCAT 交互命令默认网卡为 enp86s0；需要覆盖时将网卡名放在参数末尾。\n");
         printf("  ethercat_scan [network_interface]\n");
-        printf("      通过 EtherLab 枚举 EtherCAT 从站；不配置 PDO、不主动使能或运动电机。\n");
+        printf("      交互扫描后预热开璇 PDO/DC 并保持失能；独立 --ethercat-scan 仍只读。\n");
         printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
         printf("      默认周期 1ms、shift=0；交互模式下循环在后台运行并返回提示符，hold_ms 到期自动失能。\n");
         printf("      所有交互 EtherCAT 命令提交同一后台队列；提交不等于成功，请等待后台结果。\n");
@@ -221,7 +221,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
     printf("  EtherCAT interactive commands default to enp86s0; append an interface to override.\n");
     printf("  ethercat_scan [network_interface]\n");
-    printf("      Enumerate EtherCAT slaves through EtherLab; does not configure PDOs or command drive motion.\n");
+    printf("      Interactive scan warms Kaixuan PDO/DC with drives disabled; standalone --ethercat-scan stays read-only.\n");
     printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
     printf("      Default cycle 1ms/shift=0; interactive mode runs the cycle in background and returns to the prompt.\n");
     printf("      A supplied hold_ms automatically disables when it expires.\n");
