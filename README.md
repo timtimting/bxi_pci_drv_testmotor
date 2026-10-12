@@ -310,6 +310,58 @@ sudo ./build/motor_console --ethercat-position enp86s0 1 0
 新输入约为 `旧目标电机端弧度 / Pn051`；`ethercat_info` 的目标 `pos` 仍是电机端角度，
 新增 `output_pos` 显示相应的输出端换算角度。
 
+### EtherCAT Profile Position（PP）位控
+
+本项目同时支持两种 CiA-402 位置模式：
+
+- `ethercat_position`：CSP（`0x6060=8`），后台循环每个周期持续发送目标位置。
+- `ethercat_position_pp`：PP（`0x6060=1`），通过控制字 bit4 的新设定点握手发送目标；状态字 bit12 表示设定点确认，bit10 表示到位。
+
+PP 命令的目标同样是减速器**输出端绝对角度**（rad），仍按每台从站的 Pn051 换算到 `0x607A` 电机端计数：
+`round(output_rad × Pn051 × 1048576 / 2π)`。`profile_velocity` 必填，`profile_accel`、`profile_decel` 默认均为 `100`，`hold_ms` 默认持续运行：
+
+```text
+ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]
+```
+
+三个 profile 参数以 ESI 中的原始 `UDINT` 写入并回读 `0x6081`、`0x6083`、`0x6084`，本程序不擅自解释单位；请按电机用户手册选择范围和单位。PP 模式首次切换或修改 profile 参数前必须先执行 `ethercat_disable`。已经处于 PP 使能状态时，可以重复执行 `ethercat_position_pp` 只发送新的设定点，不会重写 profile 参数；要改模式或参数，先失能。
+
+推荐先用很小的输出端角度和保守 profile 参数逐步验证：
+
+```text
+power_on
+ethercat_scan
+ethercat_info 1
+
+# CSP：扫描成功后先使能，再发送输出端目标
+ethercat_enable 1
+ethercat_position 1 0.01 1000
+ethercat_info 1
+
+# 切换到 PP：必须先失能；首次 PP 命令会写参数、重新进入 operation-enabled 并发送设定点
+ethercat_disable 1
+ethercat_position_pp 1 0.02 1000 100 100 1000
+ethercat_info 1
+
+# PP 下发送第二个输出端目标，仍使用上一次已写入的 profile 参数
+ethercat_position_pp 1 0.01 1000
+
+# 切回 CSP：先失能，再由 enable 将模式恢复为 CSP
+ethercat_disable 1
+ethercat_enable 1
+ethercat_position 1 0.01 1000
+```
+
+调试时以每条命令的后台结果为准：关注 `PP 设定点已确认`、`setpoint_ack=yes`，以及 `ethercat_info` 的实时 `SW`、实际输出端角度和目标输出端角度。`hold_ms` 到期只发送失能并保留后台 PDO 主站。
+
+独立 CLI 调试方式如下；它会独占一次主站会话，完成后关闭主站：
+
+```bash
+sudo ./build/motor_console --ethercat-position-pp enp86s0 1 0.02 1000 100 100 1000
+```
+
+PP 失败时，先执行 `ethercat_info 1` 查看 `SW`、`error_code`、PDO error 和当前模式；如果当前仍是 CSP 或已 fault，先 `ethercat_disable 1`，确认故障原因后再重试。不要在真实机构上直接使用大角度或大 profile 数值。
+
 ### EtherCAT 零位设置
 
 在机械位置已摆正时可设置当前机械位置为零。交互会话中先执行 `ethercat_disable 1` 并等待确认，再执行 `ethercat_zero 1`，不关闭主站。下列独立命令行方式只能在没有其他主站进程占用时使用：

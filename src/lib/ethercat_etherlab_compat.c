@@ -215,7 +215,7 @@ int ec_config_init(boolean use_table)
         etherlab_slaves[slave].sdo_read_request =
             ecrt_slave_config_create_sdo_request(etherlab_slaves[slave].config, 0x6041, 0, 256);
         etherlab_slaves[slave].sdo_write_request =
-            ecrt_slave_config_create_sdo_request(etherlab_slaves[slave].config, 0x2077, 0, 2);
+            ecrt_slave_config_create_sdo_request(etherlab_slaves[slave].config, 0x2077, 0, 4);
         if (etherlab_slaves[slave].sdo_read_request == NULL ||
             etherlab_slaves[slave].sdo_write_request == NULL ||
             ecrt_sdo_request_timeout(etherlab_slaves[slave].sdo_read_request, 700) != 0 ||
@@ -538,7 +538,7 @@ int ec_SDOwrite(uint16 slave, uint16 index, uint8 subindex, boolean complete_acc
     if (etherlab_activated) {
         ec_sdo_request_t *request = etherlab_slaves[slave].sdo_write_request;
         if (stop_requested || console_ethercat_background_should_stop() ||
-            complete_access || size != 2 || request == NULL ||
+            complete_access || size > 4 || request == NULL ||
             ecrt_sdo_request_state(request) == EC_REQUEST_BUSY ||
             ecrt_sdo_request_index(request, index, subindex) != 0) return 0;
         memcpy(ecrt_sdo_request_data(request), data, (size_t)size);

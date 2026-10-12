@@ -19,6 +19,7 @@ typedef enum {
     ETHERCAT_TASK_ENABLE,
     ETHERCAT_TASK_DISABLE,
     ETHERCAT_TASK_POSITION,
+    ETHERCAT_TASK_POSITION_PP,
     ETHERCAT_TASK_ZERO,
     ETHERCAT_TASK_INFO,
     ETHERCAT_TASK_PNREAD,
@@ -75,6 +76,10 @@ typedef struct {
     unsigned int hold_ms;
     double output_rad;
     unsigned int value;
+    uint8_t position_mode;
+    uint32_t profile_velocity;
+    uint32_t profile_acceleration;
+    uint32_t profile_deceleration;
     char interface[IFNAMSIZ];
     char selection[32];
     char sync0_shift[32];
@@ -452,6 +457,9 @@ typedef struct {
     int16_t pn044;
     int16_t pn106;
     int16_t pn107;
+    uint32_t profile_velocity;
+    uint32_t profile_acceleration;
+    uint32_t profile_deceleration;
     int16_t pn070;
     int16_t pn075;
     int16_t pn077;
@@ -509,6 +517,9 @@ enum {
     ETHERCAT_CACHE_PN044 = 1u << 20,
     ETHERCAT_CACHE_PN106 = 1u << 21,
     ETHERCAT_CACHE_PN107 = 1u << 22,
+    ETHERCAT_CACHE_PROFILE_VELOCITY = 1u << 23,
+    ETHERCAT_CACHE_PROFILE_ACCELERATION = 1u << 24,
+    ETHERCAT_CACHE_PROFILE_DECELERATION = 1u << 25,
 };
 #endif
 
@@ -597,6 +608,23 @@ static int console_ethercat_parse_position_rad(const char *text, double *output_
     return 0;
 }
 
+static int console_ethercat_parse_u32(const char *text, uint32_t *value)
+{
+    char *end;
+    unsigned long long parsed;
+
+    if (text == NULL || value == NULL || text[0] == '-' || text[0] == '\0') {
+        return -1;
+    }
+    errno = 0;
+    parsed = strtoull(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || parsed > UINT32_MAX) {
+        return -1;
+    }
+    *value = (uint32_t)parsed;
+    return 0;
+}
+
 static int console_ethercat_parse_sync0_shift(const char *text, int32_t *shift_ns)
 {
     char *end;
@@ -660,6 +688,8 @@ enum {
 
 #define ETHERCAT_KAIXUAN_COUNTS_PER_REV 1048576.0
 #define ETHERCAT_KAIXUAN_TWO_PI 6.28318530717958647692
+#define ETHERCAT_CIA402_MODE_PROFILE_POSITION 1u
+#define ETHERCAT_CIA402_MODE_CSP 8u
 
 #ifdef HAVE_ETHERLAB
 static bool console_ethercat_output_rad_to_count(double output_rad, int16_t ratio,
@@ -850,6 +880,17 @@ static const char *const *console_ethercat_completion_words(const char *line,
         return ethercat_hold_ms_words;
     }
     if (strcmp(first, "ethercat_position") == 0 && tokens_before >= 4u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before == 1u) {
+        return console_ethercat_slave_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before == 2u) {
+        *count = sizeof(ethercat_output_rad_words) /
+                 sizeof(ethercat_output_rad_words[0]);
+        return ethercat_output_rad_words;
+    }
+    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before >= 6u) {
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 2u) {
@@ -1076,6 +1117,9 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         ETHERCAT_CACHE_SDO(0x2044u, 0u, pn044, ETHERCAT_CACHE_PN044);
         ETHERCAT_CACHE_SDO(0x2106u, 0u, pn106, ETHERCAT_CACHE_PN106);
         ETHERCAT_CACHE_SDO(0x2107u, 0u, pn107, ETHERCAT_CACHE_PN107);
+        ETHERCAT_CACHE_SDO(0x6081u, 0u, profile_velocity, ETHERCAT_CACHE_PROFILE_VELOCITY);
+        ETHERCAT_CACHE_SDO(0x6083u, 0u, profile_acceleration, ETHERCAT_CACHE_PROFILE_ACCELERATION);
+        ETHERCAT_CACHE_SDO(0x6084u, 0u, profile_deceleration, ETHERCAT_CACHE_PROFILE_DECELERATION);
         ETHERCAT_CACHE_SDO(0x2070u, 0u, pn070, ETHERCAT_CACHE_PN070);
         ETHERCAT_CACHE_SDO(0x2075u, 0u, pn075, ETHERCAT_CACHE_PN075);
         ETHERCAT_CACHE_SDO(0x2077u, 0u, pn077, ETHERCAT_CACHE_PN077);
@@ -1262,6 +1306,7 @@ static int console_ethercat_print_background_info(bool chinese,
         int32_t target_velocity;
         int16_t target_torque;
         int8_t mode_command;
+        const char *mode_name;
         uint64_t age_us;
         uint64_t now_us;
 
@@ -1282,6 +1327,9 @@ static int console_ethercat_print_background_info(bool chinese,
         target_velocity = console_ethercat_read_i32(snapshot->outputs + 6u);
         target_torque = (int16_t)console_ethercat_read_u16(snapshot->outputs + 10u);
         mode_command = (int8_t)snapshot->outputs[12];
+        mode_name = mode_command == (int8_t)ETHERCAT_CIA402_MODE_CSP ? "CSP" :
+                    (mode_command == (int8_t)ETHERCAT_CIA402_MODE_PROFILE_POSITION ?
+                     "PP" : "other");
         now_us = time_us();
         age_us = now_us >= snapshot->live_timestamp_us ?
                  now_us - snapshot->live_timestamp_us : 0u;
@@ -1331,6 +1379,13 @@ static int console_ethercat_print_background_info(bool chinese,
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN044) printf("%d (speed filter)", snapshot->pn044); else printf("?");
         if (snapshot->motion_write_attempted) printf(" [write/readback updated]");
         printf("\n");
+        printf("  profile position: 0x6081 velocity=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PROFILE_VELOCITY) printf("%u", snapshot->profile_velocity); else printf("?");
+        printf(" 0x6083 accel=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PROFILE_ACCELERATION) printf("%u", snapshot->profile_acceleration); else printf("?");
+        printf(" 0x6084 decel=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PROFILE_DECELERATION) printf("%u", snapshot->profile_deceleration); else printf("?");
+        printf(" (raw UDINT)\n");
         printf("  params snapshot: Pn079=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
         printf(" Pn085=");
@@ -1358,8 +1413,9 @@ static int console_ethercat_print_background_info(bool chinese,
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_TYPE) printf("0x%04x", snapshot->sm3_sync_type); else printf("?");
         printf(" cycle=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_SM3_CYCLE) printf("%uns\n", snapshot->sm3_cycle_ns); else printf("?\n");
-        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d DC_error=%lldns DC_adjust=%lldns error_code=",
+        printf("  live PDO: age=%lluus CW=0x%04x SW=0x%04x mode_command=%d(%s) DC_error=%lldns DC_adjust=%lldns error_code=",
                (unsigned long long)age_us, control_word, status_word, (int)mode_command,
+               mode_name,
                (long long)snapshot->dc_sync_phase_error_ns,
                (long long)snapshot->dc_sync_adjustment_ns);
         if (snapshot->live_error_valid) printf("0x%04x\n", snapshot->live_error_code); else printf("?\n");
@@ -1806,7 +1862,8 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
 }
 
 static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
-                                           const int32_t target_positions[EC_MAXSLAVE])
+                                           const int32_t target_positions[EC_MAXSLAVE],
+                                           uint8_t position_mode)
 {
     int slave;
 
@@ -1827,7 +1884,7 @@ static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
         console_ethercat_write_i32(outputs + 2u, target_positions[slave]);
         console_ethercat_write_i32(outputs + 6u, 0);
         console_ethercat_write_u16(outputs + 10u, 0u);
-        outputs[12] = 8u;
+        outputs[12] = position_mode;
     }
     return 0;
 }
@@ -1895,6 +1952,179 @@ static int console_ethercat_wait_for_status(const uint8_t selected[EC_MAXSLAVE],
         }
     }
     return -1;
+}
+
+static int console_ethercat_write_profile_parameter(bool chinese,
+                                                       int slave,
+                                                       uint16_t index,
+                                                       uint32_t value,
+                                                       const char *name)
+{
+    uint32_t readback = 0u;
+
+    printf("[slave%d] %s(0x%04x): write=%u\n", slave, name,
+           (unsigned int)index, (unsigned int)value);
+    if (ec_SDOwrite((uint16)slave, index, 0u, FALSE, (int)sizeof(value),
+                    &value, EC_TIMEOUTRXM) != (int)sizeof(value)) {
+        printf("[slave%d] %s: %s\n", slave, name,
+               chinese ? "SDO 写入未确认" : "SDO write was not acknowledged");
+        return -1;
+    }
+    if (!console_ethercat_read_sdo_value(slave, index, 0u, &readback,
+                                         (int)sizeof(readback))) {
+        printf("[slave%d] %s: %s\n", slave, name,
+               chinese ? "回读失败" : "readback failed");
+        return -1;
+    }
+    printf("[slave%d] %s: readback=%u\n", slave, name,
+           (unsigned int)readback);
+    if (readback != value) {
+        printf("[slave%d] %s: %s expected=%u actual=%u\n", slave, name,
+               chinese ? "回读值不匹配" : "readback mismatch",
+               (unsigned int)value, (unsigned int)readback);
+        return -1;
+    }
+    pthread_mutex_lock(&ethercat_background_mutex);
+    if (ethercat_cached_slaves[slave].valid) {
+        if (index == 0x6081u) {
+            ethercat_cached_slaves[slave].profile_velocity = readback;
+            ethercat_cached_slaves[slave].config_valid_mask |=
+                ETHERCAT_CACHE_PROFILE_VELOCITY;
+        } else if (index == 0x6083u) {
+            ethercat_cached_slaves[slave].profile_acceleration = readback;
+            ethercat_cached_slaves[slave].config_valid_mask |=
+                ETHERCAT_CACHE_PROFILE_ACCELERATION;
+        } else if (index == 0x6084u) {
+            ethercat_cached_slaves[slave].profile_deceleration = readback;
+            ethercat_cached_slaves[slave].config_valid_mask |=
+                ETHERCAT_CACHE_PROFILE_DECELERATION;
+        }
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return 0;
+}
+
+static int console_ethercat_write_profile_parameters(bool chinese,
+                                                      const uint8_t selected[EC_MAXSLAVE],
+                                                      uint32_t profile_velocity,
+                                                      uint32_t profile_acceleration,
+                                                      uint32_t profile_deceleration)
+{
+    int slave;
+
+    if (profile_velocity == 0u || profile_acceleration == 0u ||
+        profile_deceleration == 0u) {
+        printf("%s\n", chinese ?
+               "PP 参数必须全部大于 0。" :
+               "Profile Position parameters must all be greater than zero.");
+        return -1;
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        if (console_ethercat_write_profile_parameter(chinese, slave, 0x6081u,
+                                                     profile_velocity,
+                                                     "0x6081 profile velocity") != 0 ||
+            console_ethercat_write_profile_parameter(chinese, slave, 0x6083u,
+                                                     profile_acceleration,
+                                                     "0x6083 profile acceleration") != 0 ||
+            console_ethercat_write_profile_parameter(chinese, slave, 0x6084u,
+                                                     profile_deceleration,
+                                                     "0x6084 profile deceleration") != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static bool console_ethercat_selected_profile_ack_changed(
+    const uint8_t selected[EC_MAXSLAVE], const uint8_t previous_ack[EC_MAXSLAVE])
+{
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t status_word;
+
+        if (!selected[slave]) continue;
+        status_word = console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs);
+        if ((((status_word & 0x1000u) != 0u) ? 1u : 0u) == previous_ack[slave])
+            return false;
+    }
+    return true;
+}
+
+static int console_ethercat_wait_for_profile_ack(
+    const uint8_t selected[EC_MAXSLAVE], const uint8_t previous_ack[EC_MAXSLAVE])
+{
+    unsigned int attempt;
+    unsigned int max_attempts = (400000000u + ethercat_control_period_ns - 1u) /
+                                ethercat_control_period_ns;
+
+    for (attempt = 0u; attempt < max_attempts && !stop_requested &&
+         !console_ethercat_background_should_stop(); attempt++) {
+        if (console_ethercat_exchange() != 0) return -1;
+        if (console_ethercat_selected_profile_ack_changed(selected, previous_ack)) return 0;
+    }
+    return -1;
+}
+
+static int console_ethercat_trigger_profile_position(bool chinese,
+                                                      const uint8_t selected[EC_MAXSLAVE],
+                                                      const int32_t target_positions[EC_MAXSLAVE])
+{
+    uint8_t previous_ack[EC_MAXSLAVE] = {0};
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
+            console_ethercat_read_u16(ec_slave[slave].outputs) != 0x000fu ||
+            (console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs) & 0x006fu) != 0x0027u ||
+            console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs + 12u) != 0u) {
+            printf("[slave%d] %s\n", slave, chinese ?
+                   "PP 触发前从站不是 operation-enabled 或已有故障" :
+                   "slave is not operation-enabled or is faulted before PP trigger");
+            return -1;
+        }
+        console_ethercat_write_i32((uint8_t *)ec_slave[slave].outputs + 2u,
+                                    target_positions[slave]);
+        ((uint8_t *)ec_slave[slave].outputs)[12] = ETHERCAT_CIA402_MODE_PROFILE_POSITION;
+        console_ethercat_write_u16((uint8_t *)ec_slave[slave].outputs, 0x000fu);
+    }
+    if (console_ethercat_exchange() != 0) return -1;
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t status_word;
+
+        if (!selected[slave]) continue;
+        status_word = console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs);
+        previous_ack[slave] = (status_word & 0x1000u) != 0u ? 1u : 0u;
+    }
+    console_ethercat_set_control_word(selected, 0x001fu);
+    if (console_ethercat_wait_for_profile_ack(selected, previous_ack) != 0) {
+        for (slave = 1; slave <= ec_slavecount; slave++) {
+            if (!selected[slave]) continue;
+            printf("[slave%d] PP %s SW=0x%04x PDO_error=0x%04x\n", slave,
+                   chinese ? "设定点确认超时" : "set-point acknowledgement timeout",
+                   console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs),
+                   console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs + 12u));
+        }
+        return -1;
+    }
+    console_ethercat_set_control_word(selected, 0x000fu);
+    if (console_ethercat_exchange() != 0) return -1;
+    printf("%s\n", chinese ?
+           "ethercat_position_pp: PP 设定点已确认；已清除 bit4，后台继续监视到位状态。" :
+           "ethercat_position_pp: PP set-point acknowledged; bit4 cleared, background loop monitors target state.");
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        uint16_t status_word;
+
+        if (!selected[slave]) continue;
+        status_word = console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs);
+        printf("[slave%d] SW=0x%04x setpoint_ack=%s target_reached=%s\n", slave,
+               (unsigned int)status_word,
+               (status_word & 0x1000u) ? "yes" : "no",
+               (status_word & 0x0400u) ? "yes" : "no");
+    }
+    return 0;
 }
 
 static void console_ethercat_disable_selected(const uint8_t selected[EC_MAXSLAVE])
@@ -2044,7 +2274,7 @@ static int console_ethercat_prepare_scan_session(bool chinese)
         target_positions[slave] = console_ethercat_read_i32(
             (const uint8_t *)ec_slave[slave].inputs + 2u);
     }
-    if (console_ethercat_selected_ready(configured, target_positions) != 0 ||
+    if (console_ethercat_selected_ready(configured, target_positions, ETHERCAT_CIA402_MODE_CSP) != 0 ||
         console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_scan: 初始位置 PDO 发送失败" :
                "ethercat_scan: initial position PDO exchange failed");
@@ -2173,7 +2403,11 @@ static int console_ethercat_enable(bool chinese,
                                    const char *selection,
                                    unsigned int hold_ms,
                                    const char *sync0_shift_text,
-                                   const char *sync0_cycle_ms_text)
+                                   const char *sync0_cycle_ms_text,
+                                   uint8_t position_mode,
+                                   uint32_t profile_velocity,
+                                   uint32_t profile_acceleration,
+                                   uint32_t profile_deceleration)
 {
     unsigned int slave_id;
     bool all_slaves;
@@ -2186,7 +2420,12 @@ static int console_ethercat_enable(bool chinese,
         (sync0_shift_text != NULL &&
          console_ethercat_parse_sync0_shift(sync0_shift_text, &sync0_shift_ns) != 0) ||
         (sync0_cycle_ms_text != NULL &&
-         console_ethercat_parse_cycle_ms(sync0_cycle_ms_text, &sync0_cycle_ns) != 0)) {
+         console_ethercat_parse_cycle_ms(sync0_cycle_ms_text, &sync0_cycle_ns) != 0) ||
+        (position_mode != ETHERCAT_CIA402_MODE_CSP &&
+         position_mode != ETHERCAT_CIA402_MODE_PROFILE_POSITION) ||
+        (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+         (profile_velocity == 0u || profile_acceleration == 0u ||
+          profile_deceleration == 0u))) {
         printf("%s: ethercat_enable <network_interface> <slave_id|all> [hold_ms:0..%u] [sync0_shift_ns:-4000000..4000000 [sync0_cycle_ms:0.5|1|2|4|5|8]]\n",
                chinese ? "用法" : "usage", ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS);
         return -1;
@@ -2323,6 +2562,15 @@ static int console_ethercat_enable(bool chinese,
     }
     printf("%s\n", chinese ? "ethercat_enable: SAFE-OP 已确认" :
            "ethercat_enable: SAFE-OP confirmed");
+    if (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION) {
+        failure_stage = "profile-position-sdo";
+        if (console_ethercat_write_profile_parameters(chinese, selected,
+                                                       profile_velocity,
+                                                       profile_acceleration,
+                                                       profile_deceleration) != 0) {
+            goto cleanup;
+        }
+    }
     failure_stage = "post-safe-op-dc-snapshot";
     console_ethercat_cache_dc_registers(configured);
     stage_started_us = console_ethercat_log_enable_stage(chinese,
@@ -2354,7 +2602,7 @@ static int console_ethercat_enable(bool chinese,
         }
     }
     failure_stage = "pdo-layout-validation";
-    if (console_ethercat_selected_ready(selected, target_positions) != 0) {
+    if (console_ethercat_selected_ready(selected, target_positions, position_mode) != 0) {
         printf("%s\n", chinese ?
                "ethercat_enable: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝使能" :
                "ethercat_enable: PDO mapping is not the required Kaixuan 13B output/14B input layout; enable refused");
@@ -2433,6 +2681,14 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: 0x000F state confirmation failed");
         goto cleanup;
     }
+    if (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+        !ethercat_background_owner) {
+        failure_stage = "profile-position-trigger";
+        if (console_ethercat_trigger_profile_position(chinese, selected,
+                                                       target_positions) != 0) {
+            goto cleanup;
+        }
+    }
     console_ethercat_failure_log_finish(&failure_capture, false, chinese,
                                         interface, selection, sync0_cycle_ns,
                                         sync0_shift_ns, failure_stage);
@@ -2489,18 +2745,27 @@ close_socket:
 #endif
 }
 
-static int console_ethercat_position(bool chinese,
-                                     const char *interface,
-                                     const char *selection,
-                                     double output_rad,
-                                     unsigned int hold_ms)
+static int console_ethercat_position_profile(bool chinese,
+                                             const char *interface,
+                                             const char *selection,
+                                             double output_rad,
+                                             unsigned int hold_ms,
+                                             uint8_t position_mode,
+                                             uint32_t profile_velocity,
+                                             uint32_t profile_acceleration,
+                                             uint32_t profile_deceleration)
 {
     unsigned int slave_id;
     bool all_slaves;
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
-        !isfinite(output_rad) || hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS) {
+        !isfinite(output_rad) || hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
+        (position_mode != ETHERCAT_CIA402_MODE_CSP &&
+         position_mode != ETHERCAT_CIA402_MODE_PROFILE_POSITION) ||
+        (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+         (profile_velocity == 0u || profile_acceleration == 0u ||
+          profile_deceleration == 0u))) {
         printf("%s: ethercat_position <network_interface> <slave_id|all> <output_rad> [hold_ms:1..%u]\n",
                chinese ? "用法" : "usage", ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS);
         return -1;
@@ -2591,7 +2856,14 @@ static int console_ethercat_position(bool chinese,
                "ethercat_position: slaves did not reach SAFE-OP");
         goto cleanup;
     }
-    if (console_ethercat_selected_ready(selected, target_positions) != 0) {
+    if (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+        console_ethercat_write_profile_parameters(chinese, selected,
+                                                   profile_velocity,
+                                                   profile_acceleration,
+                                                   profile_deceleration) != 0) {
+        goto cleanup;
+    }
+    if (console_ethercat_selected_ready(selected, target_positions, position_mode) != 0) {
         printf("%s\n", chinese ?
                "ethercat_position: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝控制" :
                "ethercat_position: PDO mapping is not the required Kaixuan 13B output/14B input layout; control refused");
@@ -2645,9 +2917,16 @@ static int console_ethercat_position(bool chinese,
         console_ethercat_print_selected_status(selected, 0x000fu, true, NULL);
         goto cleanup;
     }
-    printf("%s\n", chinese ?
-           "ethercat_position: 已进入 CSP 位控并持续发送目标位置；Ctrl-C 时失能。" :
-           "ethercat_position: CSP position control is active and target positions are being sent; Ctrl-C disables.");
+    if (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+        console_ethercat_trigger_profile_position(chinese, selected,
+                                                   target_positions) != 0) {
+        goto cleanup;
+    }
+    printf("%s\n", position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION ?
+           (chinese ? "ethercat_position_pp: 已进入 PP 位控并确认设定点；Ctrl-C 时失能。" :
+                      "ethercat_position_pp: Profile Position is active and the set-point was acknowledged; Ctrl-C disables.") :
+           (chinese ? "ethercat_position: 已进入 CSP 位控并持续发送目标位置；Ctrl-C 时失能。" :
+                      "ethercat_position: CSP position control is active and target positions are being sent; Ctrl-C disables."));
     deadline = hold_ms == 0u ? UINT64_MAX : time_us() + (uint64_t)hold_ms * 1000u;
     while (!stop_requested && time_us() < deadline) {
         if (console_ethercat_exchange() != 0) {
@@ -2668,6 +2947,28 @@ close_socket:
     ec_close();
     return result;
 #endif
+}
+
+static int console_ethercat_position(bool chinese, const char *interface,
+                                     const char *selection, double output_rad,
+                                     unsigned int hold_ms)
+{
+    return console_ethercat_position_profile(chinese, interface, selection, output_rad,
+                                              hold_ms, ETHERCAT_CIA402_MODE_CSP,
+                                              0u, 0u, 0u);
+}
+
+static int console_ethercat_position_pp(bool chinese, const char *interface,
+                                        const char *selection, double output_rad,
+                                        uint32_t profile_velocity,
+                                        uint32_t profile_acceleration,
+                                        uint32_t profile_deceleration,
+                                        unsigned int hold_ms)
+{
+    return console_ethercat_position_profile(chinese, interface, selection, output_rad,
+                                              hold_ms, ETHERCAT_CIA402_MODE_PROFILE_POSITION,
+                                              profile_velocity, profile_acceleration,
+                                              profile_deceleration);
 }
 
 static int console_ethercat_zero(bool chinese, const char *interface, const char *selection)
@@ -2729,7 +3030,7 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
         goto cleanup;
     }
     if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP ||
-        console_ethercat_selected_ready(selected, zero_positions) != 0 ||
+        console_ethercat_selected_ready(selected, zero_positions, ETHERCAT_CIA402_MODE_CSP) != 0 ||
         console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_zero: PDO 映射或 SAFE-OP 初始化失败" :
                "ethercat_zero: PDO mapping or SAFE-OP initialization failed");
@@ -3798,7 +4099,7 @@ static int console_ethercat_disable(bool chinese,
                "ethercat_disable: slaves did not reach SAFE-OP");
         goto cleanup;
     }
-    if (console_ethercat_selected_ready(selected, zero_positions) != 0) {
+    if (console_ethercat_selected_ready(selected, zero_positions, ETHERCAT_CIA402_MODE_CSP) != 0) {
         printf("%s\n", chinese ?
                "ethercat_disable: PDO 映射不是当前开璇驱动器要求的 13B 输出/14B 输入，已拒绝操作" :
                "ethercat_disable: PDO mapping is not the required Kaixuan 13B output/14B input layout; operation refused");

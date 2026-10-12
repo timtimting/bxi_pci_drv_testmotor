@@ -2,7 +2,7 @@ static const char *console_ethercat_task_name(ethercat_task task)
 {
     static const char *names[] = {
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
-        "ethercat_position", "ethercat_zero", "ethercat_info",
+        "ethercat_position", "ethercat_position_pp", "ethercat_zero", "ethercat_info",
         "ethercat_pnread", "ethercat_pn077", "ethercat_save",
         "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044"
     };
@@ -133,7 +133,15 @@ static int console_ethercat_session_enable(const ethercat_background_args *comma
         control = console_ethercat_read_u16(ec_slave[slave].outputs);
         if (console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u) != 0u ||
             (ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL) return -1;
-        if ((status & 0x006fu) == 0x0027u && control == 0x000fu) continue;
+        if ((status & 0x006fu) == 0x0027u && control == 0x000fu) {
+            if (((uint8_t *)ec_slave[slave].outputs)[12] != command->position_mode) {
+                printf("[slave%d] %s\n", slave, command->chinese ?
+                       "当前已使能但位置模式不同；请先执行 ethercat_disable 再切换模式。" :
+                       "Drive is enabled in a different position mode; run ethercat_disable before switching modes.");
+                return -1;
+            }
+            continue;
+        }
         if ((status & 0x006fu) != 0x0040u || control != 0u) return -1;
         to_enable[slave] = 1u;
         needs_enable = true;
@@ -146,7 +154,14 @@ static int console_ethercat_session_enable(const ethercat_background_args *comma
         ethercat_session.motion_context[slave] = command->output_context;
     }
     if (!needs_enable) goto enabled;
-    if (console_ethercat_selected_ready(to_enable, targets) != 0) return -1;
+    if (command->position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+        console_ethercat_write_profile_parameters(command->chinese, to_enable,
+                                                   command->profile_velocity,
+                                                   command->profile_acceleration,
+                                                   command->profile_deceleration) != 0) {
+        return -1;
+    }
+    if (console_ethercat_selected_ready(to_enable, targets, command->position_mode) != 0) return -1;
     control_word = 0x0006u;
     console_ethercat_set_control_word(to_enable, control_word);
     if (console_ethercat_wait_for_status(to_enable, 0x0021u) != 0) goto failed;
@@ -194,10 +209,11 @@ static int console_ethercat_session_position(const ethercat_background_args *com
         if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
             console_ethercat_read_u16(ec_slave[slave].outputs) != 0x000fu ||
             (console_ethercat_read_u16(ec_slave[slave].inputs) & 0x006fu) != 0x0027u ||
-            console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u) != 0u) {
+            console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u) != 0u ||
+            ((uint8_t *)ec_slave[slave].outputs)[12] != ETHERCAT_CIA402_MODE_CSP) {
             printf("[slave%d] %s\n", slave, command->chinese ?
-                   "未使能或有故障，拒绝位置目标；请先检查状态并使能。" :
-                   "Not enabled or faulted; refusing target. Check status and enable first.");
+                   "未使能、模式不是 CSP 或有故障，拒绝位置目标；切换模式前请先失能。" :
+                   "Not enabled, not in CSP, or faulted; refusing target. Disable before switching modes.");
             return -1;
         }
     }
@@ -227,6 +243,7 @@ static int console_ethercat_session_position(const ethercat_background_args *com
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (!selected[slave]) continue;
         console_ethercat_write_i32((uint8_t *)ec_slave[slave].outputs + 2u, targets[slave]);
+        ((uint8_t *)ec_slave[slave].outputs)[12] = ETHERCAT_CIA402_MODE_CSP;
         ethercat_session.motion_context[slave] = command->output_context;
         ethercat_session.disable_at_us[slave] = command->hold_ms == 0u ? 0u :
             console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
@@ -240,6 +257,63 @@ static int console_ethercat_session_position(const ethercat_background_args *com
         if (!selected[slave]) continue;
         printf("[slave%d] Pn051=%d target_motor_count=%d\n", slave,
                (int)ratios[slave], targets[slave]);
+    }
+    return 0;
+}
+
+static int console_ethercat_session_position_pp(const ethercat_background_args *command,
+                                               const uint8_t selected[EC_MAXSLAVE])
+{
+    int32_t targets[EC_MAXSLAVE] = {0};
+    int16_t ratios[EC_MAXSLAVE] = {0};
+    int slave;
+
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
+            console_ethercat_read_u16(ec_slave[slave].outputs) != 0x000fu ||
+            (console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs) & 0x006fu) != 0x0027u ||
+            console_ethercat_read_u16((const uint8_t *)ec_slave[slave].inputs + 12u) != 0u) {
+            printf("[slave%d] %s\n", slave, command->chinese ?
+                   "未使能或有故障，拒绝 PP 目标；请先检查状态并使能。" :
+                   "Not enabled or faulted; refusing Profile Position target.");
+            return -1;
+        }
+        pthread_mutex_lock(&ethercat_background_mutex);
+        if (ethercat_cached_slaves[slave].valid &&
+            (ethercat_cached_slaves[slave].config_valid_mask & ETHERCAT_CACHE_PN051)) {
+            ratios[slave] = ethercat_cached_slaves[slave].pn051;
+        }
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        if (ratios[slave] <= 0 ||
+            !console_ethercat_output_rad_to_count(command->output_rad, ratios[slave],
+                                                   &targets[slave])) {
+            printf("[slave%d] %s\n", slave, command->chinese ?
+                   "Pn051 不可用或输出端目标超出电机计数范围" :
+                   "Pn051 unavailable or output target exceeds motor count range");
+            return -1;
+        }
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        ethercat_session.motion_context[slave] = command->output_context;
+        ethercat_session.disable_at_us[slave] = command->hold_ms == 0u ? 0u :
+            console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
+    }
+    if (console_ethercat_trigger_profile_position(command->chinese, selected, targets) != 0)
+        return -1;
+    printf("ethercat_position_pp: slave=%s target_output_rad=%.6f hold_ms=%u; %s\n",
+           command->selection, command->output_rad, command->hold_ms,
+           command->chinese ?
+           "目标已交给 PP 设定点握手，位置仍为输出端角度；未重开主站" :
+           "target sent through the PP set-point handshake using output-side angle; master unchanged");
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        printf("[slave%d] Pn051=%d target_motor_count=%d profile_velocity=%u profile_accel=%u profile_decel=%u\n",
+               slave, (int)ratios[slave], targets[slave],
+               (unsigned int)command->profile_velocity,
+               (unsigned int)command->profile_acceleration,
+               (unsigned int)command->profile_deceleration);
     }
     return 0;
 }
@@ -306,6 +380,27 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
         return 0;
     case ETHERCAT_TASK_POSITION:
         return console_ethercat_session_position(command, selected);
+    case ETHERCAT_TASK_POSITION_PP:
+        if (console_ethercat_session_disabled(selected)) {
+            if (console_ethercat_session_enable(command, selected) != 0) return -1;
+        } else {
+            int slave;
+            for (slave = 1; slave <= ec_slavecount; slave++) {
+                if (!selected[slave]) continue;
+                if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
+                    console_ethercat_read_u16(ec_slave[slave].outputs) != 0x000fu ||
+                    ((uint8_t *)ec_slave[slave].outputs)[12] != ETHERCAT_CIA402_MODE_PROFILE_POSITION) {
+                    printf("%s\n", command->chinese ?
+                           "当前从站不是 PP 使能状态；切换模式或修改 PP 参数前请先执行 ethercat_disable。" :
+                           "The slave is not operation-enabled in PP mode; disable it before switching mode or changing PP parameters.");
+                    return -1;
+                }
+            }
+            printf("%s\n", command->chinese ?
+                   "PP 模式已激活；本次仅发送新设定点，未改写 0x6081/0x6083/0x6084。" :
+                   "PP mode is already active; sending a new set-point without rewriting 0x6081/0x6083/0x6084.");
+        }
+        return console_ethercat_session_position_pp(command, selected);
     case ETHERCAT_TASK_INFO:
         return console_ethercat_info(command->chinese, command->interface, command->selection);
     case ETHERCAT_TASK_PNREAD:
@@ -364,6 +459,9 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
     if (ethercat_background_arguments.task == ETHERCAT_TASK_POSITION &&
         console_ethercat_session_position(&ethercat_background_arguments, selected) != 0) {
         result = -1;
+    } else if (ethercat_background_arguments.task == ETHERCAT_TASK_POSITION_PP &&
+               console_ethercat_session_position_pp(&ethercat_background_arguments, selected) != 0) {
+        result = -1;
     }
     while (result == 0 && !stop_requested && !console_ethercat_background_should_stop()) {
         if (console_ethercat_mailbox_cycle() != 0) {
@@ -398,10 +496,15 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
         return console_ethercat_scan(command->chinese, command->interface);
     case ETHERCAT_TASK_ENABLE:
     case ETHERCAT_TASK_POSITION:
+    case ETHERCAT_TASK_POSITION_PP:
         return console_ethercat_enable(command->chinese, command->interface, command->selection,
                                         command->hold_ms,
                                         command->has_sync0_shift ? command->sync0_shift : NULL,
-                                        command->has_sync0_cycle_ms ? command->sync0_cycle_ms : NULL);
+                                        command->has_sync0_cycle_ms ? command->sync0_cycle_ms : NULL,
+                                        command->position_mode,
+                                        command->profile_velocity,
+                                        command->profile_acceleration,
+                                        command->profile_deceleration);
     case ETHERCAT_TASK_DISABLE:
         return console_ethercat_disable(command->chinese, command->interface, command->selection);
     case ETHERCAT_TASK_ZERO:
@@ -482,11 +585,14 @@ static int console_ethercat_background_stop(void)
     return started ? 1 : 0;
 }
 
-static int console_ethercat_background_submit(ethercat_task task, bool chinese,
-                                              const char *interface, const char *selection,
-                                              unsigned int hold_ms, double output_rad,
-                                              unsigned int value, const char *shift,
-                                              const char *cycle)
+static int console_ethercat_background_submit_ex(ethercat_task task, bool chinese,
+                                                 const char *interface, const char *selection,
+                                                 unsigned int hold_ms, double output_rad,
+                                                 unsigned int value, const char *shift,
+                                                 const char *cycle, uint8_t position_mode,
+                                                 uint32_t profile_velocity,
+                                                 uint32_t profile_acceleration,
+                                                 uint32_t profile_deceleration)
 {
     ethercat_background_args command = {0};
     unsigned int slave_id;
@@ -503,6 +609,13 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
         !isfinite(output_rad) ||
         (task == ETHERCAT_TASK_PN077 && value > 1u) ||
         (task == ETHERCAT_TASK_PNREAD && value > 9999u) ||
+        ((task == ETHERCAT_TASK_ENABLE || task == ETHERCAT_TASK_POSITION ||
+          task == ETHERCAT_TASK_POSITION_PP) &&
+         position_mode != ETHERCAT_CIA402_MODE_CSP &&
+         position_mode != ETHERCAT_CIA402_MODE_PROFILE_POSITION) ||
+        (task == ETHERCAT_TASK_POSITION_PP &&
+         (profile_velocity == 0u || profile_acceleration == 0u ||
+          profile_deceleration == 0u)) ||
         (parameter != NULL && value > parameter->maximum) ||
         (shift != NULL && (strlen(shift) >= sizeof(command.sync0_shift) ||
          console_ethercat_parse_sync0_shift(shift, &parsed_shift) != 0)) ||
@@ -523,6 +636,10 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     command.hold_ms = hold_ms;
     command.output_rad = output_rad;
     command.value = value;
+    command.position_mode = position_mode;
+    command.profile_velocity = profile_velocity;
+    command.profile_acceleration = profile_acceleration;
+    command.profile_deceleration = profile_deceleration;
     snprintf(command.interface, sizeof(command.interface), "%s", interface);
     snprintf(command.selection, sizeof(command.selection), "%s", selection ? selection : "all");
     if (shift) {
@@ -590,4 +707,15 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
         return result;
     }
     return 0;
+}
+
+static int console_ethercat_background_submit(ethercat_task task, bool chinese,
+                                              const char *interface, const char *selection,
+                                              unsigned int hold_ms, double output_rad,
+                                              unsigned int value, const char *shift,
+                                              const char *cycle)
+{
+    return console_ethercat_background_submit_ex(
+        task, chinese, interface, selection, hold_ms, output_rad, value,
+        shift, cycle, ETHERCAT_CIA402_MODE_CSP, 0u, 0u, 0u);
 }

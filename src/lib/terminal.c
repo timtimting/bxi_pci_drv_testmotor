@@ -45,6 +45,81 @@ static int console_reload_config(flash_state *state, const char *path)
     return 0;
 }
 
+static int console_parse_ethercat_position_pp(int argc, char **argv,
+                                                   const char **interface,
+                                                   const char **selection,
+                                                   double *output_rad,
+                                                   uint32_t *profile_velocity,
+                                                   uint32_t *profile_acceleration,
+                                                   uint32_t *profile_deceleration,
+                                                   unsigned int *hold_ms)
+{
+    unsigned int slave_id;
+    bool all_slaves;
+    int target_index;
+    int velocity_index;
+    int optional_start;
+    int last_argument;
+    int optional_count;
+
+    if (argc < 4 || argc > 8 || interface == NULL || selection == NULL ||
+        output_rad == NULL || profile_velocity == NULL ||
+        profile_acceleration == NULL || profile_deceleration == NULL ||
+        hold_ms == NULL) {
+        return -1;
+    }
+    if (console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0) {
+        *interface = ETHERCAT_DEFAULT_INTERFACE;
+        *selection = argv[1];
+        target_index = 2;
+        velocity_index = 3;
+        optional_start = 4;
+    } else {
+        if (argc < 5 ||
+            console_ethercat_parse_slave_selection(argv[2], &slave_id, &all_slaves) != 0) {
+            return -1;
+        }
+        *interface = argv[1];
+        *selection = argv[2];
+        target_index = 3;
+        velocity_index = 4;
+        optional_start = 5;
+    }
+    last_argument = argc;
+    if (last_argument > optional_start) {
+        uint32_t ignored;
+
+        if (console_ethercat_parse_u32(argv[last_argument - 1], &ignored) != 0) {
+            *interface = argv[--last_argument];
+        }
+    }
+    if (last_argument <= velocity_index ||
+        console_ethercat_parse_position_rad(argv[target_index], output_rad) != 0 ||
+        console_ethercat_parse_u32(argv[velocity_index], profile_velocity) != 0 ||
+        *profile_velocity == 0u) {
+        return -1;
+    }
+    *profile_acceleration = 100u;
+    *profile_deceleration = 100u;
+    *hold_ms = 0u;
+    optional_count = last_argument - optional_start;
+    if (optional_count < 0 || optional_count > 3) return -1;
+    if (optional_count >= 1 &&
+        console_ethercat_parse_u32(argv[optional_start], profile_acceleration) != 0) {
+        return -1;
+    }
+    if (optional_count >= 2 &&
+        console_ethercat_parse_u32(argv[optional_start + 1], profile_deceleration) != 0) {
+        return -1;
+    }
+    if (optional_count >= 3 &&
+        parse_uint_arg(argv[optional_start + 2], hold_ms) != 0) {
+        return -1;
+    }
+    if (*profile_acceleration == 0u || *profile_deceleration == 0u) return -1;
+    return 0;
+}
+
 static int console_run_command(flash_state *state, int argc, char **argv)
 {
     const char *cmd;
@@ -263,6 +338,28 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_POSITION, state->config.chinese_ui,
             interface, selection, hold_ms, output_rad, 0u, NULL, NULL);
+    } else if (strcmp(cmd, "ethercat_position_pp") == 0) {
+        const char *interface;
+        const char *selection;
+        double output_rad;
+        uint32_t profile_velocity;
+        uint32_t profile_acceleration;
+        uint32_t profile_deceleration;
+        unsigned int hold_ms;
+
+        if (console_parse_ethercat_position_pp(argc, argv, &interface, &selection,
+                                               &output_rad, &profile_velocity,
+                                               &profile_acceleration,
+                                               &profile_deceleration, &hold_ms) != 0) {
+            printf("%s: ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n",
+                   console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_ethercat_background_submit_ex(
+            ETHERCAT_TASK_POSITION_PP, state->config.chinese_ui,
+            interface, selection, hold_ms, output_rad, 0u, NULL, NULL,
+            ETHERCAT_CIA402_MODE_PROFILE_POSITION, profile_velocity,
+            profile_acceleration, profile_deceleration);
     } else if (strcmp(cmd, "ethercat_zero") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
