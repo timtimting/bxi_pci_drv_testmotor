@@ -16,7 +16,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_scan [network_interface]\n");
             printf("             ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
-            printf("             ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
+            printf("             ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("             ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
             printf("             ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
             printf("             ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -27,7 +27,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-disable <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
-            printf("             --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
+            printf("             --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-zero <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-info <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n\n");
             printf("             --ethercat-pnread <network_interface> <slave_id|all> <Pn编号>（读取参数）\n");
@@ -57,7 +57,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_scan [network_interface]\n");
             printf("                ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
-            printf("                ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
+            printf("                ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
                 printf("                ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
                 printf("                ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
             printf("                ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -68,7 +68,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-disable <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
-            printf("                --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
+            printf("                --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-zero <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-info <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n\n");
             printf("                --ethercat-pnread <network_interface> <slave_id|all> <Pn_number> (read parameter)\n");
@@ -119,8 +119,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      查询/位置命令复用已有主站；周期可设 0.5/1/2/4/5/8ms，运行中不能修改周期/shift。\n");
         printf("  ethercat_disable <slave_id|all> [network_interface]\n");
         printf("      后台发送 0x0000 并确认失能，保留 OP/PDO；Ctrl-C、power_off 或退出终端释放主站。\n");
-        printf("  ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
-        printf("      CSP 位控，默认周期 1ms；target_rad 为电机端弧度（2π/圈），省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
+        printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
+        printf("      CSP 位控，默认周期 1ms；output_rad 为输出端绝对弧度，按各从站 Pn051 换算，省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
         printf("      已有会话直接更新目标，不重新使能；正数 hold_ms 到期只失能，保留后台主站。\n");
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      已有会话须先显式失能，再写 Pn101 的 0→1→0；完成后同时重启主电和 USB 电源。\n");
@@ -145,7 +145,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      命令行执行 EtherCAT 使能测试；周期同步调整主站循环，shift 是主站 Sync0 相位偏移(ns)。\n");
         printf("  --ethercat-disable <network_interface> <slave_id|all>\n");
         printf("      命令行执行 EtherCAT 失能，不初始化 BXI PCI/CAN。\n");
-        printf("  --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
+        printf("  --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms]\n");
         printf("      命令行执行 EtherCAT CSP 位控，不初始化 BXI PCI/CAN。\n");
         printf("  --ethercat-zero <network_interface> <slave_id|all>\n");
         printf("      命令行执行 EtherCAT 零位设置，不初始化 BXI PCI/CAN。\n");
@@ -229,8 +229,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Queries and targets reuse the master. Cannot change cycle/shift in a running session.\n");
     printf("  ethercat_disable <slave_id|all> [network_interface]\n");
     printf("      Confirm selected slaves disabled, keeping OP/PDO active; Ctrl-C, power_off or exit releases the master.\n");
-    printf("  ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n");
-    printf("      CSP control at a default 1ms cycle; target_rad uses motor-side radians (2pi/rev). Omit hold_ms to control until Ctrl-C.\n");
+    printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
+    printf("      CSP control at a default 1ms cycle; output_rad is an absolute output-side angle converted with each slave's Pn051. Omit hold_ms to control until Ctrl-C.\n");
     printf("      Update targets without re-enabling; positive hold_ms disables at expiry but retains the background master.\n");
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      In a running session, disable explicitly first; write Pn101 0->1->0, then restart main and USB power.\n");
@@ -255,7 +255,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Run the EtherCAT safe enable test from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-disable <network_interface> <slave_id|all>\n");
     printf("      Run EtherCAT disable from the command line without BXI PCI/CAN initialization.\n");
-    printf("  --ethercat-position <network_interface> <slave_id|all> <target_rad> [hold_ms]\n");
+    printf("  --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms]\n");
     printf("      Run EtherCAT CSP position control from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-zero <network_interface> <slave_id|all>\n");
     printf("      Set EtherCAT zero from the command line without BXI PCI/CAN initialization.\n");

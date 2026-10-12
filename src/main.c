@@ -105,7 +105,7 @@ int main(int argc, char **argv)
     unsigned int ethercat_position_hold_ms = 0u;
     unsigned int ethercat_pn077_value = 0u;
     uint16_t ethercat_pnread_number = 0u;
-    double ethercat_position_rad;
+    double ethercat_position_output_rad;
     unsigned int parsed_ethercat_slave_id;
     bool parsed_ethercat_all_slaves;
 
@@ -171,7 +171,7 @@ int main(int argc, char **argv)
         } else if (opt == 'S') {
             ethercat_save_interface = optarg;
         } else {
-            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]] [--ethercat-disable interface slave_id|all] [--ethercat-position interface slave_id|all target_rad [hold_ms]] [--ethercat-pnread interface slave_id|all Pn编号] [--ethercat-pn077 interface slave_id|all 0|1] [--ethercat-save interface slave_id|all]\n", argv[0]);
+            printf("用法：%s [-c config.yaml] [--language zh|en] [--check-config] [--ethercat-scan interface] [--ethercat-enable interface slave_id|all [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]] [--ethercat-disable interface slave_id|all] [--ethercat-position interface slave_id|all output_rad [hold_ms]] [--ethercat-pnread interface slave_id|all Pn编号] [--ethercat-pn077 interface slave_id|all 0|1] [--ethercat-save interface slave_id|all]\n", argv[0]);
             return 1;
         }
     }
@@ -268,13 +268,13 @@ int main(int argc, char **argv)
             console_ethercat_parse_slave_selection(argv[optind],
                                                     &parsed_ethercat_slave_id,
                                                     &parsed_ethercat_all_slaves) != 0) {
-            printf("用法：%s --ethercat-position <interface> <slave_id|all> <target_rad> [hold_ms]\n", argv[0]);
+            printf("用法：%s --ethercat-position <interface> <slave_id|all> <output_rad> [hold_ms]\n", argv[0]);
             return 1;
         }
         ethercat_position_selection = argv[optind++];
-        if (console_ethercat_parse_position_rad(argv[optind++], &ethercat_position_rad) != 0 ||
+        if (console_ethercat_parse_position_rad(argv[optind++], &ethercat_position_output_rad) != 0 ||
             (optind < argc && parse_uint_arg(argv[optind++], &ethercat_position_hold_ms) != 0)) {
-            printf("用法：%s --ethercat-position <interface> <slave_id|all> <target_rad> [hold_ms]\n", argv[0]);
+            printf("用法：%s --ethercat-position <interface> <slave_id|all> <output_rad> [hold_ms]\n", argv[0]);
             return 1;
         }
     } else if (ethercat_zero_interface != NULL) {
@@ -375,7 +375,7 @@ int main(int argc, char **argv)
             return console_ethercat_position(chinese,
                                              ethercat_position_interface,
                                              ethercat_position_selection,
-                                             ethercat_position_rad,
+                                             ethercat_position_output_rad,
                                              ethercat_position_hold_ms) == 0 ? 0 : 1;
         }
         if (ethercat_zero_interface != NULL) {

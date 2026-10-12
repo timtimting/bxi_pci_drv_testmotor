@@ -247,7 +247,7 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 
 首次使能时打印各阶段耗时（毫秒）和初始化总耗时，包括主站申请、从站发现、PDO/DC 配置、SDO 快照、主站激活、SAFE-OP 等待、PDO/WKC、OP 及 CiA402 使能。等待 SAFE-OP 时约每秒输出主站响应数、链路状态及各从站的 EtherCAT AL 状态；这能区分主站激活耗时与状态等待，但不能进一步显示 EtherLab 内核配置状态机的内部步骤。`7s` 是等待超时上限，不是固定延时。已运行的后台主站上再次执行 `ethercat_enable` 不重走这些初始化阶段。
 
-使能成功后，后台持续交换 PDO。`ethercat_position` 直接更新原循环的绝对电机端目标，未使能或有故障时拒绝更新；首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。若要持续保持目标，请用 `ethercat_position 1 0.06`。
+使能成功后，后台持续交换 PDO。`ethercat_position` 接收绝对输出端角度，按各从站 Pn051 换算后更新原循环的电机端目标；Pn051 无效、目标超出计数范围、未使能或有故障时拒绝更新。首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。
 
 `ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。设零、参数写入及保存命令在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会自动失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。Pn028/044/106/107 写入回读后更新 `motion snapshot`，其他 SDO 配置仍为使能前快照；最新参数值可用 `ethercat_pnread` 查看。尚无周期会话时，扫描和读取仍由后台完成只读会话，不会自动使能。
 
@@ -279,22 +279,27 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 
 ### EtherCAT CSP 位控
 
-`target_rad` 会自动转换为对象 `0x607A` 的位置计数，单位为电机输入端弧度；
-`2π rad` 对应 `1048576 count` 和电机端一圈。 例如，让 `slave 1` 运动到电机端零位并保持使能：
+交互命令 `ethercat_position <slave_id|all> <output_rad> [hold_ms]` 和独立命令
+`--ethercat-position <interface> <slave_id|all> <output_rad> [hold_ms]` 中的 `output_rad`
+均为减速器输出端的**绝对角度**（rad）。每台从站读取其 Pn051 减速比，将目标换算为
+`0x607A` 的电机端位置计数：`round(output_rad × Pn051 × 1048576 / 2π)`。
+例如 Pn051=101 时，输出端转 `2π rad` 对应电机端 101 圈、105906176 count。
+`all` 对每台从站分别换算并在全部校验通过后才更新目标；Pn051 读取失败、非正数或计数超出
+int32 范围时拒绝发送位置目标。
+
+以下仅为命令语法示例，目标 0 是输出端绝对零位，执行前必须确认当前位置及机械行程：
 
 ```bash
 sudo ./build/motor_console --ethercat-position enp86s0 1 0
 ```
 
-让全部从站运动到电机端半圈（`π rad`），并在 5 秒后自动失能：
-
-```bash
-sudo ./build/motor_console --ethercat-position enp86s0 all 3.141593 5000
-```
-
 独立命令行模式使用 CSP（`0x6060=8`），先配置目标位置，再按 `0x0006`、`0x0007`、`0x000F`
-使能，随后以默认 1 ms 周期持续发送 `0x607A`。目标值是绝对电机端弧度，不包含减速比、机械零位
-或方向换算；首次测试请从当前位置附近的小幅弧度开始，并预留机械限位空间。
+使能，随后以默认 1 ms 周期持续发送 `0x607A`。目标仍是阶跃，不做限速轨迹；角度沿用
+`0x6064` 的编码器零位和方向，`output_pos` 为电机位置除以 Pn051 的换算值，不是独立输出编码器反馈。
+**此改动改变旧位置命令的单位**：原先的电机端目标数值不能原样使用；请先用 `ethercat_info 1`
+确认当前 `output_pos`，从附近的小幅目标开始，并预留机械限位空间。旧电机端目标若需换算，
+新输入约为 `旧目标电机端弧度 / Pn051`；`ethercat_info` 的目标 `pos` 仍是电机端角度，
+新增 `output_pos` 显示相应的输出端换算角度。
 
 ### EtherCAT 零位设置
 

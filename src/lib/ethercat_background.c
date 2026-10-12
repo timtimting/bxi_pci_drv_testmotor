@@ -185,12 +185,10 @@ failed:
 static int console_ethercat_session_position(const ethercat_background_args *command,
                                             const uint8_t selected[EC_MAXSLAVE])
 {
-    double counts = command->position_rad * ETHERCAT_KAIXUAN_COUNTS_PER_REV /
-                    ETHERCAT_KAIXUAN_TWO_PI;
-    int32_t target;
+    int32_t targets[EC_MAXSLAVE] = {0};
+    int16_t ratios[EC_MAXSLAVE] = {0};
     int slave;
 
-    if (!isfinite(counts) || counts < INT32_MIN || counts > INT32_MAX) return -1;
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (!selected[slave]) continue;
         if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
@@ -203,19 +201,46 @@ static int console_ethercat_session_position(const ethercat_background_args *com
             return -1;
         }
     }
-    target = (int32_t)llround(counts);
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (!selected[slave]) continue;
-        console_ethercat_write_i32((uint8_t *)ec_slave[slave].outputs + 2u, target);
+        pthread_mutex_lock(&ethercat_background_mutex);
+        if (ethercat_cached_slaves[slave].valid &&
+            (ethercat_cached_slaves[slave].config_valid_mask & ETHERCAT_CACHE_PN051)) {
+            ratios[slave] = ethercat_cached_slaves[slave].pn051;
+        }
+        pthread_mutex_unlock(&ethercat_background_mutex);
+        if (ratios[slave] <= 0) {
+            printf("[slave%d] %s\n", slave, command->chinese ?
+                   "Pn051 减速比不可用，拒绝位置目标" :
+                   "Pn051 reduction ratio unavailable; position target refused");
+            return -1;
+        }
+        if (!console_ethercat_output_rad_to_count(command->output_rad, ratios[slave],
+                                                   &targets[slave])) {
+            printf("[slave%d] %s: output_rad=%.6f Pn051=%d\n", slave, command->chinese ?
+                   "输出端目标超出 int32 电机位置范围" :
+                   "output target exceeds int32 motor position range",
+                   command->output_rad, (int)ratios[slave]);
+            return -1;
+        }
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        console_ethercat_write_i32((uint8_t *)ec_slave[slave].outputs + 2u, targets[slave]);
         ethercat_session.motion_context[slave] = command->output_context;
         ethercat_session.disable_at_us[slave] = command->hold_ms == 0u ? 0u :
             console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
     }
     if (console_ethercat_mailbox_cycle() != 0) return -1;
-    printf("ethercat_position: slave=%s target_rad=%.6f target_count=%d hold_ms=%u; %s\n",
-           command->selection, command->position_rad, target, command->hold_ms,
+    printf("ethercat_position: slave=%s target_output_rad=%.6f hold_ms=%u; %s\n",
+           command->selection, command->output_rad, command->hold_ms,
            command->chinese ? "目标已交给原 PDO 循环（非到位确认），未重开主站" :
            "target sent by existing PDO loop (not arrival confirmation); master unchanged");
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        if (!selected[slave]) continue;
+        printf("[slave%d] Pn051=%d target_motor_count=%d\n", slave,
+               (int)ratios[slave], targets[slave]);
+    }
     return 0;
 }
 
@@ -455,7 +480,7 @@ static int console_ethercat_background_stop(void)
 
 static int console_ethercat_background_submit(ethercat_task task, bool chinese,
                                               const char *interface, const char *selection,
-                                              unsigned int hold_ms, double position_rad,
+                                              unsigned int hold_ms, double output_rad,
                                               unsigned int value, const char *shift,
                                               const char *cycle)
 {
@@ -465,14 +490,13 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     int32_t parsed_shift;
     uint32_t parsed_cycle;
     const ethercat_motion_parameter *parameter = console_ethercat_motion_parameter_by_task(task);
-    double counts = position_rad * ETHERCAT_KAIXUAN_COUNTS_PER_REV / ETHERCAT_KAIXUAN_TWO_PI;
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         (task != ETHERCAT_TASK_SCAN &&
          (selection == NULL || strlen(selection) >= sizeof(command.selection) ||
           console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0)) ||
         hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
-        !isfinite(counts) || counts < INT32_MIN || counts > INT32_MAX ||
+        !isfinite(output_rad) ||
         (task == ETHERCAT_TASK_PN077 && value > 1u) ||
         (task == ETHERCAT_TASK_PNREAD && value > 9999u) ||
         (parameter != NULL && value > parameter->maximum) ||
@@ -493,7 +517,7 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
     command.output_context = console_output_get_context();
     command.chinese = chinese;
     command.hold_ms = hold_ms;
-    command.position_rad = position_rad;
+    command.output_rad = output_rad;
     command.value = value;
     snprintf(command.interface, sizeof(command.interface), "%s", interface);
     snprintf(command.selection, sizeof(command.selection), "%s", selection ? selection : "all");

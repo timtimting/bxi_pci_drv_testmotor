@@ -219,7 +219,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         return console_ethercat_background_submit(ETHERCAT_TASK_DISABLE, state->config.chinese_ui,
             interface, selection, 0u, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_position") == 0) {
-        double position_rad;
+        double output_rad;
         unsigned int hold_ms = 0u;
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -231,7 +231,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) == 0;
 
         if (!new_order && (argc != 4 && argc != 5)) {
-            printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
+            printf("%s: ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n",
                    console_text(state, "用法", "usage"));
             return -1;
         }
@@ -244,25 +244,25 @@ static int console_run_command(flash_state *state, int argc, char **argv)
                     interface = argv[--last_argument];
                 }
             }
-            if (console_ethercat_parse_position_rad(argv[2], &position_rad) != 0 ||
+            if (console_ethercat_parse_position_rad(argv[2], &output_rad) != 0 ||
                 (last_argument > 3 && parse_uint_arg(argv[3], &hold_ms) != 0) ||
                 last_argument > 4) {
-                printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
+                printf("%s: ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n",
                        console_text(state, "用法", "usage"));
                 return -1;
             }
         } else {
             interface = argv[1];
             selection = argv[2];
-            if (console_ethercat_parse_position_rad(argv[3], &position_rad) != 0 ||
+            if (console_ethercat_parse_position_rad(argv[3], &output_rad) != 0 ||
                 (argc == 5 && parse_uint_arg(argv[4], &hold_ms) != 0)) {
-                printf("%s: ethercat_position <slave_id|all> <target_rad> [hold_ms] [network_interface]\n",
+                printf("%s: ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n",
                        console_text(state, "用法", "usage"));
                 return -1;
             }
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_POSITION, state->config.chinese_ui,
-            interface, selection, hold_ms, position_rad, 0u, NULL, NULL);
+            interface, selection, hold_ms, output_rad, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_zero") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;

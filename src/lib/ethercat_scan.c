@@ -73,7 +73,7 @@ typedef struct {
     bool chinese;
     console_output_context output_context;
     unsigned int hold_ms;
-    double position_rad;
+    double output_rad;
     unsigned int value;
     char interface[IFNAMSIZ];
     char selection[32];
@@ -564,12 +564,12 @@ static uint16_t console_ethercat_pn_index(uint16_t number)
                       (((number / 10u) % 10u) << 4u) + number % 10u);
 }
 
-static int console_ethercat_parse_position_rad(const char *text, double *position_rad)
+static int console_ethercat_parse_position_rad(const char *text, double *output_rad)
 {
     char *end;
     double parsed;
 
-    if (text == NULL || position_rad == NULL) {
+    if (text == NULL || output_rad == NULL) {
         return -1;
     }
     errno = 0;
@@ -577,7 +577,7 @@ static int console_ethercat_parse_position_rad(const char *text, double *positio
     if (errno != 0 || end == text || *end != '\0' || !isfinite(parsed)) {
         return -1;
     }
-    *position_rad = parsed;
+    *output_rad = parsed;
     return 0;
 }
 
@@ -645,6 +645,25 @@ enum {
 #define ETHERCAT_KAIXUAN_COUNTS_PER_REV 1048576.0
 #define ETHERCAT_KAIXUAN_TWO_PI 6.28318530717958647692
 
+#ifdef HAVE_ETHERLAB
+static bool console_ethercat_output_rad_to_count(double output_rad, int16_t ratio,
+                                                  int32_t *target_count)
+{
+    double count_value;
+    long long rounded_count;
+
+    if (ratio <= 0 || target_count == NULL || !isfinite(output_rad)) return false;
+    count_value = output_rad * (double)ratio * ETHERCAT_KAIXUAN_COUNTS_PER_REV /
+                  ETHERCAT_KAIXUAN_TWO_PI;
+    if (!isfinite(count_value) || count_value < INT32_MIN || count_value > INT32_MAX)
+        return false;
+    rounded_count = llround(count_value);
+    if (rounded_count < INT32_MIN || rounded_count > INT32_MAX) return false;
+    *target_count = (int32_t)rounded_count;
+    return true;
+}
+#endif
+
 static const char *const ethercat_hold_ms_words[] = {
     "1000", "2000", "5000", "10000", "30000", "60000",
 };
@@ -664,7 +683,7 @@ static const char *const ethercat_enable_initial_words[] = {
     "sync0_cycle_ms=4", "sync0_cycle_ms=5", "sync0_cycle_ms=8",
 };
 
-static const char *const ethercat_position_rad_words[] = {
+static const char *const ethercat_output_rad_words[] = {
     "0",
 };
 
@@ -806,9 +825,9 @@ static const char *const *console_ethercat_completion_words(const char *line,
         return console_ethercat_slave_completion_words(count);
     }
     if (strcmp(first, "ethercat_position") == 0 && tokens_before == 2u) {
-        *count = sizeof(ethercat_position_rad_words) /
-                 sizeof(ethercat_position_rad_words[0]);
-        return ethercat_position_rad_words;
+        *count = sizeof(ethercat_output_rad_words) /
+                 sizeof(ethercat_output_rad_words[0]);
+        return ethercat_output_rad_words;
     }
     if (strcmp(first, "ethercat_position") == 0 && tokens_before == 3u) {
         *count = sizeof(ethercat_hold_ms_words) / sizeof(ethercat_hold_ms_words[0]);
@@ -1351,10 +1370,18 @@ static int console_ethercat_print_background_info(bool chinese,
             printf("%d (unit unknown)", velocity_actual);
         }
         printf(" torque=%d (0.01A) current=not-mapped\n", (int)torque_actual);
-        printf("  target PDO: pos=%.6frad (%d count) vel=%d count/s torque=%d (0.01A); digital_inputs=not-mapped\n",
+        printf("  target PDO: pos=%.6frad (%d count) output_pos=",
                (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
                ETHERCAT_KAIXUAN_COUNTS_PER_REV,
-               target_position, target_velocity, (int)target_torque);
+               target_position);
+        if ((snapshot->config_valid_mask & ETHERCAT_CACHE_PN051) && snapshot->pn051 > 0) {
+            printf("%.6frad", (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV / (double)snapshot->pn051);
+        } else {
+            printf("?");
+        }
+        printf(" vel=%d count/s torque=%d (0.01A); digital_inputs=not-mapped\n",
+               target_velocity, (int)target_torque);
     }
     return 1;
 }
@@ -2261,7 +2288,7 @@ close_socket:
 static int console_ethercat_position(bool chinese,
                                      const char *interface,
                                      const char *selection,
-                                     double position_rad,
+                                     double output_rad,
                                      unsigned int hold_ms)
 {
     unsigned int slave_id;
@@ -2269,8 +2296,8 @@ static int console_ethercat_position(bool chinese,
 
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
-        !isfinite(position_rad) || hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS) {
-        printf("%s: ethercat_position <network_interface> <slave_id|all> <target_rad> [hold_ms:1..%u]\n",
+        !isfinite(output_rad) || hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS) {
+        printf("%s: ethercat_position <network_interface> <slave_id|all> <output_rad> [hold_ms:1..%u]\n",
                chinese ? "用法" : "usage", ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS);
         return -1;
     }
@@ -2283,35 +2310,20 @@ static int console_ethercat_position(bool chinese,
 #else
     uint8_t process_image[ETHERCAT_KAIXUAN_PROCESS_IMAGE_SIZE];
     uint8_t selected[EC_MAXSLAVE] = {0};
-    int32_t target_positions[EC_MAXSLAVE];
-    double position_count_double;
+    int32_t target_positions[EC_MAXSLAVE] = {0};
     uint64_t deadline;
-    long long position_count_long;
     int slave;
-    int32_t position_count;
     int result = -1;
     bool mapped = false;
 
-    position_count_double = position_rad * ETHERCAT_KAIXUAN_COUNTS_PER_REV /
-                            ETHERCAT_KAIXUAN_TWO_PI;
-    if (position_count_double < (double)INT32_MIN || position_count_double > (double)INT32_MAX) {
-        printf("%s\n", chinese ? "ethercat_position: 目标弧度超出 int32 位置范围" :
-               "ethercat_position: target radians exceed int32 position range");
-        return -1;
-    }
-    position_count_long = llround(position_count_double);
-    position_count = (int32_t)position_count_long;
-    for (slave = 0; slave < EC_MAXSLAVE; slave++) {
-        target_positions[slave] = position_count;
-    }
     if (hold_ms == 0u) {
-        printf("%s: interface=%s slave=%s target_rad=%.6f target_count=%d hold=until-Ctrl-C\n",
+        printf("%s: interface=%s slave=%s target_output_rad=%.6f hold=until-Ctrl-C\n",
                chinese ? "ethercat_position: 开始" : "ethercat_position: start",
-               interface, selection, position_rad, position_count);
+               interface, selection, output_rad);
     } else {
-        printf("%s: interface=%s slave=%s target_rad=%.6f target_count=%d hold_ms=%u\n",
+        printf("%s: interface=%s slave=%s target_output_rad=%.6f hold_ms=%u\n",
                chinese ? "ethercat_position: 开始" : "ethercat_position: start",
-               interface, selection, position_rad, position_count, hold_ms);
+               interface, selection, output_rad, hold_ms);
     }
     if (ec_init((char *)interface) == 0) {
         printf("%s: %s\n", chinese ? "ethercat_position: 打开网卡失败" :
@@ -2332,6 +2344,30 @@ static int console_ethercat_position(bool chinese,
         if (all_slaves || (unsigned int)slave == slave_id) {
             selected[slave] = 1u;
         }
+    }
+    for (slave = 1; slave <= ec_slavecount; slave++) {
+        int16_t ratio = 0;
+
+        if (!selected[slave]) continue;
+        if (ec_slave[slave].eep_man != ETHERCAT_KAIXUAN_VENDOR_ID ||
+            ec_slave[slave].eep_id != ETHERCAT_KAIXUAN_PRODUCT_CODE ||
+            !console_ethercat_read_sdo_value(slave, 0x2051u, 0u, &ratio, sizeof(ratio)) ||
+            ratio <= 0) {
+            printf("[slave%d] %s\n", slave, chinese ?
+                   "Pn051 减速比不可用，拒绝位置目标" :
+                   "Pn051 reduction ratio unavailable; position target refused");
+            goto close_socket;
+        }
+        if (!console_ethercat_output_rad_to_count(output_rad, ratio,
+                                                   &target_positions[slave])) {
+            printf("[slave%d] %s: output_rad=%.6f Pn051=%d\n", slave, chinese ?
+                   "输出端目标超出 int32 电机位置范围" :
+                   "output target exceeds int32 motor position range",
+                   output_rad, (int)ratio);
+            goto close_socket;
+        }
+        printf("[slave%d] Pn051=%d target_motor_count=%d\n", slave,
+               (int)ratio, target_positions[slave]);
     }
 
     ec_config_map(process_image);
@@ -2892,6 +2928,11 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
             printf("%.6frad (%d count)",
                    (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
                    ETHERCAT_KAIXUAN_COUNTS_PER_REV, target_position);
+        } else printf("?");
+        printf(" output_pos=");
+        if (target_position_ok && pn051_ok && pn051 > 0) {
+            printf("%.6frad", (double)target_position * ETHERCAT_KAIXUAN_TWO_PI /
+                   ETHERCAT_KAIXUAN_COUNTS_PER_REV / (double)pn051);
         } else printf("?");
         printf(" vel=");
         if (target_velocity_ok) printf("%d raw", target_velocity); else printf("?");
