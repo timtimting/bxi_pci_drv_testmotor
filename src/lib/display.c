@@ -64,9 +64,9 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  maita_torque <bus> <id> <iq_A> [timeout_ms]\n");
         printf("      发送 0xA1 转矩电流闭环指令，iq_A 单位 A，协议单位 0.01A/LSB。\n");
         printf("  maita_zero <bus> <id> [timeout_ms]\n");
-        printf("      发送 0x64，将当前多圈位置写入 ROM 作为零点；手册要求失能状态执行，复位后生效。\n");
+        printf("      先执行 maita_disable <bus> <id> 并确认成功；本命令只提示、不自动失能，然后发送 0x64，复位后验证零位。\n");
         printf("  maita_zero_reset <bus> <id> [timeout_ms] [reset_wait_ms]\n");
-        printf("      依次发送 0x81 使能/保持、0x64 当前零位设置、0x76 系统复位。\n");
+        printf("      依次发送 0x80 失能并确认回复、0x64 当前零位设置、0x76 系统复位。\n");
         printf("  maita_reset <bus> <id> [wait_ms]\n");
         printf("      发送 0x76 系统复位；手册说明该命令无回复，默认等待 1000ms。\n");
         printf("  maita_version <bus> <id> [timeout_ms]\n");
@@ -117,9 +117,9 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  maita_torque <bus> <id> <iq_A> [timeout_ms]\n");
     printf("      Send 0xA1 torque-current command. iq_A is in A; protocol scale is 0.01A/LSB.\n");
     printf("  maita_zero <bus> <id> [timeout_ms]\n");
-    printf("      Send 0x64 to write current multi-turn position as zero; run disabled, reset to apply.\n");
+    printf("      Run maita_disable <bus> <id> first and confirm success; this command only reminds, then sends 0x64. Verify after reset.\n");
     printf("  maita_zero_reset <bus> <id> [timeout_ms] [reset_wait_ms]\n");
-    printf("      Send 0x81 Stop/Hold, 0x64 current-position zero, then 0x76 system reset.\n");
+    printf("      Send 0x80 Shutdown and confirm its reply, then 0x64 current-position zero and 0x76 system reset.\n");
     printf("  maita_reset <bus> <id> [wait_ms]\n");
     printf("      Send 0x76 system reset; no reply is expected, default wait is 1000ms.\n");
     printf("  maita_version <bus> <id> [timeout_ms]\n");

@@ -153,41 +153,52 @@ IqRef = kp * (p_des - p_actual) + kd * (v_des - v_actual) + t_ff
 置零流程：
 
 ```text
-1. 电机上电
-2. 发送使能 / 保持命令
-3. 发送当前零位设置命令
-4. 发送系统复位命令
-5. 复位后重新读取位置，确认零位是否生效
+1. 确认电机静止、机构安全，然后上电
+2. 发送 0x80 失能命令，并确认收到回复
+3. 发送 0x64 当前零位设置命令
+4. 发送 0x76 系统复位命令
+5. 确认电机实际重启后重新读取位置，检查零位是否生效
 ```
 
-组合调试命令：
+在终端中逐步执行（以 bus=0、id=4 为例）：
 
 ```text
-maita_zero_reset <bus> <id>
+power_on
+maita_disable 0 4
+maita_zero 0 4
+maita_reset 0 4
+maita_info 0 4
 ```
 
-该命令内部依次发送：
+`maita_zero` 会提示先执行 `maita_disable <bus> <id>`，但**不会自动失能或检查当前是否失能**。
+只有 `maita_disable` 成功回复后才继续置零；`maita_zero` 收到 `0x64` 回复和
+`maita_reset` 显示发送成功，都不能单独证明零位已生效，其中 `0x76` 没有回复。
+`maita_info` 会发送一帧零力矩 MIT 指令以取得位置反馈，并非纯只读查询。
+
+也可使用组合调试命令 `maita_zero_reset <bus> <id>`，它内部自动依次发送并检查前两步回复：
 
 ```text
-0x81 -> 0x64 -> 0x76
+0x80 -> 0x64 -> 0x76
 ```
 
-### 3.1 使能 / 保持命令：0x81
+组合命令发送 `0x76` 后仅等待指定时间，仍需再次读取位置确认零位。
 
-置零前先进入 Stop/Hold 状态。
+### 3.1 失能命令：0x80
+
+置零前先关闭电机输出并确认失能命令得到回复，不要用 `0x81` Stop/Hold 代替失能。
 
 发送：
 
 ```text
 CAN ID = 0x140 + id
-DATA   = 81 00 00 00 00 00 00 00
+DATA   = 80 00 00 00 00 00 00 00
 ```
 
 回复：
 
 ```text
 CAN ID = 0x240 + id
-DATA[0] = 0x81
+DATA[0] = 0x80
 DATA[1] = temperature，int8，单位 ℃
 DATA[2..3] = iq，int16，小端，单位 0.01A/LSB
 DATA[4..5] = speed，int16，小端，单位 dps

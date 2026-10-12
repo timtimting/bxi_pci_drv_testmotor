@@ -973,6 +973,10 @@ static int console_maita_zero(flash_state *state, int argc, char **argv)
         printf("%s: maita_zero <bus> <id> [timeout_ms]\n", console_text(state, "用法", "usage"));
         return -1;
     }
+    printf("maita_zero: %s maita_disable %u %u; %s\n",
+           console_text(state, "请先执行并确认失能：", "first run and confirm disable:"),
+           bus, id,
+           console_text(state, "本命令不会自动失能。", "this command does not disable automatically."));
     return maita_send_command_wait(state, "maita_zero", bus, id, data, timeout_ms,
                                    MAITA_CMD_ZERO_CURRENT);
 }
@@ -983,7 +987,7 @@ static int console_maita_zero_reset(flash_state *state, int argc, char **argv)
     unsigned int id;
     unsigned int timeout_ms = 1000u;
     unsigned int reset_wait_ms = 1000u;
-    uint8_t enable_data[8] = {MAITA_CMD_STOP, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    uint8_t disable_data[8] = {MAITA_CMD_SHUTDOWN, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     uint8_t zero_data[8] = {MAITA_CMD_ZERO_CURRENT, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     uint8_t reset_data[8] = {MAITA_CMD_RESET, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     rx_can_frame frame;
@@ -1012,14 +1016,14 @@ static int console_maita_zero_reset(flash_state *state, int argc, char **argv)
     printf("maita_zero_reset: start bus=%u id=%u\n", bus, id);
 
     frame_ring_clear(&state->frames);
-    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, enable_data) != 0 ||
+    if (maita_send_frame(state, bus, MAITA_SEND_BASE + id, disable_data) != 0 ||
         maita_wait_status_reply(state, bus, id, timeout_ms, &frame) != 0 ||
-        maita_unpack_status_reply(&frame, id, MAITA_CMD_STOP, &reply) != 0) {
-        printf("[maita%02u]: enable failed timeout_ms=%u\n", id, timeout_ms);
+        maita_unpack_status_reply(&frame, id, MAITA_CMD_SHUTDOWN, &reply) != 0) {
+        printf("[maita%02u]: disable failed timeout_ms=%u\n", id, timeout_ms);
         printf("maita_zero_reset: done success=0 failed=1\n");
         goto out;
     }
-    printf("[maita%02u]: enable ok temp=%dC iq=%.2fA speed=%.0fdps angle=%ddeg\n",
+    printf("[maita%02u]: disable ok temp=%dC iq=%.2fA speed=%.0fdps angle=%ddeg\n",
            id, reply.temperature_c, reply.current_a, reply.speed_dps, reply.angle_deg);
 
     frame_ring_clear(&state->frames);
