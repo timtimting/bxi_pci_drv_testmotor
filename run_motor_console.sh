@@ -34,6 +34,26 @@ else
     cmake --build build --parallel 4
 fi
 
+if [[ "$require_etherlab" == ON ]]; then
+    if [[ ! -c /dev/EtherCAT0 || ! -r /sys/module/ec_master/parameters/main_devices ]]; then
+        if [[ ! -x /etc/init.d/ethercat ]]; then
+            printf '%s\n' '未找到 /etc/init.d/ethercat；请先安装并配置 EtherLab 内核主站。' >&2
+            exit 1
+        fi
+        printf '%s\n' 'EtherLab 内核主站未就绪，正在启动 /etc/init.d/ethercat'
+        if (( EUID == 0 )); then
+            /etc/init.d/ethercat start
+        else
+            sudo /etc/init.d/ethercat start
+        fi
+    fi
+    if [[ ! -c /dev/EtherCAT0 || ! -r /sys/module/ec_master/parameters/main_devices ]]; then
+        printf '%s\n' 'EtherLab 内核主站启动后仍不可用；请检查 /etc/sysconfig/ethercat 和 /dev/EtherCAT0。' >&2
+        exit 1
+    fi
+    printf '%s\n' 'EtherLab 内核主站已就绪: /dev/EtherCAT0'
+fi
+
 trap - EXIT
 printf '%s\n\n' '==================== EtherLab 启动检查与编译：完成 ===================='
 

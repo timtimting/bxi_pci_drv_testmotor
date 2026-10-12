@@ -22,9 +22,10 @@ sudo ./build/motor_console
 ```
 
 `build/motor_console` 现在是 `run_motor_console.sh` 的启动副本：每次启动前自动
-检测 EtherLab 开发库并增量构建，再运行内部程序。通过 `sudo` 启动时，构建由原登录用户完成。
+检测 EtherLab 开发库、增量构建，并检查内核主站；若未启动，则调用 `/etc/init.d/ethercat start`，再运行内部程序。
+通过 `sudo` 启动时，构建由原登录用户完成。
 启动脚本用醒目的“EtherLab 启动检查与编译：开始／完成／失败”分隔线标识构建输出。
-首次更新到此版本后需执行一次 `make`，将旧的同名二进制替换为启动入口；此后只需上述启动命令。
+更新启动脚本后需先执行一次 `make`，将新脚本复制到 `build/motor_console`；此后只需上述启动命令。
 
 ## 1. 安全说明
 
@@ -201,7 +202,8 @@ sudo ./build/motor_console
 ETHERLAB_ROOT=/custom/etherlab ./run_motor_console.sh
 ```
 
-脚本只自动配置和编译用户态程序，不会安装 EtherLab、修改主站网卡配置、启动内核模块或给电机上电。
+脚本会在 `/dev/EtherCAT0` 或主站模块缺失时启动 EtherLab 服务；不会安装 EtherLab、修改主站网卡配置或给电机上电。
+`--check-config` 和 `--help` 不会启动主站。若服务启动后仍不可用，脚本会报错退出。
 若仍需手动构建，可指定安装前缀：
 
 ```bash
