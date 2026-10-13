@@ -41,7 +41,7 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_position_pp", "ethercat_mit", "pp", "ethercat_zero",
     "ethercat_info", "info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
-    "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044",
+    "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "ethercat_pn082", "pn082",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
     "enable", "disable", "debug", "mit",
@@ -132,6 +132,7 @@ int main(int argc, char **argv)
         {"ethercat-pn106", required_argument, NULL, 1001},
         {"ethercat-pn107", required_argument, NULL, 1002},
         {"ethercat-pn044", required_argument, NULL, 1003},
+        {"ethercat-pn082", required_argument, NULL, 1005},
         {"ethercat-save", required_argument, NULL, 'S'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
@@ -170,12 +171,12 @@ int main(int argc, char **argv)
             ethercat_pnread_interface = optarg;
         } else if (opt == 'W') {
             ethercat_pn077_interface = optarg;
-        } else if (opt >= 1000 && opt <= 1003) {
+        } else if ((opt >= 1000 && opt <= 1003) || opt == 1005) {
             if (ethercat_motion_interface != NULL) {
                 fprintf(stderr, "Specify only one EtherCAT parameter write command.\n");
                 return 1;
             }
-            ethercat_motion_parameter_spec = &ethercat_motion_parameters[opt - 1000];
+            ethercat_motion_parameter_spec = &ethercat_motion_parameters[opt == 1005 ? 4 : opt - 1000];
             ethercat_motion_interface = optarg;
         } else if (opt == 'S') {
             ethercat_save_interface = optarg;

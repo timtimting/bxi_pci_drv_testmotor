@@ -27,6 +27,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_pn106 <slave_id|all> <0..300> [network_interface]\n");
             printf("             ethercat_pn107 <slave_id|all> <0|1> [network_interface]\n");
             printf("             ethercat_pn044 <slave_id|all> <0..9> [network_interface]\n");
+            printf("             ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
             printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-disable <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
@@ -36,7 +37,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             --ethercat-info <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n\n");
             printf("             --ethercat-pnread <network_interface> <slave_id|all> <Pn编号>（读取参数）\n");
             printf("             --ethercat-pn077 <network_interface> <slave_id|all> <0|1>（写入电机 Pn077）\n");
-            printf("             --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044 <network_interface> <slave_id|all> <value>\n");
+            printf("             --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044|--ethercat-pn082 <network_interface> <slave_id|all> <value>\n");
             printf("  MIT控制：   mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("             mit_enable_all    mit_disable_all\n");
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
@@ -72,6 +73,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_pn106 <slave_id|all> <0..300> [network_interface]\n");
             printf("                ethercat_pn107 <slave_id|all> <0|1> [network_interface]\n");
             printf("                ethercat_pn044 <slave_id|all> <0..9> [network_interface]\n");
+            printf("             ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
             printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-disable <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
@@ -81,7 +83,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                --ethercat-info <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n\n");
             printf("                --ethercat-pnread <network_interface> <slave_id|all> <Pn_number> (read parameter)\n");
             printf("                --ethercat-pn077 <network_interface> <slave_id|all> <0|1> (write drive Pn077)\n");
-            printf("                --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044 <network_interface> <slave_id|all> <value>\n");
+            printf("                --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044|--ethercat-pn082 <network_interface> <slave_id|all> <value>\n");
             printf("                --ethercat-save <network_interface> <slave_id|all> (trigger parameter save)\n");
             printf("  MIT control:  mit_zero_set_all    mit_zero_set_single <index00>\n");
             printf("                mit_enable_all    mit_disable_all\n");
@@ -149,8 +151,9 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_pn106 <slave_id|all> <0..300> [network_interface]（加速度限制值）\n");
         printf("  ethercat_pn107 <slave_id|all> <0|1> [network_interface]（加速度限制开关）\n");
         printf("  ethercat_pn044 <slave_id|all> <0..9> [network_interface]（速度滤波档位）\n");
+        printf("  ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
         printf("      先显式失能；后台写入并回读，更新 info 缓存。未自动保存或使能，需要持久化请执行 ethercat_save。\n");
-        printf("      独立 CLI：--ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044 <network_interface> <slave_id|all> <value>。\n");
+        printf("      独立 CLI：--ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044|--ethercat-pn082 <network_interface> <slave_id|all> <value>。\n");
         printf("  ethercat_save <slave_id|all> [network_interface]\n");
         printf("      驱动器失能时按官方流程写 Pn097(0x2097:00) 1→0 触发参数保存；重启后回读确认。\n");
         printf("  --ethercat-scan <network_interface>\n");
@@ -265,8 +268,9 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_pn106 <slave_id|all> <0..300> [network_interface] (acceleration limit)\n");
     printf("  ethercat_pn107 <slave_id|all> <0|1> [network_interface] (acceleration limiter switch)\n");
     printf("  ethercat_pn044 <slave_id|all> <0..9> [network_interface] (speed filter level)\n");
+    printf("  ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
     printf("      Disable explicitly first. Background write/readback updates info cache; no automatic save or enable. Use ethercat_save for persistence.\n");
-    printf("      Standalone CLI: --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044 <network_interface> <slave_id|all> <value>.\n");
+    printf("      Standalone CLI: --ethercat-pn028|--ethercat-pn106|--ethercat-pn107|--ethercat-pn044|--ethercat-pn082 <network_interface> <slave_id|all> <value>.\n");
     printf("  ethercat_save <slave_id|all> [network_interface]\n");
     printf("      While disabled, pulse Pn097 (0x2097:00) 1->0 to trigger parameter save; reboot and verify persistence.\n");
     printf("  --ethercat-scan <network_interface>\n");

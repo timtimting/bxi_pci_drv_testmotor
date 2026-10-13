@@ -34,7 +34,8 @@ typedef enum {
     ETHERCAT_TASK_PN106,
     ETHERCAT_TASK_PN107,
     ETHERCAT_TASK_PN044,
-    ETHERCAT_TASK_MIT
+    ETHERCAT_TASK_MIT,
+    ETHERCAT_TASK_PN082
 } ethercat_task;
 
 typedef struct {
@@ -49,6 +50,7 @@ static const ethercat_motion_parameter ethercat_motion_parameters[] = {
     {ETHERCAT_TASK_PN106, "ethercat_pn106", 106u, 300u},
     {ETHERCAT_TASK_PN107, "ethercat_pn107", 107u, 1u},
     {ETHERCAT_TASK_PN044, "ethercat_pn044", 44u, 9u},
+    {ETHERCAT_TASK_PN082, "ethercat_pn082", 82u, 32767u},
 };
 
 static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_task(ethercat_task task)
@@ -66,6 +68,8 @@ static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_tas
 static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_name(const char *name)
 {
     size_t parameter;
+
+    if (strcmp(name, "pn082") == 0) name = "ethercat_pn082";
 
     for (parameter = 0; parameter < sizeof(ethercat_motion_parameters) /
          sizeof(ethercat_motion_parameters[0]); parameter++) {
@@ -3651,6 +3655,10 @@ static void console_ethercat_update_motion_cache(int slave, uint16_t number,
     case 107u:
         snapshot->pn107 = value;
         mask = ETHERCAT_CACHE_PN107;
+        break;
+    case 82u:
+        snapshot->pn082 = value;
+        mask = ETHERCAT_CACHE_PN082;
         break;
     case 44u:
         snapshot->pn044 = value;

@@ -4,7 +4,7 @@ static const char *console_ethercat_task_name(ethercat_task task)
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
         "ethercat_position", "ethercat_position_pp", "ethercat_zero", "ethercat_info",
         "ethercat_pnread", "ethercat_pn077", "ethercat_save",
-        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit"
+        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit", "ethercat_pn082"
     };
     return names[task];
 }
@@ -493,6 +493,7 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
     case ETHERCAT_TASK_PN106:
     case ETHERCAT_TASK_PN107:
     case ETHERCAT_TASK_PN044:
+    case ETHERCAT_TASK_PN082:
         return console_ethercat_write_motion_parameter(command->chinese, command->interface,
             command->selection, console_ethercat_motion_parameter_by_task(command->task),
             command->value);
@@ -608,6 +609,7 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
     case ETHERCAT_TASK_PN106:
     case ETHERCAT_TASK_PN107:
     case ETHERCAT_TASK_PN044:
+    case ETHERCAT_TASK_PN082:
         return console_ethercat_write_motion_parameter(command->chinese, command->interface,
             command->selection, console_ethercat_motion_parameter_by_task(command->task),
             command->value);
