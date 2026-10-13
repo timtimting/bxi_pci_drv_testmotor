@@ -18,6 +18,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
             printf("             ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("             ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+            printf("             pp 是 ethercat_position_pp 的无下划线别名\n");
             printf("             ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
             printf("             ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
             printf("             ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -61,6 +62,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
             printf("                ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("                ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+            printf("                pp is an alias for ethercat_position_pp\n");
             printf("                ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
                 printf("                ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
             printf("                ethercat_pn077 <slave_id|all> <0|1> [network_interface]\n");
@@ -127,8 +129,10 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      CSP 位控（0x6060=8），默认周期 1ms；output_rad 为输出端绝对弧度，按各从站 Pn051 换算，省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
         printf("      已有会话直接更新目标，不重新使能；正数 hold_ms 到期只失能，保留后台主站。\n");
         printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+        printf("      可输入 pp 代替 ethercat_position_pp（无需下划线）。\n");
         printf("      PP 位控（0x6060=1）；目标仍是输出端绝对弧度，默认加/减速度为 100，参数按 ESI 原始 UDINT 写入 0x6081/0x6083/0x6084。\n");
         printf("      先执行 ethercat_disable；命令会写入并回读 PP 参数、完成设定点 bit4 握手，再由后台 PDO 循环运行。\n");
+        printf("      PP 已使能时更改 profile 参数会拒绝发送目标；先失能再修改，加/减速度省略时按 100 计算。\n");
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      已有会话须先显式失能，再写 Pn101 的 0→1→0；完成后同时重启主电和 USB 电源。\n");
         printf("  ethercat_info <slave_id|all> [network_interface]\n");
@@ -242,8 +246,10 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      CSP control (0x6060=8) at a default 1ms cycle; output_rad is an absolute output-side angle converted with each slave's Pn051. Omit hold_ms to control until Ctrl-C.\n");
     printf("      Update targets without re-enabling; positive hold_ms disables at expiry but retains the background master.\n");
     printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+    printf("      Use pp as the same command without underscores.\n");
     printf("      Profile Position control (0x6060=1); output_rad remains output-side absolute angle. Defaults accel/decel to 100 and writes raw UDINT 0x6081/0x6083/0x6084.\n");
     printf("      Run ethercat_disable first; the command writes/readbacks PP parameters, performs the bit4 set-point handshake, then uses the background PDO loop.\n");
+    printf("      Changing profile parameters while PP is enabled refuses the target; disable first. Omitted accel/decel default to 100.\n");
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      In a running session, disable explicitly first; write Pn101 0->1->0, then restart main and USB power.\n");
     printf("  ethercat_info <slave_id|all> [network_interface]\n");

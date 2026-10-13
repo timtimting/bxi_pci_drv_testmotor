@@ -338,7 +338,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_POSITION, state->config.chinese_ui,
             interface, selection, hold_ms, output_rad, 0u, NULL, NULL);
-    } else if (strcmp(cmd, "ethercat_position_pp") == 0) {
+    } else if (strcmp(cmd, "ethercat_position_pp") == 0 || strcmp(cmd, "pp") == 0) {
         const char *interface;
         const char *selection;
         double output_rad;

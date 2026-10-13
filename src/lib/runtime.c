@@ -4816,6 +4816,66 @@ static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_le
     redraw_prompt_cursor(prompt, line, *len, *cursor);
 }
 
+static void set_bracketed_paste_mode(bool enabled)
+{
+    if (!isatty(STDOUT_FILENO)) return;
+    pthread_mutex_lock(&console_output_stream_mutex);
+    const char *sequence = enabled ? "\033[?2004h" : "\033[?2004l";
+    fwrite(sequence, 1u, strlen(sequence), stdout);
+    fflush(stdout);
+    pthread_mutex_unlock(&console_output_stream_mutex);
+}
+
+static int read_csi_sequence(char *sequence, size_t sequence_size)
+{
+    unsigned char ch;
+    size_t length = 0u;
+
+    if (sequence_size < 2u || read(STDIN_FILENO, &ch, 1u) != 1 || ch != '[') return -1;
+    while (length + 1u < sequence_size) {
+        if (read(STDIN_FILENO, &ch, 1u) != 1) return -1;
+        sequence[length++] = (char)ch;
+        if (ch >= 0x40u && ch <= 0x7eu) {
+            sequence[length] = '\0';
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int read_bracketed_paste(char *line, size_t *len, size_t *cursor, size_t max_len)
+{
+    static const unsigned char end_sequence[] = "\033[201~";
+    size_t matched = 0u;
+    bool truncated = false;
+
+    while (!stop_requested) {
+        unsigned char ch;
+
+        if (read(STDIN_FILENO, &ch, 1u) != 1) return -1;
+        if (ch == end_sequence[matched]) {
+            matched++;
+            if (matched == sizeof(end_sequence) - 1u) {
+                if (truncated) {
+                    putchar('\a');
+                    fflush(stdout);
+                }
+                return 0;
+            }
+            continue;
+        }
+        if (matched != 0u) {
+            matched = ch == end_sequence[0] ? 1u : 0u;
+            if (matched != 0u) continue;
+        }
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+        if (isprint(ch) &&
+            insert_text_at_cursor(line, len, cursor, max_len,
+                                  (const char *)&ch, 1u) != 0) truncated = true;
+    }
+    return -1;
+}
+
 static int read_line_with_completion_impl(const char *prompt, char *line, size_t max_len)
 {
     struct termios old_term;
@@ -4826,6 +4886,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
     bool history_browsing = false;
     char saved_line[LINE_LEN];
     size_t saved_len = 0u;
+    int result = -1;
 
     if (max_len == 0u) {
         return -1;
@@ -4846,6 +4907,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
     if (tcsetattr(STDIN_FILENO, TCSANOW, &new_term) != 0) {
         return -1;
     }
+    set_bracketed_paste_mode(true);
 
     line[0] = '\0';
     saved_line[0] = '\0';
@@ -4853,26 +4915,25 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
         unsigned char ch;
         ssize_t n = read(STDIN_FILENO, &ch, 1u);
 
-        if (n <= 0) {
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-            return -1;
-        }
+        if (n <= 0) break;
         if (ch == '\r' || ch == '\n') {
             if (!console_output_prompt_finish(true)) putchar('\n');
             line[len] = '\0';
             history_push(line);
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-            return 0;
+            result = 0;
+            break;
         }
         if (ch == 27u) {
-            unsigned char seq[2];
+            char seq[16];
 
-            if (read(STDIN_FILENO, &seq[0], 1u) <= 0 ||
-                read(STDIN_FILENO, &seq[1], 1u) <= 0 ||
-                seq[0] != '[') {
+            if (read_csi_sequence(seq, sizeof(seq)) != 0) continue;
+            if (strcmp(seq, "200~") == 0) {
+                if (read_bracketed_paste(line, &len, &cursor, max_len) != 0) break;
+                redraw_prompt_cursor(prompt, line, len, cursor);
+                history_browsing = false;
                 continue;
             }
-            if (seq[1] == 'A') {
+            if (strcmp(seq, "A") == 0) {
                 if (command_history_count == 0u) {
                     putchar('\a');
                     fflush(stdout);
@@ -4894,7 +4955,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
                 redraw_prompt_cursor(prompt, line, len, cursor);
                 continue;
             }
-            if (seq[1] == 'B') {
+            if (strcmp(seq, "B") == 0) {
                 if (!history_browsing) {
                     putchar('\a');
                     fflush(stdout);
@@ -4912,7 +4973,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
                 redraw_prompt_cursor(prompt, line, len, cursor);
                 continue;
             }
-            if (seq[1] == 'C') {
+            if (strcmp(seq, "C") == 0) {
                 if (cursor < len) {
                     cursor++;
                     redraw_prompt_cursor(prompt, line, len, cursor);
@@ -4922,7 +4983,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
                 }
                 continue;
             }
-            if (seq[1] == 'D') {
+            if (strcmp(seq, "D") == 0) {
                 if (cursor > 0u) {
                     cursor--;
                     redraw_prompt_cursor(prompt, line, len, cursor);
@@ -4932,12 +4993,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
                 }
                 continue;
             }
-            if (seq[1] == '3') {
-                unsigned char tail;
-
-                if (read(STDIN_FILENO, &tail, 1u) <= 0 || tail != '~') {
-                    continue;
-                }
+            if (strcmp(seq, "3~") == 0) {
                 if (delete_at_cursor(line, &len, cursor) != 0) {
                     putchar('\a');
                     fflush(stdout);
@@ -4953,10 +5009,7 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
             history_browsing = false;
             continue;
         }
-        if (ch == 4u) {
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-            return -1;
-        }
+        if (ch == 4u) break;
         if (ch == 127u || ch == 8u) {
             if (delete_before_cursor(line, &len, &cursor) != 0) {
                 putchar('\a');
@@ -4979,8 +5032,9 @@ static int read_line_with_completion_impl(const char *prompt, char *line, size_t
         }
     }
 
+    set_bracketed_paste_mode(false);
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-    return -1;
+    return result;
 }
 
 static int read_line_with_completion(const char *prompt, char *line, size_t max_len)

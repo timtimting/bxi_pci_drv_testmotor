@@ -395,6 +395,26 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
                            "The slave is not operation-enabled in PP mode; disable it before switching mode or changing PP parameters.");
                     return -1;
                 }
+                {
+                    const uint32_t profile_mask = ETHERCAT_CACHE_PROFILE_VELOCITY |
+                                                  ETHERCAT_CACHE_PROFILE_ACCELERATION |
+                                                  ETHERCAT_CACHE_PROFILE_DECELERATION;
+                    ethercat_cached_slave snapshot;
+
+                    pthread_mutex_lock(&ethercat_background_mutex);
+                    snapshot = ethercat_cached_slaves[slave];
+                    pthread_mutex_unlock(&ethercat_background_mutex);
+                    if (!snapshot.valid ||
+                        (snapshot.config_valid_mask & profile_mask) != profile_mask ||
+                        snapshot.profile_velocity != command->profile_velocity ||
+                        snapshot.profile_acceleration != command->profile_acceleration ||
+                        snapshot.profile_deceleration != command->profile_deceleration) {
+                        printf("[slave%d] %s\n", slave, command->chinese ?
+                               "PP 参数与已写入值不一致或缓存不可用，未发送目标；请先失能再修改参数。" :
+                               "PP parameters differ from the active values or the cache is unavailable; target refused. Disable before changing parameters.");
+                        return -1;
+                    }
+                }
             }
             printf("%s\n", command->chinese ?
                    "PP 模式已激活；本次仅发送新设定点，未改写 0x6081/0x6083/0x6084。" :

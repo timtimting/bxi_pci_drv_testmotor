@@ -882,15 +882,18 @@ static const char *const *console_ethercat_completion_words(const char *line,
     if (strcmp(first, "ethercat_position") == 0 && tokens_before >= 4u) {
         return console_ethercat_interface_completion_words(count);
     }
-    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before == 1u) {
+    if ((strcmp(first, "ethercat_position_pp") == 0 || strcmp(first, "pp") == 0) &&
+        tokens_before == 1u) {
         return console_ethercat_slave_completion_words(count);
     }
-    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before == 2u) {
+    if ((strcmp(first, "ethercat_position_pp") == 0 || strcmp(first, "pp") == 0) &&
+        tokens_before == 2u) {
         *count = sizeof(ethercat_output_rad_words) /
                  sizeof(ethercat_output_rad_words[0]);
         return ethercat_output_rad_words;
     }
-    if (strcmp(first, "ethercat_position_pp") == 0 && tokens_before >= 6u) {
+    if ((strcmp(first, "ethercat_position_pp") == 0 || strcmp(first, "pp") == 0) &&
+        tokens_before >= 6u) {
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_pn077") == 0 && tokens_before == 2u) {

@@ -111,7 +111,7 @@ sudo ./build/motor_console --language en
 - `Backspace` / `Delete`：删除字符。
 - `Up` / `Down`：选择历史命令。
 - `Tab`：补全命令或显示候选项。
-- 终端常规复制、粘贴快捷键，例如 `Ctrl+Shift+C`、`Ctrl+Shift+V`。
+- 终端常规复制、粘贴快捷键，例如 `Ctrl+Shift+C`、`Ctrl+Shift+V`。程序支持 bracketed paste；粘贴内容只进入当前输入行，换行转为空格，不会自动执行命令，仍需检查并按 `Enter`。快捷键由外部终端决定；若按下后完全没有输入，请检查终端按键绑定或使用 `Shift+Insert`/右键粘贴。
 - `Ctrl+C`：中止当前操作并退出；如果软件记录的电机电源仍开启，会尝试安全下电。
 
 ### 命令输出时间戳
@@ -324,7 +324,9 @@ PP 命令的目标同样是减速器**输出端绝对角度**（rad），仍按�
 ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]
 ```
 
-三个 profile 参数以 ESI 中的原始 `UDINT` 写入并回读 `0x6081`、`0x6083`、`0x6084`，本程序不擅自解释单位；请按电机用户手册选择范围和单位。PP 模式首次切换或修改 profile 参数前必须先执行 `ethercat_disable`。已经处于 PP 使能状态时，可以重复执行 `ethercat_position_pp` 只发送新的设定点，不会重写 profile 参数；要改模式或参数，先失能。
+交互终端也支持无下划线别名 `pp`，参数完全相同。若键盘无法输入 `_`，可直接输入 `pp 1 0.02 1000 100 100`；其他 EtherCAT 命令可用 `ethercat<Tab>` 自动补出下划线，或在英文输入法下使用 `Shift+-`。
+
+三个 profile 参数以 ESI 中的原始 `UDINT` 写入并回读 `0x6081`、`0x6083`、`0x6084`，本程序不擅自解释单位；请按电机用户手册选择范围和单位。`profile_accel` 对应 PP 加速度，`profile_decel` 对应 PP 减速度，与通用限制参数 Pn106/Pn107 不同。PP 模式首次切换或修改 profile 参数前必须先执行 `ethercat_disable`。已经处于 PP 使能状态时，可以重复执行 `ethercat_position_pp` 或 `pp` 只发送新的设定点，但三个 profile 数值必须与已写入值相同；省略加/减速度按默认 100 计算。若参数不一致，将拒绝发送位置目标；要改参数，先失能。
 
 推荐先用很小的输出端角度和保守 profile 参数逐步验证：
 
