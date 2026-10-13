@@ -1,0 +1,737 @@
+{
+  "schema_version": 1,
+  "source": {
+    "file": "关节模组手册_KGU202509.pdf",
+    "revision": "KGU202509",
+    "extraction": "visually verified performance tables; no automatic device writes"
+  },
+  "model_code_definitions": {
+    "reduction": {
+      "B": 81,
+      "C": 101,
+      "D": 121
+    },
+    "voltage": {
+      "L": 48,
+      "T": 24
+    },
+    "encoder_0": "dual encoders, BiSS-C",
+    "driver": {
+      "E": "EtherCAT",
+      "C": "CANopen"
+    },
+    "cable_brake": {
+      "E": "rear cable outlet with brake",
+      "C": "rear cable outlet without brake"
+    },
+    "structure_A065": "default structure; custom structures supported"
+  },
+  "common_specifications": {
+    "supply_voltage_VDC": 48,
+    "motor_encoder_bits": 20,
+    "output_encoder_bits": 20,
+    "encoder_type": "single-turn absolute",
+    "encoder_protocol": "BiSS-C",
+    "driver": "integrated",
+    "bus_default": "EtherCAT",
+    "bus_optional": "CANopen",
+    "control_modes": [
+      "speed",
+      "position",
+      "torque"
+    ],
+    "protection": [
+      "overcurrent",
+      "overvoltage",
+      "undervoltage",
+      "overheating",
+      "overload",
+      "overspeed",
+      "excess_position_error",
+      "bus_communication_error",
+      "emergency_stop"
+    ],
+    "insulation_class": "F",
+    "insulation_class_temperature_C": 155,
+    "insulation_resistance_min_Mohm": 200,
+    "insulation_resistance_test_VDC": 500,
+    "dielectric_strength_test_VAC": 1500,
+    "dielectric_strength_test_duration_min": 1,
+    "cooling": "fully enclosed, self-cooled"
+  },
+  "notes": [
+    "Performance table values apply to the listed 48 V variants; do not extrapolate to 24 V or custom models.",
+    "Rotational inertia unit copied as kg*m2 from manual, without assumed scaling.",
+    "Brake availability and model code brake selection are different fields; actual nameplate controls.",
+    "Pn082 units in the EtherCAT manual are reciprocal to catalogue Kt; nominal catalogue data is not a calibration result.",
+    "No full-model-to-SDO-code mapping found in supplied manuals/ESI. Slave bindings must be filled from physical labels or manufacturer-confirmed identification."
+  ],
+  "models": {
+    "KGU-08BL0EC-A065": {
+      "series": "KGU-08",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 4,
+        "printed_page": 3
+      },
+      "specifications": {
+        "rated_torque_Nm": 5,
+        "max_torque_Nm": 12,
+        "rated_speed_rpm": 43,
+        "max_speed_rpm": 68,
+        "rated_current_Arms": 2.0,
+        "max_current_Arms": 4.6,
+        "rated_power_W": 30,
+        "torque_constant_Nm_per_Arms": 2.7,
+        "positioning_accuracy_arcsec": 69,
+        "repeatability_arcsec": 15,
+        "torsional_stiffness_1e4_Nm_per_rad": 1.5,
+        "rotational_inertia_kg_m2": 0.18,
+        "tilting_moment_Nm": 30,
+        "length_mm": 56,
+        "outer_diameter_mm": 52,
+        "bore_diameter_mm": 6.5,
+        "weight_kg": 0.35,
+        "motor_phase_resistance_ohm": 1.106,
+        "motor_phase_inductance_mH": 1.235,
+        "back_emf_Vrms_per_krpm": 5.01,
+        "motor_poles": 14
+      },
+      "holding_brake_availability": "none",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 3.703703704,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-08CL0EC-A065": {
+      "series": "KGU-08",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 4,
+        "printed_page": 3
+      },
+      "specifications": {
+        "rated_torque_Nm": 7,
+        "max_torque_Nm": 16,
+        "rated_speed_rpm": 35,
+        "max_speed_rpm": 55,
+        "rated_current_Arms": 1.9,
+        "max_current_Arms": 4.5,
+        "rated_power_W": 30,
+        "torque_constant_Nm_per_Arms": 3.6,
+        "positioning_accuracy_arcsec": 69,
+        "repeatability_arcsec": 15,
+        "torsional_stiffness_1e4_Nm_per_rad": 1.5,
+        "rotational_inertia_kg_m2": 0.18,
+        "tilting_moment_Nm": 30,
+        "length_mm": 56,
+        "outer_diameter_mm": 52,
+        "bore_diameter_mm": 6.5,
+        "weight_kg": 0.35,
+        "motor_phase_resistance_ohm": 1.106,
+        "motor_phase_inductance_mH": 1.235,
+        "back_emf_Vrms_per_krpm": 5.01,
+        "motor_poles": 14
+      },
+      "holding_brake_availability": "none",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 2.777777778,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-11BL0EC-A065": {
+      "series": "KGU-11",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 4,
+        "printed_page": 3
+      },
+      "specifications": {
+        "rated_torque_Nm": 12,
+        "max_torque_Nm": 23,
+        "rated_speed_rpm": 40,
+        "max_speed_rpm": 62,
+        "rated_current_Arms": 4,
+        "max_current_Arms": 8.1,
+        "rated_power_W": 60,
+        "torque_constant_Nm_per_Arms": 3,
+        "positioning_accuracy_arcsec": 69,
+        "repeatability_arcsec": 15,
+        "torsional_stiffness_1e4_Nm_per_rad": 1.7,
+        "rotational_inertia_kg_m2": 0.32,
+        "tilting_moment_Nm": 60,
+        "length_mm": 68,
+        "outer_diameter_mm": 62,
+        "bore_diameter_mm": 6.5,
+        "weight_kg": 0.62,
+        "motor_phase_resistance_ohm": 0.275,
+        "motor_phase_inductance_mH": 0.193,
+        "back_emf_Vrms_per_krpm": 5.56,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 3.333333333,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-11CL0EC-A065": {
+      "series": "KGU-11",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 4,
+        "printed_page": 3
+      },
+      "specifications": {
+        "rated_torque_Nm": 15,
+        "max_torque_Nm": 30,
+        "rated_speed_rpm": 32,
+        "max_speed_rpm": 50,
+        "rated_current_Arms": 3.9,
+        "max_current_Arms": 8.0,
+        "rated_power_W": 60,
+        "torque_constant_Nm_per_Arms": 3.9,
+        "positioning_accuracy_arcsec": 69,
+        "repeatability_arcsec": 15,
+        "torsional_stiffness_1e4_Nm_per_rad": 1.7,
+        "rotational_inertia_kg_m2": 0.49,
+        "tilting_moment_Nm": 60,
+        "length_mm": 68,
+        "outer_diameter_mm": 62,
+        "bore_diameter_mm": 6.5,
+        "weight_kg": 0.62,
+        "motor_phase_resistance_ohm": 0.275,
+        "motor_phase_inductance_mH": 0.193,
+        "back_emf_Vrms_per_krpm": 5.56,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 2.564102564,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-14BL0EC-A065": {
+      "series": "KGU-14",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 6,
+        "printed_page": 5
+      },
+      "specifications": {
+        "rated_torque_Nm": 20,
+        "max_torque_Nm": 40,
+        "rated_speed_rpm": 40,
+        "max_speed_rpm": 62,
+        "rated_current_Arms": 5.3,
+        "max_current_Arms": 10.5,
+        "rated_power_W": 90,
+        "torque_constant_Nm_per_Arms": 3.8,
+        "positioning_accuracy_arcsec": 60,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 2.3,
+        "rotational_inertia_kg_m2": 0.19,
+        "tilting_moment_Nm": 80,
+        "length_mm": 72,
+        "outer_diameter_mm": 70,
+        "bore_diameter_mm": 7,
+        "weight_kg": 0.83,
+        "motor_phase_resistance_ohm": 0.252,
+        "motor_phase_inductance_mH": 0.427,
+        "back_emf_Vrms_per_krpm": 5.98,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 2.631578947,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-14CL0EC-A065": {
+      "series": "KGU-14",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 6,
+        "printed_page": 5
+      },
+      "specifications": {
+        "rated_torque_Nm": 25,
+        "max_torque_Nm": 50,
+        "rated_speed_rpm": 32,
+        "max_speed_rpm": 50,
+        "rated_current_Arms": 5.2,
+        "max_current_Arms": 10.3,
+        "rated_power_W": 90,
+        "torque_constant_Nm_per_Arms": 4.8,
+        "positioning_accuracy_arcsec": 60,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 2.3,
+        "rotational_inertia_kg_m2": 0.19,
+        "tilting_moment_Nm": 80,
+        "length_mm": 72,
+        "outer_diameter_mm": 70,
+        "bore_diameter_mm": 7,
+        "weight_kg": 0.83,
+        "motor_phase_resistance_ohm": 0.252,
+        "motor_phase_inductance_mH": 0.427,
+        "back_emf_Vrms_per_krpm": 5.98,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 2.083333333,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-17BL0EC-A065": {
+      "series": "KGU-17",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 6,
+        "printed_page": 5
+      },
+      "specifications": {
+        "rated_torque_Nm": 33,
+        "max_torque_Nm": 61,
+        "rated_speed_rpm": 38,
+        "max_speed_rpm": 62,
+        "rated_current_Arms": 5.7,
+        "max_current_Arms": 10.7,
+        "rated_power_W": 130,
+        "torque_constant_Nm_per_Arms": 5.8,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 4.6,
+        "rotational_inertia_kg_m2": 0.39,
+        "tilting_moment_Nm": 140,
+        "length_mm": 81,
+        "outer_diameter_mm": 80,
+        "bore_diameter_mm": 10,
+        "weight_kg": 1.12,
+        "motor_phase_resistance_ohm": 0.557,
+        "motor_phase_inductance_mH": 0.653,
+        "back_emf_Vrms_per_krpm": 6.32,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 1.724137931,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-17CL0EC-A065": {
+      "series": "KGU-17",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 6,
+        "printed_page": 5
+      },
+      "specifications": {
+        "rated_torque_Nm": 40,
+        "max_torque_Nm": 78,
+        "rated_speed_rpm": 30,
+        "max_speed_rpm": 50,
+        "rated_current_Arms": 5.5,
+        "max_current_Arms": 10.5,
+        "rated_power_W": 130,
+        "torque_constant_Nm_per_Arms": 7.4,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 4.6,
+        "rotational_inertia_kg_m2": 0.39,
+        "tilting_moment_Nm": 140,
+        "length_mm": 81,
+        "outer_diameter_mm": 80,
+        "bore_diameter_mm": 10,
+        "weight_kg": 1.12,
+        "motor_phase_resistance_ohm": 0.557,
+        "motor_phase_inductance_mH": 0.653,
+        "back_emf_Vrms_per_krpm": 6.32,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 1.351351351,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-20BL0EE-A065": {
+      "series": "KGU-20",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 8,
+        "printed_page": 7
+      },
+      "specifications": {
+        "rated_torque_Nm": 56,
+        "max_torque_Nm": 105,
+        "rated_speed_rpm": 37,
+        "max_speed_rpm": 50,
+        "rated_current_Arms": 7.2,
+        "max_current_Arms": 13.3,
+        "rated_power_W": 210,
+        "torque_constant_Nm_per_Arms": 7.8,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 2.3,
+        "rotational_inertia_kg_m2": 0.64,
+        "tilting_moment_Nm": 260,
+        "length_mm": 89,
+        "outer_diameter_mm": 90,
+        "bore_diameter_mm": 14,
+        "weight_kg": 1.67,
+        "motor_phase_resistance_ohm": 0.356,
+        "motor_phase_inductance_mH": 0.562,
+        "back_emf_Vrms_per_krpm": 7.98,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 1.282051282,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-20CL0EE-A065": {
+      "series": "KGU-20",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 8,
+        "printed_page": 7
+      },
+      "specifications": {
+        "rated_torque_Nm": 68,
+        "max_torque_Nm": 126,
+        "rated_speed_rpm": 30,
+        "max_speed_rpm": 40,
+        "rated_current_Arms": 7,
+        "max_current_Arms": 13.1,
+        "rated_power_W": 210,
+        "torque_constant_Nm_per_Arms": 9.7,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 2.3,
+        "rotational_inertia_kg_m2": 0.98,
+        "tilting_moment_Nm": 260,
+        "length_mm": 89,
+        "outer_diameter_mm": 90,
+        "bore_diameter_mm": 14,
+        "weight_kg": 1.67,
+        "motor_phase_resistance_ohm": 0.356,
+        "motor_phase_inductance_mH": 0.562,
+        "back_emf_Vrms_per_krpm": 7.98,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 1.030927835,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-25BL0EE-A065": {
+      "series": "KGU-25",
+      "reduction_code": "B",
+      "reduction_ratio": 81,
+      "source": {
+        "pdf_page": 8,
+        "printed_page": 7
+      },
+      "specifications": {
+        "rated_torque_Nm": 96,
+        "max_torque_Nm": 160,
+        "rated_speed_rpm": 32,
+        "max_speed_rpm": 50,
+        "rated_current_Arms": 11.9,
+        "max_current_Arms": 19.3,
+        "rated_power_W": 350,
+        "torque_constant_Nm_per_Arms": 8.1,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 4.6,
+        "rotational_inertia_kg_m2": 1.33,
+        "tilting_moment_Nm": 480,
+        "length_mm": 98,
+        "outer_diameter_mm": 110,
+        "bore_diameter_mm": 16,
+        "weight_kg": 2.45,
+        "motor_phase_resistance_ohm": 0.241,
+        "motor_phase_inductance_mH": 0.392,
+        "back_emf_Vrms_per_krpm": 9.61,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 1.234567901,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-25CL0EE-A065": {
+      "series": "KGU-25",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 8,
+        "printed_page": 7
+      },
+      "specifications": {
+        "rated_torque_Nm": 119,
+        "max_torque_Nm": 198,
+        "rated_speed_rpm": 26,
+        "max_speed_rpm": 40,
+        "rated_current_Arms": 11.5,
+        "max_current_Arms": 19.3,
+        "rated_power_W": 350,
+        "torque_constant_Nm_per_Arms": 10.3,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 4.6,
+        "rotational_inertia_kg_m2": 2.03,
+        "tilting_moment_Nm": 480,
+        "length_mm": 98,
+        "outer_diameter_mm": 110,
+        "bore_diameter_mm": 16,
+        "weight_kg": 2.45,
+        "motor_phase_resistance_ohm": 0.241,
+        "motor_phase_inductance_mH": 0.392,
+        "back_emf_Vrms_per_krpm": 9.61,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 0.970873786,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-32CL0EE-A065": {
+      "series": "KGU-32",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 10,
+        "printed_page": 9
+      },
+      "specifications": {
+        "rated_torque_Nm": 209,
+        "max_torque_Nm": 411,
+        "rated_speed_rpm": 25,
+        "max_speed_rpm": 35,
+        "rated_current_Arms": 15.8,
+        "max_current_Arms": 32.5,
+        "rated_power_W": 600,
+        "torque_constant_Nm_per_Arms": 13.2,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 9.9,
+        "rotational_inertia_kg_m2": 2.03,
+        "tilting_moment_Nm": 900,
+        "length_mm": 112,
+        "outer_diameter_mm": 142,
+        "bore_diameter_mm": 23,
+        "weight_kg": 5.6,
+        "motor_phase_resistance_ohm": 0.129,
+        "motor_phase_inductance_mH": 0.253,
+        "back_emf_Vrms_per_krpm": 11.74,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 0.757575758,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-32DL0EE-A065": {
+      "series": "KGU-32",
+      "reduction_code": "D",
+      "reduction_ratio": 121,
+      "source": {
+        "pdf_page": 10,
+        "printed_page": 9
+      },
+      "specifications": {
+        "rated_torque_Nm": 253,
+        "max_torque_Nm": 498,
+        "rated_speed_rpm": 21,
+        "max_speed_rpm": 30,
+        "rated_current_Arms": 15.6,
+        "max_current_Arms": 31.3,
+        "rated_power_W": 600,
+        "torque_constant_Nm_per_Arms": 16.1,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 9.9,
+        "rotational_inertia_kg_m2": 2.97,
+        "tilting_moment_Nm": 900,
+        "length_mm": 112,
+        "outer_diameter_mm": 142,
+        "bore_diameter_mm": 23,
+        "weight_kg": 5.6,
+        "motor_phase_resistance_ohm": 0.129,
+        "motor_phase_inductance_mH": 0.253,
+        "back_emf_Vrms_per_krpm": 11.74,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 0.621118012,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-40CL0EE-A065": {
+      "series": "KGU-40",
+      "reduction_code": "C",
+      "reduction_ratio": 101,
+      "source": {
+        "pdf_page": 10,
+        "printed_page": 9
+      },
+      "specifications": {
+        "rated_torque_Nm": 465,
+        "max_torque_Nm": 639,
+        "rated_speed_rpm": 22,
+        "max_speed_rpm": 32,
+        "rated_current_Arms": 33.5,
+        "max_current_Arms": 45.8,
+        "rated_power_W": 1100,
+        "torque_constant_Nm_per_Arms": 13.9,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 18.6,
+        "rotational_inertia_kg_m2": 13.6,
+        "tilting_moment_Nm": 1200,
+        "length_mm": 139,
+        "outer_diameter_mm": 170,
+        "bore_diameter_mm": 23,
+        "weight_kg": 7.9,
+        "motor_phase_resistance_ohm": 0.107,
+        "motor_phase_inductance_mH": 0.228,
+        "back_emf_Vrms_per_krpm": 11.48,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 0.71942446,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    },
+    "KGU-40DL0EE-A065": {
+      "series": "KGU-40",
+      "reduction_code": "D",
+      "reduction_ratio": 121,
+      "source": {
+        "pdf_page": 10,
+        "printed_page": 9
+      },
+      "specifications": {
+        "rated_torque_Nm": 557,
+        "max_torque_Nm": 762,
+        "rated_speed_rpm": 18,
+        "max_speed_rpm": 26,
+        "rated_current_Arms": 33.1,
+        "max_current_Arms": 45.3,
+        "rated_power_W": 1100,
+        "torque_constant_Nm_per_Arms": 16.8,
+        "positioning_accuracy_arcsec": 50,
+        "repeatability_arcsec": 10,
+        "torsional_stiffness_1e4_Nm_per_rad": 18.6,
+        "rotational_inertia_kg_m2": 18.5,
+        "tilting_moment_Nm": 1200,
+        "length_mm": 139,
+        "outer_diameter_mm": 170,
+        "bore_diameter_mm": 23,
+        "weight_kg": 7.9,
+        "motor_phase_resistance_ohm": 0.107,
+        "motor_phase_inductance_mH": 0.228,
+        "back_emf_Vrms_per_krpm": 11.48,
+        "motor_poles": 16
+      },
+      "holding_brake_availability": "optional",
+      "pn082": {
+        "object": "0x2082:00",
+        "data_type": "INT16",
+        "unit": "0.1 A/Nm",
+        "theoretical_raw_if_A_equals_Arms": 0.595238095,
+        "write_value": null,
+        "status": "requires_current_convention_and_calibration_confirmation"
+      }
+    }
+  },
+  "slave_bindings": [],
+  "identification": {
+    "known_driver_vendor_id": "0x00010203",
+    "known_driver_product_code": "0x00000402",
+    "identity_sdo": "0x1018",
+    "ratio_parameter": "Pn051 / 0x2051:00",
+    "torque_parameter": "Pn082 / 0x2082:00",
+    "unique_module_model_object": null,
+    "automatic_write_enabled": false
+  }
+}

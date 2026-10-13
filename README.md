@@ -219,6 +219,10 @@ cmake -S . -B build -DETHERLAB_ROOT=/opt/etherlab
 cmake --build build -j
 ```
 
+新增模组手册的 16 个型号性能参数已整理到 [config/kaixuan_modules.json](config/kaixuan_modules.json)。
+该文件是手册参数目录，当前不会自动加载或写入从站。转矩系数换算和型号识别调查见
+[docs/kaixuan_torque_coefficients.md](docs/kaixuan_torque_coefficients.md)。
+
 开璇 EtherCAT 力位混合控制（《KGU系列谐波减速模组说明_EtherCAT版_V1.2》，混合力控章节）：
 
 ```text
