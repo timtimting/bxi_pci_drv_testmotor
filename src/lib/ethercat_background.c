@@ -4,7 +4,7 @@ static const char *console_ethercat_task_name(ethercat_task task)
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
         "ethercat_position", "ethercat_position_pp", "ethercat_zero", "ethercat_info",
         "ethercat_pnread", "ethercat_pn077", "ethercat_save",
-        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit", "ethercat_pn082"
+        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit", "ethercat_pn082", "ethercat_quality"
     };
     return names[task];
 }
@@ -461,6 +461,8 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
         return -1;
     }
     switch (command->task) {
+    case ETHERCAT_TASK_QUALITY:
+        return console_ethercat_quality_start(command);
     case ETHERCAT_TASK_MIT:
         return console_ethercat_session_mit(command, selected);
     case ETHERCAT_TASK_ENABLE:
@@ -602,6 +604,7 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
         }
         if (ethercat_session.failed) result = -1;
     }
+    console_ethercat_quality_finish("session_stopped");
     ethercat_session.active = false;
     console_ethercat_cancel_pending();
     return result;
@@ -613,6 +616,9 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
     /* All ordinary background sessions share MIT PDOs; PP is explicit opt-in. */
     ethercat_mit_mapping = command->task != ETHERCAT_TASK_POSITION_PP;
     switch (command->task) {
+    case ETHERCAT_TASK_QUALITY:
+        printf("ethercat_quality: run ethercat_scan first to establish the PDO session\n");
+        return -1;
     case ETHERCAT_TASK_SCAN:
         return console_ethercat_scan(command->chinese, command->interface);
     case ETHERCAT_TASK_MIT:
@@ -729,6 +735,7 @@ static int console_ethercat_background_submit_ex(ethercat_task task, bool chines
          (selection == NULL || strlen(selection) >= sizeof(command.selection) ||
           console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0)) ||
         hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
+        (task == ETHERCAT_TASK_QUALITY && hold_ms < 1000u) ||
         !isfinite(output_rad) ||
         (task == ETHERCAT_TASK_MIT &&
          (position_mode != 10u || fabs(output_rad) > FLT_MAX || mit_values == NULL ||

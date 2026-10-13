@@ -121,6 +121,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  motor_list\n");
         printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
         printf("  EtherCAT 交互命令默认网卡为 enp86s0；需要覆盖时将网卡名放在参数末尾。\n");
+        printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
         printf("  ethercat_scan [network_interface]\n");
         printf("      交互扫描预热 MIT PDO/DC 并保持失能，随后可直接执行 mit；独立 --ethercat-scan 仍只读。\n");
         printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
@@ -237,6 +238,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  motor_list\n");
     printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
     printf("  EtherCAT interactive commands default to enp86s0; append an interface to override.\n");
+    printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
     printf("  ethercat_scan [network_interface]\n");
     printf("      Interactive scan warms MIT PDO/DC with drives disabled; run mit directly afterward; standalone --ethercat-scan stays read-only.\n");
     printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");

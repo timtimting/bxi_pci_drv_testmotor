@@ -35,7 +35,8 @@ typedef enum {
     ETHERCAT_TASK_PN107,
     ETHERCAT_TASK_PN044,
     ETHERCAT_TASK_MIT,
-    ETHERCAT_TASK_PN082
+    ETHERCAT_TASK_PN082,
+    ETHERCAT_TASK_QUALITY
 } ethercat_task;
 
 typedef struct {
@@ -1507,6 +1508,83 @@ static void console_ethercat_write_i32(uint8_t *data, int32_t value)
     data[3] = (uint8_t)((raw >> 24u) & 0xffu);
 }
 
+typedef struct {
+    bool active;
+    console_output_context context;
+    uint64_t deadline_us, previous_us;
+    uint64_t cycles, intervals, bad_wkc, send_errors, late_intervals;
+    uint64_t min_interval_us, max_interval_us;
+    long double sum_interval_us, sum_jitter_sq;
+    uint32_t period_ns;
+    int min_wkc, max_wkc, expected_wkc;
+} ethercat_quality_stats;
+
+static ethercat_quality_stats ethercat_quality;
+
+static void console_ethercat_quality_finish(const char *reason)
+{
+    ethercat_quality_stats *q = &ethercat_quality;
+    if (!q->active) return;
+    console_output_context previous = console_output_current;
+    console_output_current = q->context;
+    double mean = q->intervals ? (double)(q->sum_interval_us / q->intervals) : 0.0;
+    double rms = q->intervals ? sqrt((double)(q->sum_jitter_sq / q->intervals)) : 0.0;
+    printf("ethercat_quality: result=%s target_Hz=%.3f measured_Hz=%.3f cycles=%llu\n",
+           reason, 1e9 / q->period_ns, mean > 0 ? 1e6 / mean : 0.0,
+           (unsigned long long)q->cycles);
+    printf("  period_us: mean=%.3f min=%llu max=%llu jitter_RMS=%.3f late_gt_1.5T=%llu\n",
+           mean, (unsigned long long)(q->intervals ? q->min_interval_us : 0),
+           (unsigned long long)q->max_interval_us, rms, (unsigned long long)q->late_intervals);
+    printf("  WKC: expected=%d min=%d max=%d mismatches=%llu send_errors=%llu\n",
+           q->expected_wkc, q->cycles ? q->min_wkc : 0, q->cycles ? q->max_wkc : 0,
+           (unsigned long long)q->bad_wkc, (unsigned long long)q->send_errors);
+    q->active = false;
+    console_output_current = previous;
+}
+
+static void console_ethercat_quality_record(uint64_t now_us, int wkc, int expected, int send_result)
+{
+    ethercat_quality_stats *q = &ethercat_quality;
+    if (!q->active) return;
+    if (q->cycles == 0 || wkc < q->min_wkc) q->min_wkc = wkc;
+    if (q->cycles == 0 || wkc > q->max_wkc) q->max_wkc = wkc;
+    q->cycles++;
+    if (wkc != expected) q->bad_wkc++;
+    if (send_result < 0) q->send_errors++;
+    if (q->previous_us != 0 && now_us >= q->previous_us) {
+        uint64_t interval = now_us - q->previous_us;
+        long double jitter = (long double)interval - q->period_ns / 1000.0L;
+        if (!q->intervals || interval < q->min_interval_us) q->min_interval_us = interval;
+        if (interval > q->max_interval_us) q->max_interval_us = interval;
+        q->intervals++;
+        q->sum_interval_us += interval;
+        q->sum_jitter_sq += jitter * jitter;
+        if ((long double)interval > q->period_ns * 1.5L / 1000.0L) q->late_intervals++;
+    }
+    q->previous_us = now_us;
+    if (send_result < 0 || expected <= 0 || wkc != expected)
+        console_ethercat_quality_finish("communication_failure");
+    else if (now_us >= q->deadline_us)
+        console_ethercat_quality_finish("completed");
+}
+
+static int console_ethercat_quality_start(const ethercat_background_args *command)
+{
+    if (ethercat_quality.active) {
+        printf("ethercat_quality: test already running; wait for its result\n");
+        return -1;
+    }
+    memset(&ethercat_quality, 0, sizeof(ethercat_quality));
+    ethercat_quality.context = command->output_context;
+    ethercat_quality.period_ns = ethercat_control_period_ns;
+    ethercat_quality.expected_wkc = ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC;
+    ethercat_quality.deadline_us = console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
+    ethercat_quality.active = true;
+    printf("ethercat_quality: started duration_ms=%u target_Hz=%.3f slaves=%d; PDO continues, results follow asynchronously\n",
+           command->hold_ms, 1e9 / ethercat_control_period_ns, ec_slavecount);
+    return 0;
+}
+
 static int console_ethercat_exchange(void)
 {
     struct timespec cycle_start;
@@ -1538,6 +1616,8 @@ static int console_ethercat_exchange(void)
     work_counter = ec_receive_processdata(EC_TIMEOUTRET);
     console_ethercat_session_tick();
     send_result = ec_send_processdata();
+    console_ethercat_quality_record(console_ethercat_monotonic_us(), work_counter,
+                                    expected_work_counter, send_result);
     ethercat_last_work_counter = work_counter;
     if (work_counter < ethercat_min_work_counter) {
         ethercat_min_work_counter = work_counter;

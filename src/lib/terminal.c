@@ -186,6 +186,17 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         console_print_motors(state);
+    } else if (strcmp(cmd, "ethercat_quality") == 0 || strcmp(cmd, "ec_quality") == 0) {
+        unsigned int duration_ms = 10000u;
+        const char *interface = ETHERCAT_DEFAULT_INTERFACE;
+        if (argc > 3 || (argc >= 2 &&
+            (parse_uint_arg(argv[1], &duration_ms) != 0 || duration_ms < 1000u || duration_ms > 60000u))) {
+            printf("usage: ethercat_quality [duration_ms:1000..60000] [network_interface]\n");
+            return -1;
+        }
+        if (argc == 3) interface = argv[2];
+        return console_ethercat_background_submit(ETHERCAT_TASK_QUALITY, state->config.chinese_ui,
+            interface, "all", duration_ms, 0.0, 0u, NULL, NULL);
     } else if (strcmp(cmd, "ethercat_scan") == 0) {
         if (argc > 2) {
             printf("%s: ethercat_scan [network_interface]\n",

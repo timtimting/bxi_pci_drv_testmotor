@@ -376,6 +376,38 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 
 交互模式下 `ethercat_disable <slave_id|all>` 提交后台失能请求，执行后确认所选从站的 CiA-402 失能状态，其他从站不受影响。已有周期会话保留 OP 和 PDO 通信；要释放 EtherLab master 请退出终端或执行 `power_off`。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
 
+### 1 kHz 通信质量测试
+
+默认扫描预热建立 1 ms 的 MIT PDO/DC 周期，目标频率为 1000 Hz。
+后台使用 CLOCK_MONOTONIC 绝对时间调度；实测频率可能受到系统调度、DC 校正和命令处理影响。
+测试实际硬件时可保持电机失能：
+
+```text
+ethercat_scan
+ethercat_disable all
+ethercat_quality 10000
+# 等待约 10 秒后输出统计结果，再测一分钟：
+ec_quality 60000
+```
+
+`ethercat_quality [duration_ms:1000..60000] [network_interface]`（简写 `ec_quality`）
+默认测 10 秒，要求已有后台会话；同一时间只运行一个测试窗口。
+命令启动统计后返回终端，PDO 继续运行，结束结果保留启动命令的 cmd 编号。
+它不更改使能状态、目标、增益或总线周期，也可以在已经运行的 MIT 控制中测量。
+
+结果包括目标/实测 Hz、周期数、发送周期平均/最小/最大间隔（us）、相对目标周期的 RMS 抖动，
+以及大于 1.5 倍目标周期的间隔数量；这些是主站软件发送时序，不是从站内部采样时序。
+实测频率为发送间隔平均值的倒数，包含命令处理及 SDO 操作造成的延迟。
+WKC 输出 expected/min/max/mismatches 与 send_errors。WKC 异常表示过程数据交换不完整，
+不能直接称为以太网丢包率。结果 `completed` 才表示测试窗口完成，
+`communication_failure` 或 `session_stopped` 表示提前终止；即使只有少量样本也会报告。
+现有通信故障停机行为保持不变，不会为了积累异常而忽略故障。
+
+在两台模组的当前映射下预期 WKC 为 6。先检查实测频率是否接近 1000 Hz、WKC 是否恒为 6、
+异常和发送错误是否为 0，再比较最大周期及抖动。对照测试时分别测试空闲系统、
+CPU 负载以及执行 info/SDO 参数读取时的表现；合格抖动上限取决于实际控制要求。
+若会话采用其他周期，命令会报告该会话的目标频率；运行中不会修改周期。
+
 交互 MIT PDO 推荐流程：
 
 ```text
