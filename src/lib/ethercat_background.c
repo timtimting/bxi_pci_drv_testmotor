@@ -730,6 +730,14 @@ static int console_ethercat_background_submit_ex(ethercat_task task, bool chines
     uint32_t parsed_cycle;
     const ethercat_motion_parameter *parameter = console_ethercat_motion_parameter_by_task(task);
 
+    if (cycle != NULL && console_ethercat_parse_cycle_ms(cycle, &parsed_cycle) == 0 &&
+        parsed_cycle != ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS) {
+        printf("%s\n", chinese ? "后台通信固定为 1ms/1000Hz；sync0_cycle_ms 只接受 1。" :
+               "Background PDO communication is fixed at 1ms/1000Hz; sync0_cycle_ms must be 1.");
+        return -1;
+    }
+
+
     if (console_ethercat_validate_interface(interface) != 0 ||
         (task != ETHERCAT_TASK_SCAN &&
          (selection == NULL || strlen(selection) >= sizeof(command.selection) ||

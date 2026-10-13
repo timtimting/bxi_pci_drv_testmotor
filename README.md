@@ -378,8 +378,10 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 
 ### 1 kHz 通信质量测试
 
-默认扫描预热建立 1 ms 的 MIT PDO/DC 周期，目标频率为 1000 Hz。
-后台使用 CLOCK_MONOTONIC 绝对时间调度；实测频率可能受到系统调度、DC 校正和命令处理影响。
+交互后台持续使用固定 1 ms 的 MIT PDO/DC 调度周期，目标频率为 1000 Hz；
+测试未开始、正在测量和测试结束后均持续通信。
+后台使用 CLOCK_MONOTONIC 绝对时间调度，DC 相位校正不再改变后台周期增量。
+DC 参考时钟及从站同步报文继续发送。普通 Linux 调度和命令处理仍可能造成抖动，不能保证硬实时。
 测试实际硬件时可保持电机失能：
 
 ```text
@@ -398,7 +400,9 @@ ec_quality 60000
 结果包括目标/实测 Hz、周期数、发送周期平均/最小/最大间隔（us）、相对目标周期的 RMS 抖动，
 以及大于 1.5 倍目标周期的间隔数量；这些是主站软件发送时序，不是从站内部采样时序。
 实测频率为发送间隔平均值的倒数，包含命令处理及 SDO 操作造成的延迟。
-WKC 输出 expected/min/max/mismatches 与 send_errors。WKC 异常表示过程数据交换不完整，
+WKC 输出 expected/min/max/mismatches 与 send_errors。 新增无响应周期 `no_response_cycles`
+（WKC<=0）及占比、不完整响应 `incomplete_cycles`（0<WKC<expected）、总 WKC 异常比例
+和调度跳过周期数 `scheduler_skipped`。后者用于识别主机调度延迟，与报文丢失分开计数。WKC 异常表示过程数据交换不完整，
 不能直接称为以太网丢包率。结果 `completed` 才表示测试窗口完成，
 `communication_failure` 或 `session_stopped` 表示提前终止；即使只有少量样本也会报告。
 现有通信故障停机行为保持不变，不会为了积累异常而忽略故障。
@@ -406,7 +410,7 @@ WKC 输出 expected/min/max/mismatches 与 send_errors。WKC 异常表示过程�
 在两台模组的当前映射下预期 WKC 为 6。先检查实测频率是否接近 1000 Hz、WKC 是否恒为 6、
 异常和发送错误是否为 0，再比较最大周期及抖动。对照测试时分别测试空闲系统、
 CPU 负载以及执行 info/SDO 参数读取时的表现；合格抖动上限取决于实际控制要求。
-若会话采用其他周期，命令会报告该会话的目标频率；运行中不会修改周期。
+后台周期参数仅接受 `sync0_cycle_ms=1`，其他频率被拒绝；独立 CLI 的周期配置保留原行为。
 
 交互 MIT PDO 推荐流程：
 

@@ -439,7 +439,8 @@ static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout
                  (ec_slave[slave].state & 0x0f) == EC_STATE_OPERATIONAL)) return target;
         }
         if (ec_send_processdata() < 0) return 0;
-        nanosleep(&delay, NULL);
+        if (ethercat_background_owner) console_ethercat_wait_next_cycle();
+        else nanosleep(&delay, NULL);
         clock_gettime(CLOCK_MONOTONIC, &clock_now);
         now = (uint64_t)clock_now.tv_sec * 1000000u + (uint64_t)clock_now.tv_nsec / 1000u;
     } while (now < deadline);

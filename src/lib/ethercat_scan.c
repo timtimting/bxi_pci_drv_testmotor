@@ -142,6 +142,7 @@ static bool console_ethercat_background_should_stop(void)
 #ifdef HAVE_ETHERLAB
 #include "etherlab_compat.h"
 static int console_ethercat_mailbox_cycle(void);
+static void console_ethercat_wait_next_cycle(void);
 #include "ethercat_etherlab_compat.c"
 
 static uint64_t console_ethercat_log_enable_stage(bool chinese, const char *stage,
@@ -943,6 +944,7 @@ static int64_t ethercat_dc_sync_target_ns;
 static int64_t ethercat_dc_sync_integral_ns;
 static int64_t ethercat_dc_sync_phase_error_ns;
 static int64_t ethercat_dc_sync_adjustment_ns;
+static uint64_t ethercat_skipped_cycles;
 
 static void console_ethercat_update_dc_sync(void)
 {
@@ -978,7 +980,8 @@ static void console_ethercat_wait_next_cycle(void)
     int64_t cycle_increment_ns = (int64_t)ethercat_control_period_ns;
     int wait_result;
 
-    if (ethercat_dc_sync_enabled) {
+    /* Background stays on a fixed 1ms grid; DC datagrams still discipline clocks. */
+    if (ethercat_dc_sync_enabled && !ethercat_background_owner) {
         cycle_increment_ns += ethercat_dc_sync_adjustment_ns;
     }
     if (cycle_increment_ns <= 0) {
@@ -1004,6 +1007,7 @@ static void console_ethercat_wait_next_cycle(void)
     while ((ethercat_next_cycle.tv_sec < now.tv_sec) ||
            (ethercat_next_cycle.tv_sec == now.tv_sec &&
             ethercat_next_cycle.tv_nsec <= now.tv_nsec)) {
+        ethercat_skipped_cycles++;
         ethercat_next_cycle.tv_nsec += (long)cycle_increment_ns;
         while (ethercat_next_cycle.tv_nsec >= 1000000000L) {
             ethercat_next_cycle.tv_sec++;
@@ -1513,6 +1517,7 @@ typedef struct {
     console_output_context context;
     uint64_t deadline_us, previous_us;
     uint64_t cycles, intervals, bad_wkc, send_errors, late_intervals;
+    uint64_t no_response_cycles, incomplete_cycles, skipped_at_start;
     uint64_t min_interval_us, max_interval_us;
     long double sum_interval_us, sum_jitter_sq;
     uint32_t period_ns;
@@ -1538,6 +1543,13 @@ static void console_ethercat_quality_finish(const char *reason)
     printf("  WKC: expected=%d min=%d max=%d mismatches=%llu send_errors=%llu\n",
            q->expected_wkc, q->cycles ? q->min_wkc : 0, q->cycles ? q->max_wkc : 0,
            (unsigned long long)q->bad_wkc, (unsigned long long)q->send_errors);
+    printf("  exchange_quality: no_response_cycles=%llu (%.6f%%) incomplete_cycles=%llu mismatch_rate=%.6f%% scheduler_skipped=%llu\n",
+           (unsigned long long)q->no_response_cycles,
+           q->cycles ? 100.0 * q->no_response_cycles / q->cycles : 0.0,
+           (unsigned long long)q->incomplete_cycles,
+           q->cycles ? 100.0 * q->bad_wkc / q->cycles : 0.0,
+           (unsigned long long)(ethercat_skipped_cycles - q->skipped_at_start));
+    printf("  no_response is a PDO cycle metric, not an Ethernet packet-loss count\n");
     q->active = false;
     console_output_current = previous;
 }
@@ -1550,6 +1562,8 @@ static void console_ethercat_quality_record(uint64_t now_us, int wkc, int expect
     if (q->cycles == 0 || wkc > q->max_wkc) q->max_wkc = wkc;
     q->cycles++;
     if (wkc != expected) q->bad_wkc++;
+    if (wkc <= 0) q->no_response_cycles++;
+    else if (wkc < expected) q->incomplete_cycles++;
     if (send_result < 0) q->send_errors++;
     if (q->previous_us != 0 && now_us >= q->previous_us) {
         uint64_t interval = now_us - q->previous_us;
@@ -1577,6 +1591,7 @@ static int console_ethercat_quality_start(const ethercat_background_args *comman
     memset(&ethercat_quality, 0, sizeof(ethercat_quality));
     ethercat_quality.context = command->output_context;
     ethercat_quality.period_ns = ethercat_control_period_ns;
+    ethercat_quality.skipped_at_start = ethercat_skipped_cycles;
     ethercat_quality.expected_wkc = ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC;
     ethercat_quality.deadline_us = console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
     ethercat_quality.active = true;
@@ -1662,6 +1677,7 @@ static int console_ethercat_wait_for_initial_pdo(void)
 
 static void console_ethercat_reset_exchange_diagnostics(void)
 {
+    ethercat_skipped_cycles = 0;
     ethercat_last_work_counter = 0;
     ethercat_expected_work_counter = 0;
     ethercat_min_work_counter = INT_MAX;

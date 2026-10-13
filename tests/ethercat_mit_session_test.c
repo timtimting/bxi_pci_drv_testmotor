@@ -114,6 +114,11 @@ int main(void) {
     assert(console_ethercat_quality_start(&cmd) == 0);
     console_ethercat_quality_record(1000, 5, 6, -1);
     assert(!ethercat_quality.active && ethercat_quality.bad_wkc == 1 && ethercat_quality.send_errors == 1);
+    assert(ethercat_quality.incomplete_cycles == 1 && ethercat_quality.no_response_cycles == 0);
+    assert(console_ethercat_quality_start(&cmd) == 0);
+    console_ethercat_quality_record(1000, 0, 6, 0);
+    assert(!ethercat_quality.active && ethercat_quality.no_response_cycles == 1);
+    assert(ethercat_quality.incomplete_cycles == 0);
     assert(console_ethercat_quality_start(&cmd) == 0);
     console_ethercat_quality_finish("session_stopped");
     assert(!ethercat_quality.active);
@@ -125,6 +130,27 @@ int main(void) {
     assert(ethercat_quality.cycles > 1 && ethercat_quality.bad_wkc == 0 && ethercat_quality.send_errors == 0);
     assert(memcmp(saved_outputs[0], ec_slave[1].outputs, 23) == 0);
     assert(memcmp(saved_outputs[1], ec_slave[2].outputs, 23) == 0);
+    assert(console_ethercat_mailbox_cycle() == 0); /* Communication continues after test finishes. */
+    ethercat_background_owner = true;
+    ethercat_dc_sync_enabled = true;
+    ethercat_dc_sync_adjustment_ns = 500000;
+    clock_gettime(CLOCK_MONOTONIC, &ethercat_next_cycle);
+    ethercat_next_cycle.tv_nsec += 2000000;
+    if (ethercat_next_cycle.tv_nsec >= 1000000000) {
+        ethercat_next_cycle.tv_nsec -= 1000000000; ethercat_next_cycle.tv_sec++;
+    }
+    uint64_t before_ns = (uint64_t)ethercat_next_cycle.tv_sec * 1000000000u + ethercat_next_cycle.tv_nsec;
+    console_ethercat_wait_next_cycle();
+    uint64_t after_ns = (uint64_t)ethercat_next_cycle.tv_sec * 1000000000u + ethercat_next_cycle.tv_nsec;
+    assert(after_ns - before_ns == 1000000); /* DC adjustment must not change 1kHz grid. */
+    clock_gettime(CLOCK_MONOTONIC, &ethercat_next_cycle);
+    ethercat_next_cycle.tv_sec--; /* Deliberately simulate a long scheduling stall. */
+    uint64_t skipped_before = ethercat_skipped_cycles;
+    console_ethercat_wait_next_cycle();
+    assert(ethercat_skipped_cycles > skipped_before);
+    assert(console_ethercat_background_submit_ex(ETHERCAT_TASK_ENABLE, false, "enp86s0", "1",
+        0, 0, 0, NULL, "0.5", ETHERCAT_CIA402_MODE_CSP, 0, 0, 0, NULL) == -1);
+    puts("PASS: fixed 1ms background grid, scheduling skips, WKC loss metrics and communication after test");
     puts("PASS: communication quality duration, interval/jitter counters, failure reporting and unchanged PDO targets");
     puts("PASS: MIT PDO enable, repeated enable preserves gains, float position updates, two-slave isolation and disable-all");
     return 0;

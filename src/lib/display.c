@@ -14,7 +14,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT：  默认网卡 enp86s0；可在命令末尾添加 [network_interface] 覆盖\n");
             printf("             ethercat_scan [network_interface]\n");
-            printf("             ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
+            printf("             ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
             printf("             ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("             ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
@@ -29,7 +29,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_pn044 <slave_id|all> <0..9> [network_interface]\n");
             printf("             ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
             printf("             --ethercat-scan <network_interface>（命令行且不初始化 PCI/CAN）\n");
-            printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]（命令行且不初始化 PCI/CAN）\n");
+            printf("             --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-disable <network_interface> <slave_id|all>（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms]（命令行且不初始化 PCI/CAN）\n");
             printf("             --ethercat-position-pp <network_interface> <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms]（命令行且不初始化 PCI/CAN）\n");
@@ -60,7 +60,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT:     default interface enp86s0; append [network_interface] to override\n");
             printf("                ethercat_scan [network_interface]\n");
-            printf("                ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
+            printf("                ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
             printf("                ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("                ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
@@ -75,7 +75,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_pn044 <slave_id|all> <0..9> [network_interface]\n");
             printf("             ethercat_pn082 (pn082) <slave_id|all> <0..32767> [network_interface] (0.1 A/N.m)\n");
             printf("                --ethercat-scan <network_interface> (CLI; skips PCI/CAN initialization)\n");
-            printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] (CLI; skips PCI/CAN initialization)\n");
+            printf("                --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-disable <network_interface> <slave_id|all> (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-position <network_interface> <slave_id|all> <output_rad> [hold_ms] (CLI; skips PCI/CAN initialization)\n");
             printf("                --ethercat-position-pp <network_interface> <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] (CLI; skips PCI/CAN initialization)\n");
@@ -124,10 +124,10 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
         printf("  ethercat_scan [network_interface]\n");
         printf("      交互扫描预热 MIT PDO/DC 并保持失能，随后可直接执行 mit；独立 --ethercat-scan 仍只读。\n");
-        printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
+        printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
         printf("      交互默认 MIT PDO（mode=10）、1ms、shift=0；使能时 KP/KD/tff 为零，hold_ms 到期自动失能。\n");
         printf("      所有交互 EtherCAT 命令提交同一后台队列；提交不等于成功，请等待后台结果。\n");
-        printf("      查询/位置命令复用已有主站；周期可设 0.5/1/2/4/5/8ms，运行中不能修改周期/shift。\n");
+        printf("      查询/位置命令复用已有主站；交互后台固定 1ms/1000Hz，运行中不能修改 shift。\n");
         printf("  ethercat_disable <slave_id|all> [network_interface]\n");
         printf("      后台发送 0x0000 并确认失能，保留 OP/PDO；Ctrl-C、power_off 或退出终端释放主站。\n");
         printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
@@ -159,7 +159,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      驱动器失能时按官方流程写 Pn097(0x2097:00) 1→0 触发参数保存；重启后回读确认。\n");
         printf("  --ethercat-scan <network_interface>\n");
         printf("      命令行执行 EtherCAT 扫描，不初始化 BXI PCI/CAN。\n");
-        printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]\n");
+        printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1]\n");
         printf("      命令行执行 EtherCAT 使能测试；周期同步调整主站循环，shift 是主站 Sync0 相位偏移(ns)。\n");
         printf("  --ethercat-disable <network_interface> <slave_id|all>\n");
         printf("      命令行执行 EtherCAT 失能，不初始化 BXI PCI/CAN。\n");
@@ -241,7 +241,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
     printf("  ethercat_scan [network_interface]\n");
     printf("      Interactive scan warms MIT PDO/DC with drives disabled; run mit directly afterward; standalone --ethercat-scan stays read-only.\n");
-    printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
+    printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
     printf("      Default cycle 1ms/shift=0; interactive mode runs the cycle in background and returns to the prompt.\n");
     printf("      A supplied hold_ms automatically disables when it expires.\n");
     printf("      All interactive EtherCAT commands share one background queue; queued does not mean successful.\n");
@@ -277,7 +277,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      While disabled, pulse Pn097 (0x2097:00) 1->0 to trigger parameter save; reboot and verify persistence.\n");
     printf("  --ethercat-scan <network_interface>\n");
     printf("      Run an EtherCAT scan from the command line without BXI PCI/CAN initialization.\n");
-            printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>]\n");
+            printf("  --ethercat-enable <network_interface> <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1]\n");
     printf("      Run the EtherCAT safe enable test from the command line without BXI PCI/CAN initialization.\n");
     printf("  --ethercat-disable <network_interface> <slave_id|all>\n");
     printf("      Run EtherCAT disable from the command line without BXI PCI/CAN initialization.\n");
