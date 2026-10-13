@@ -577,7 +577,8 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
 
 static int console_ethercat_background_execute(const ethercat_background_args *command)
 {
-    ethercat_mit_mapping = command->task == ETHERCAT_TASK_MIT;
+    ethercat_mit_mapping = command->task == ETHERCAT_TASK_MIT ||
+                           command->task == ETHERCAT_TASK_SCAN;
     switch (command->task) {
     case ETHERCAT_TASK_SCAN:
         return console_ethercat_scan(command->chinese, command->interface);

@@ -186,11 +186,12 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
 
 终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
-交互扫描列出拓扑后，会为检测到的开璇从站配置 PDO/DC，等待 SAFE-OP 和 OP，再以约 1 kHz 持续交换 PDO；
+交互扫描列出拓扑后，会为检测到的开璇从站配置 MIT 浮点 PDO/DC（mode=10），等待 SAFE-OP 和 OP，再以约 1 kHz 持续交换 PDO；
 扫描完成预热或报错后才返回终端提示符；等待期间输入的内容不会执行。报错会区分 OP 等待与 CiA402 失能确认，并打印 AL/WKC/PDO 状态。
 OP 最长等待 2 秒；如果仍失败，请提供该次扫描的分阶段输出和从站状态，不能仅凭旧的合并报错确定具体原因。
 全程保持控制字 `0x0000` 和伺服失能，不发送使能或运动指令。首次扫描因此仍可能等待约 5 秒，
-但预热成功后再执行 `ethercat_enable 1` 可复用后台主站，避免重复等待 SAFE-OP。
+预热时目标位置取当前输出端反馈，速度、前馈力矩、KP、KD 均为零。
+预热成功后可直接执行 `mit 1 ...`、`mit 2 ...` 或 `mit all ...`，复用后台主站，避免重复等待 SAFE-OP。
 若拓扑含非开璇从站，交互扫描仅显示拓扑并跳过预热；独立 `--ethercat-scan` 始终只读。
 预热使用默认 `Sync0=1 ms`、`shift=0`；若需其他周期或相位，应在扫描前直接使用带参数的 `ethercat_enable`。
 旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
@@ -242,8 +243,8 @@ info <slave_id|all> [network_interface]
 
 MIT 会话以 `0x6060=10` 和专用 PDO（输出 23 字节、输入 16 字节）启动，目标对象为
 `0x4010..0x4014`，反馈对象为 `0x4000..0x4002`。位置不再通过 Pn051 换算。
-首次使用时，应在新启动的终端中先执行 `mit`；如果已经执行过 `ethercat_scan`、CSP 或 PP
-并建立了后台会话，请退出终端再启动 MIT。MIT 与 CSP/PP 之间切换也需要退出重启终端。
+首次使用时，可先执行 `ethercat_scan` 预热 MIT 会话，再执行 `mit`；也可直接执行 `mit`。
+如果已通过 CSP 或 PP 命令建立了后台会话，请退出终端再启动 MIT。MIT 与 CSP/PP 之间切换也需要退出重启终端。
 同一 MIT 会话内可以更新目标、失能、再次执行 MIT 使能，退出或 Ctrl-C 会失能。
 所有开璇从站使用该会话的 PDO 格式，只有选中的从站接收使能和目标。
 
@@ -275,7 +276,7 @@ SAFE-OP 等待按每台 7 秒分配预算，最多 60 秒；两台等待 14 秒�
 超时会打印每台 AL 状态、AL 状态码及 PDO 状态；SDO 读取失败会打印从站和对象地址。
 这些诊断用于区分配置、地址及同步问题，等待预算增加不代表硬件故障已排除。
 
-MIT 多电机测试可以在新终端中依次执行（零增益、零前馈不保持位置）：
+MIT 多电机测试可以在新终端中先执行 `ethercat_scan`，再依次执行（零增益、零前馈不保持位置）：
 
 ```text
 mit 1 0 0 0 0 0 1000
@@ -286,8 +287,8 @@ ethercat_disable all
 ```
 
 分别观察目标从站的 CW/SW、反馈和定时失能，另一台应保持失能。
-之后再在目标和标定参数合适时测试 `mit all`。从 `ethercat_scan` 建立的 CSP 会话测试 MIT
-仍需退出终端重新启动。若 PRE-OP/SAFE-OP 失败，保留程序输出以及
+之后再在目标和标定参数合适时测试 `mit all`。扫描预热后的 MIT 会话可直接使用以上命令；
+若要改用 CSP/PP，请退出终端并以 CSP/PP 命令重新建立会话。若 PRE-OP/SAFE-OP 失败，保留程序输出以及
 `sudo dmesg -T | tail -n 100` 中的 EtherCAT 日志后再排查。
 
 多从站地址与等待预算回归测试（依赖 EtherLab 开发库）可运行：
@@ -416,10 +417,9 @@ ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_acc
 
 ```text
 power_on
-ethercat_scan
-ethercat_info 1
+# CSP/PP 示例：在新终端中直接建立位置模式会话，不先执行 MIT 扫描预热
 
-# CSP：扫描成功后先使能，再发送输出端目标
+# CSP：先使能，再发送输出端目标
 ethercat_enable 1
 ethercat_position 1 0.01 1000
 ethercat_info 1

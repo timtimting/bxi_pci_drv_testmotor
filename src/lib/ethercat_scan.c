@@ -704,6 +704,7 @@ enum {
 #define ETHERCAT_KAIXUAN_TWO_PI 6.28318530717958647692
 #define ETHERCAT_CIA402_MODE_PROFILE_POSITION 1u
 #define ETHERCAT_CIA402_MODE_CSP 8u
+#define ETHERCAT_CIA402_MODE_MIT 10u
 
 #ifdef HAVE_ETHERLAB
 static bool console_ethercat_output_rad_to_count(double output_rad, int16_t ratio,
@@ -2272,10 +2273,11 @@ static int console_ethercat_prepare_scan_session(bool chinese)
         }
         configured[slave] = 1u;
     }
+    ethercat_mit_mapping = true;
     started_us = console_ethercat_monotonic_us();
     printf("%s\n", chinese ?
-           "ethercat_scan: 正在预热 PDO/DC（Sync0=1ms, shift=0）；保持控制字 0x0000，不使能电机。" :
-           "ethercat_scan: warming PDO/DC (Sync0=1ms, shift=0); keeping control word 0x0000, drives disabled.");
+           "ethercat_scan: 正在预热 MIT PDO/DC（mode=10, Sync0=1ms, shift=0）；保持控制字 0x0000，不使能电机。" :
+           "ethercat_scan: warming MIT PDO/DC (mode=10, Sync0=1ms, shift=0); keeping control word 0x0000, drives disabled.");
     ethercat_control_period_ns = ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS;
     if (ec_config_map(process_image) <= 0) {
         printf("%s\n", chinese ? "ethercat_scan: PDO 映射失败" :
@@ -2324,10 +2326,9 @@ static int console_ethercat_prepare_scan_session(bool chinese)
                    chinese ? "PDO 输入映射不匹配" : "PDO input mapping mismatch");
             goto cleanup;
         }
-        target_positions[slave] = console_ethercat_read_i32(
-            (const uint8_t *)ec_slave[slave].inputs + 2u);
+        /* MIT preparation copies output-side float positions from feedback. */
     }
-    if (console_ethercat_selected_ready(configured, target_positions, ETHERCAT_CIA402_MODE_CSP) != 0 ||
+    if (console_ethercat_selected_ready(configured, target_positions, ETHERCAT_CIA402_MODE_MIT) != 0 ||
         console_ethercat_exchange() != 0) {
         printf("%s\n", chinese ? "ethercat_scan: 初始位置 PDO 发送失败" :
                "ethercat_scan: initial position PDO exchange failed");
@@ -2372,8 +2373,8 @@ static int console_ethercat_prepare_scan_session(bool chinese)
     printf("ethercat_scan: %s %.3fs; %s\n",
            chinese ? "PDO 预热完成，耗时" : "PDO warm-up complete in",
            (double)(console_ethercat_monotonic_us() - started_us) / 1000000.0,
-           chinese ? "从站处于 OP 且伺服失能，后台持续通信；后续使能复用主站。" :
-           "slaves are OP with drives disabled; cyclic communication continues for fast enable.");
+           chinese ? "从站处于 OP 且伺服失能，后台持续 MIT 通信；可直接执行 mit，无需重新配置主站。" :
+           "slaves are OP with drives disabled; cyclic MIT communication continues; use mit directly without reconfiguring the master.");
     console_ethercat_scan_notify(0);
     result = console_ethercat_run_session(unmonitored, 0u);
 
