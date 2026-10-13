@@ -1,3 +1,8 @@
+#include <float.h>
+static bool ethercat_mit_mapping;
+#ifdef HAVE_ETHERLAB
+static float console_ethercat_read_float(const uint8_t *data);
+#endif
 #include <net/if.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -28,7 +33,8 @@ typedef enum {
     ETHERCAT_TASK_PN028,
     ETHERCAT_TASK_PN106,
     ETHERCAT_TASK_PN107,
-    ETHERCAT_TASK_PN044
+    ETHERCAT_TASK_PN044,
+    ETHERCAT_TASK_MIT
 } ethercat_task;
 
 typedef struct {
@@ -75,6 +81,7 @@ typedef struct {
     console_output_context output_context;
     unsigned int hold_ms;
     double output_rad;
+    float mit_velocity, mit_torque, mit_kp, mit_kd;
     unsigned int value;
     uint8_t position_mode;
     uint32_t profile_velocity;
@@ -463,6 +470,7 @@ typedef struct {
     int16_t pn070;
     int16_t pn075;
     int16_t pn077;
+    int16_t pn082;
     int16_t pn079;
     int16_t pn085;
     int16_t pn088;
@@ -484,8 +492,8 @@ typedef struct {
     int64_t dc_sync_adjustment_ns;
     uint32_t config_valid_mask;
     uint16_t live_error_code;
-    uint8_t outputs[13];
-    uint8_t inputs[14];
+    uint8_t outputs[23];
+    uint8_t inputs[16];
     uint64_t live_timestamp_us;
 } ethercat_cached_slave;
 
@@ -494,6 +502,7 @@ static ethercat_cached_slave ethercat_cached_slaves[EC_MAXSLAVE];
 static const char *console_ethercat_cia402_state_name(uint16_t status_word);
 
 enum {
+    ETHERCAT_CACHE_PN082 = 1u << 26,
     ETHERCAT_CACHE_PN001 = 1u << 0,
     ETHERCAT_CACHE_PN002 = 1u << 1,
     ETHERCAT_CACHE_PN070 = 1u << 2,
@@ -671,11 +680,12 @@ static int console_ethercat_parse_cycle_ms(const char *text, uint32_t *cycle_ns)
     return 0;
 }
 
+#define ETHERCAT_KAIXUAN_RXPDO_BITS (ethercat_mit_mapping ? 184u : 104u)
+#define ETHERCAT_KAIXUAN_TXPDO_MIN_BITS (ethercat_mit_mapping ? 128u : 112u)
+
 enum {
     ETHERCAT_KAIXUAN_VENDOR_ID = 0x00010203u,
     ETHERCAT_KAIXUAN_PRODUCT_CODE = 0x00000402u,
-    ETHERCAT_KAIXUAN_RXPDO_BITS = 104u,
-    ETHERCAT_KAIXUAN_TXPDO_MIN_BITS = 112u,
     ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS = 1000000u,
     ETHERCAT_KAIXUAN_STARTUP_PDO_TIMEOUT_NS = 250000000u,
     ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS = 60000u,
@@ -742,7 +752,7 @@ static const char *const ethercat_pn077_value_words[] = {
 };
 
 static const char *const ethercat_pn_number_words[] = {
-    "Pn001", "Pn002", "Pn028", "Pn044", "Pn070", "Pn075", "Pn077", "Pn079", "Pn085",
+    "Pn001", "Pn002", "Pn028", "Pn044", "Pn070", "Pn075", "Pn077", "Pn079", "Pn082", "Pn085",
     "Pn088", "Pn097", "Pn101", "Pn106", "Pn107", "Pn150",
 };
 
@@ -831,6 +841,9 @@ static const char *const *console_ethercat_completion_words(const char *line,
          strcmp(first, "ethercat_disable") == 0 ||
          strcmp(first, "ethercat_zero") == 0 ||
          strcmp(first, "ethercat_info") == 0 ||
+         strcmp(first, "info") == 0 ||
+         strcmp(first, "mit") == 0 ||
+         strcmp(first, "ethercat_mit") == 0 ||
          strcmp(first, "ethercat_pnread") == 0 ||
          strcmp(first, "ethercat_save") == 0 ||
          strcmp(first, "ethercat_pn077") == 0) && tokens_before == 1u) {
@@ -1126,6 +1139,7 @@ static void console_ethercat_cache_configuration(const uint8_t selected[EC_MAXSL
         ETHERCAT_CACHE_SDO(0x2070u, 0u, pn070, ETHERCAT_CACHE_PN070);
         ETHERCAT_CACHE_SDO(0x2075u, 0u, pn075, ETHERCAT_CACHE_PN075);
         ETHERCAT_CACHE_SDO(0x2077u, 0u, pn077, ETHERCAT_CACHE_PN077);
+        ETHERCAT_CACHE_SDO(0x2082u, 0u, pn082, ETHERCAT_CACHE_PN082);
         ETHERCAT_CACHE_SDO(0x2079u, 0u, pn079, ETHERCAT_CACHE_PN079);
         ETHERCAT_CACHE_SDO(0x2085u, 0u, pn085, ETHERCAT_CACHE_PN085);
         ETHERCAT_CACHE_SDO(0x2088u, 0u, pn088, ETHERCAT_CACHE_PN088);
@@ -1199,14 +1213,14 @@ static void console_ethercat_capture_live_pdo(const uint8_t selected[EC_MAXSLAVE
 
         if (selected[slave] == 0u || !snapshot->valid ||
             ec_slave[slave].outputs == NULL || ec_slave[slave].inputs == NULL ||
-            ec_slave[slave].Obytes < sizeof(snapshot->outputs) ||
-            ec_slave[slave].Ibytes < sizeof(snapshot->inputs)) {
+            ec_slave[slave].Obytes < ETHERCAT_KAIXUAN_RXPDO_BITS / 8u ||
+            ec_slave[slave].Ibytes < ETHERCAT_KAIXUAN_TXPDO_MIN_BITS / 8u) {
             continue;
         }
-        memcpy(snapshot->outputs, ec_slave[slave].outputs, sizeof(snapshot->outputs));
-        memcpy(snapshot->inputs, ec_slave[slave].inputs, sizeof(snapshot->inputs));
+        memcpy(snapshot->outputs, ec_slave[slave].outputs, ETHERCAT_KAIXUAN_RXPDO_BITS / 8u);
+        memcpy(snapshot->inputs, ec_slave[slave].inputs, ETHERCAT_KAIXUAN_TXPDO_MIN_BITS / 8u);
         status_words[slave] = console_ethercat_read_u16(snapshot->inputs);
-        error_codes[slave] = console_ethercat_read_u16(snapshot->inputs + 12u);
+        error_codes[slave] = console_ethercat_read_u16(snapshot->inputs + (ethercat_mit_mapping ? 14u : 12u));
         snapshot->live_error_code = error_codes[slave];
         snapshot->live_error_valid = true;
         if ((!ethercat_session.active || ethercat_session.monitor[slave]) &&
@@ -1323,6 +1337,14 @@ static int console_ethercat_print_background_info(bool chinese,
         }
         status_word = console_ethercat_read_u16(snapshot->inputs);
         control_word = console_ethercat_read_u16(snapshot->outputs);
+        if (ethercat_mit_mapping) {
+            printf("[slave%d] MIT SW=0x%04x CW=0x%04x error=0x%04x\n", slave, status_word, control_word, snapshot->live_error_code);
+            printf("  actual: pos=%.6f rad vel=%.6f rad/s torque=%.6f N.m\n", console_ethercat_read_float(snapshot->inputs+2), console_ethercat_read_float(snapshot->inputs+6), console_ethercat_read_float(snapshot->inputs+10));
+            printf("  target: pos=%.6f rad vel=%.6f rad/s tff=%.6f N.m kp=%.6f kd=%.6f\n", console_ethercat_read_float(snapshot->outputs+2), console_ethercat_read_float(snapshot->outputs+6), console_ethercat_read_float(snapshot->outputs+10), console_ethercat_read_float(snapshot->outputs+14), console_ethercat_read_float(snapshot->outputs+18));
+            printf("  Pn082=");
+            if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN082) printf("%d (%.3f A/N.m)\n", snapshot->pn082, snapshot->pn082*0.1); else printf("?\n");
+            continue;
+        }
         position_actual = console_ethercat_read_i32(snapshot->inputs + 2u);
         velocity_actual = console_ethercat_read_i32(snapshot->inputs + 6u);
         torque_actual = (int16_t)console_ethercat_read_u16(snapshot->inputs + 10u);
@@ -1389,6 +1411,8 @@ static int console_ethercat_print_background_info(bool chinese,
         printf(" 0x6084 decel=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PROFILE_DECELERATION) printf("%u", snapshot->profile_deceleration); else printf("?");
         printf(" (raw UDINT)\n");
+        printf("  Pn082=");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN082) printf("%d (%.3f A/N.m)\n", snapshot->pn082, snapshot->pn082 * 0.1); else printf("?\n");
         printf("  params snapshot: Pn079=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN079) printf("%d", snapshot->pn079); else printf("?");
         printf(" Pn085=");
@@ -1816,7 +1840,7 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
             uint16_t pdo_error_code = 0xffffu;
             if (ec_slave[slave].inputs != NULL && ec_slave[slave].Ibits >= 112u) {
                 pdo_error_code = console_ethercat_read_u16(
-                    (const uint8_t *)ec_slave[slave].inputs + 12u);
+                    (const uint8_t *)ec_slave[slave].inputs + (ethercat_mit_mapping ? 14u : 12u));
             }
             printf("  drive: mode_display=not-read error_code=0x%04x(PDO)"
                    " Pn077=not-read Pn078=not-read\n"
@@ -1864,6 +1888,20 @@ static void console_ethercat_print_selected_status(const uint8_t selected[EC_MAX
     }
 }
 
+static float console_ethercat_read_float(const uint8_t *data)
+{
+    int32_t bits = console_ethercat_read_i32(data);
+    float value;
+    memcpy(&value, &bits, 4u);
+    return value;
+}
+static void console_ethercat_write_float(uint8_t *data, float value)
+{
+    int32_t bits;
+    memcpy(&bits, &value, 4u);
+    console_ethercat_write_i32(data, bits);
+}
+
 static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
                                            const int32_t target_positions[EC_MAXSLAVE],
                                            uint8_t position_mode)
@@ -1884,6 +1922,12 @@ static int console_ethercat_selected_ready(const uint8_t selected[EC_MAXSLAVE],
             return -1;
         }
         console_ethercat_write_u16(outputs, 0u);
+        if (ethercat_mit_mapping) {
+            memset(outputs + 2u, 0, 21u);
+            memcpy(outputs + 2u, ec_slave[slave].inputs + 2u, 4u);
+            outputs[22] = 10u;
+            continue;
+        }
         console_ethercat_write_i32(outputs + 2u, target_positions[slave]);
         console_ethercat_write_i32(outputs + 6u, 0);
         console_ethercat_write_u16(outputs + 10u, 0u);
@@ -2172,7 +2216,7 @@ static void console_ethercat_print_scan_failure(const uint8_t configured[EC_MAXS
         al_state = ec_slave[slave].state;
         if (ec_slave[slave].inputs != NULL) {
             status_word = console_ethercat_read_u16(ec_slave[slave].inputs);
-            pdo_error = console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u);
+            pdo_error = console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + (ethercat_mit_mapping ? 14u : 12u));
         }
         al_code_read = ec_FPRD(ec_slave[slave].configadr, 0x0134u,
                                (uint16)sizeof(al_code_bytes), al_code_bytes,
@@ -2425,7 +2469,8 @@ static int console_ethercat_enable(bool chinese,
         (sync0_cycle_ms_text != NULL &&
          console_ethercat_parse_cycle_ms(sync0_cycle_ms_text, &sync0_cycle_ns) != 0) ||
         (position_mode != ETHERCAT_CIA402_MODE_CSP &&
-         position_mode != ETHERCAT_CIA402_MODE_PROFILE_POSITION) ||
+         position_mode != ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
+         position_mode != 10u) ||
         (position_mode == ETHERCAT_CIA402_MODE_PROFILE_POSITION &&
          (profile_velocity == 0u || profile_acceleration == 0u ||
           profile_deceleration == 0u))) {
@@ -3194,6 +3239,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         int16_t pn070;
         int16_t pn075;
         int16_t pn077;
+        int16_t pn082;
         int16_t pn079;
         int16_t pn085;
         int16_t pn088;
@@ -3231,6 +3277,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         bool pn070_ok;
         bool pn075_ok;
         bool pn077_ok;
+        bool pn082_ok;
         bool pn079_ok;
         bool pn085_ok;
         bool pn088_ok;
@@ -3282,6 +3329,7 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         pn070_ok = ETHERCAT_INFO_READ(0x2070u, pn070);
         pn075_ok = ETHERCAT_INFO_READ(0x2075u, pn075);
         pn077_ok = ETHERCAT_INFO_READ(0x2077u, pn077);
+        pn082_ok = ETHERCAT_INFO_READ(0x2082u, pn082);
         pn079_ok = ETHERCAT_INFO_READ(0x2079u, pn079);
         pn085_ok = ETHERCAT_INFO_READ(0x2085u, pn085);
         pn088_ok = ETHERCAT_INFO_READ(0x2088u, pn088);
@@ -3329,6 +3377,8 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         } else printf("?");
         printf(" Pn044=");
         if (pn044_ok) printf("%d (speed filter)", (int)pn044); else printf("?");
+        printf("\n  Pn082=");
+        if (pn082_ok) printf("%d (%.3f A/N.m)", pn082, pn082 * 0.1); else printf("?");
         printf("\n  params: Pn079=");
         if (pn079_ok) printf("%d", (int)pn079); else printf("?");
         printf(" Pn085=");

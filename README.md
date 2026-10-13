@@ -218,6 +218,43 @@ cmake -S . -B build -DETHERLAB_ROOT=/opt/etherlab
 cmake --build build -j
 ```
 
+开璇 EtherCAT 力位混合控制（《KGU系列谐波减速模组说明_EtherCAT版_V1.2》，混合力控章节）：
+
+```text
+mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]
+info <slave_id|all> [network_interface]
+```
+
+`ethercat_mit` 与 `mit` 相同，`info` 与 `ethercat_info` 相同。五个控制参数均为输出端物理量：
+
+| 参数 | 含义 | 单位 |
+| --- | --- | --- |
+| `pos_rad` | 输出端目标绝对位置 | rad |
+| `vel_rad_s` | 输出端目标速度 | rad/s |
+| `tff_Nm` | 前馈力矩 | N·m |
+| `kp` | 位置误差增益，必须非负 | N·m/rad |
+| `kd` | 速度误差增益，必须非负 | N·m/(rad/s) |
+
+控制律为 `目标力矩 = (目标位置 - 实际位置) * kp + (目标速度 - 实际速度) * kd + tff`。
+`hold_ms` 为 0 或省略时持续控制；1..60000 时到期失能。网卡默认沿用 EtherCAT 命令默认值。
+手册建议从 KP=50、KD=10 开始调试，具体增益和目标需按实际机构选择。
+例如 `mit 1 0.0 0.0 0.0 50 10 1000` 会控制从站 1 到输出端绝对零位置，持续 1 秒。
+
+MIT 会话以 `0x6060=10` 和专用 PDO（输出 23 字节、输入 16 字节）启动，目标对象为
+`0x4010..0x4014`，反馈对象为 `0x4000..0x4002`。位置不再通过 Pn051 换算。
+首次使用时，应在新启动的终端中先执行 `mit`；如果已经执行过 `ethercat_scan`、CSP 或 PP
+并建立了后台会话，请退出终端再启动 MIT。MIT 与 CSP/PP 之间切换也需要退出重启终端。
+同一 MIT 会话内可以更新目标、失能、再次执行 MIT 使能，退出或 Ctrl-C 会失能。
+所有开璇从站使用该会话的 PDO 格式，只有选中的从站接收使能和目标。
+
+`info` 显示 Pn082（SDO `0x2082:00`，INT16）原值及 `原值 × 0.1 A/N·m`。
+会话内该参数为初始化时的 SDO 快照，实时值可通过 `ethercat_pnread 1 82` 查询。
+手册要求先标定转矩系数并写入 Pn082，否则力矩反馈不精确；此命令不会自动修改 Pn082。
+手册描述默认值为 10，但随附 ESI 默认值为 0，应以实际读取值和标定结果为准。
+
+原 CAN MIT 控制继续使用 `mit_set <index00> <pos> <torque> <vel> <kp> <kd>`；
+交互命令 `mit` 现在专用于开璇 EtherCAT，参数顺序按上述格式使用。
+
 交互终端命令例子：`ethercat_info 1`、`ethercat_pn077 1 0`、`ethercat_save 1`、
 `ethercat_enable 1`。如需选用别的网卡，将网卡名放最后，例如 `ethercat_info 1 enp5s0`；
 使能命令可用独立命名参数 `sync0_cycle_ms=<周期>` 配置周期，支持 `0.5/1/2/4/5/8 ms`；
@@ -581,7 +618,7 @@ mit_set 00 0.5 0 0 10 1
 也可以使用更短的命令名：
 
 ```text
-mit 00 0.5 0 0 10 1
+mit_set 00 0.5 0 0 10 1
 ```
 
 参数顺序：
@@ -1011,7 +1048,7 @@ flash_all config/flash_plan_debug.yaml
 |---|---|---|
 | `motor_dbg` | `<index00>` | 按 index 进入单电机直通调试；所有按键直接发给电机，反引号 `` ` `` 退出 |
 | `enable` / `disable` | `[<index00>\|all]` | 快捷使能/失能；省略参数或使用 `all` 表示全部电机 |
-| `mit` | `<index00> <pos> <torque> <vel> <kp> <kd>` | `mit_set` 的快捷写法 |
+| `mit` | `<slave_id\|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]` | 开璇 EtherCAT 力位混合控制 |
 | `debug` | `<index00>` | `motor_dbg` 的快捷写法 |
 | `language` / `lang` | `zh\|en` | 切换中英文 |
 

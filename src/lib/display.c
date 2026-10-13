@@ -18,6 +18,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
             printf("             ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("             ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+            printf("             mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
             printf("             pp 是 ethercat_position_pp 的无下划线别名\n");
             printf("             ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
             printf("             ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
@@ -41,7 +42,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("             mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  快捷命令：  enable [<index00>|all]    disable [<index00>|all]\n");
-            printf("             mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("             mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
             printf("             debug <index00>\n\n");
             printf("  寄存器：    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("             reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
@@ -62,6 +63,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
             printf("                ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
             printf("                ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
+            printf("                mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
             printf("                pp is an alias for ethercat_position_pp\n");
             printf("                ethercat_zero|ethercat_info|ethercat_save <slave_id|all> [network_interface]\n");
                 printf("                ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
@@ -86,7 +88,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("                mit_enable_single <index00>    mit_disable_single <index00>\n");
             printf("                mit_set <index00> <pos> <torque> <vel> <kp> <kd>    stand_up\n\n");
             printf("  Shortcuts:     enable [<index00>|all]    disable [<index00>|all]\n");
-            printf("                 mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
+            printf("                 mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
             printf("                 debug <index00>\n\n");
             printf("  Registers:    reg_read <index00|all> <reg_index> [wait_ms]\n");
             printf("                reg_write <index00|all> <reg_index> <type> <value> [wait_ms]\n");
@@ -128,6 +130,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
         printf("      CSP 位控（0x6060=8），默认周期 1ms；output_rad 为输出端绝对弧度，按各从站 Pn051 换算，省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
         printf("      已有会话直接更新目标，不重新使能；正数 hold_ms 到期只失能，保留后台主站。\n");
+        printf("  mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
         printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
         printf("      可输入 pp 代替 ethercat_position_pp（无需下划线）。\n");
         printf("      PP 位控（0x6060=1）；目标仍是输出端绝对弧度，默认加/减速度为 100，参数按 ESI 原始 UDINT 写入 0x6081/0x6083/0x6084。\n");
@@ -135,7 +138,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      PP 已使能时更改 profile 参数会拒绝发送目标；先失能再修改，加/减速度省略时按 100 计算。\n");
         printf("  ethercat_zero <slave_id|all> [network_interface]\n");
         printf("      已有会话须先显式失能，再写 Pn101 的 0→1→0；完成后同时重启主电和 USB 电源。\n");
-        printf("  ethercat_info <slave_id|all> [network_interface]\n");
+        printf("  ethercat_info|info <slave_id|all> [network_interface]\n");
         printf("      显示 Pn051 减速比、Pn150 编码器配置及电机端/输出端位置角度。\n");
         printf("      同时显示 Pn028 转速限制、Pn106/107 加速度限制及 Pn044 速度滤波；后台缓存可由参数写入回读更新。\n");
         printf("  ethercat_pnread <slave_id|all> <Pn编号> [network_interface]\n");
@@ -182,8 +185,6 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      快捷使能或失能命令；省略参数或使用 all 表示全部电机。\n");
         printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
         printf("      发送单次 MIT 控制帧；指定电机必须处于已使能状态。\n");
-        printf("  mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
-        printf("      mit_set 的快捷写法。\n");
         printf("  stand_up\n");
         printf("      所有在线且已使能的电机运动到位置 0；KP 按配置缓慢增加。\n");
         printf("  reg_read <index00|all> <reg_index> [wait_ms]\n");
@@ -245,6 +246,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
     printf("      CSP control (0x6060=8) at a default 1ms cycle; output_rad is an absolute output-side angle converted with each slave's Pn051. Omit hold_ms to control until Ctrl-C.\n");
     printf("      Update targets without re-enabling; positive hold_ms disables at expiry but retains the background master.\n");
+    printf("  mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
     printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
     printf("      Use pp as the same command without underscores.\n");
     printf("      Profile Position control (0x6060=1); output_rad remains output-side absolute angle. Defaults accel/decel to 100 and writes raw UDINT 0x6081/0x6083/0x6084.\n");
@@ -252,7 +254,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Changing profile parameters while PP is enabled refuses the target; disable first. Omitted accel/decel default to 100.\n");
     printf("  ethercat_zero <slave_id|all> [network_interface]\n");
     printf("      In a running session, disable explicitly first; write Pn101 0->1->0, then restart main and USB power.\n");
-    printf("  ethercat_info <slave_id|all> [network_interface]\n");
+    printf("  ethercat_info|info <slave_id|all> [network_interface]\n");
     printf("      Show Pn051, Pn150, and motor/output-side position angles; during enable show cached config and live PDO.\n");
     printf("      Also show Pn028 speed limit, Pn106/107 acceleration limits and Pn044 speed filter (cache updated by parameter write/readback).\n");
     printf("  ethercat_pnread <slave_id|all> <Pn_number> [network_interface]\n");
@@ -300,8 +302,6 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Shortcuts for enabling/disabling one motor or all motors.\n");
     printf("  mit_set <index00> <pos> <torque> <vel> <kp> <kd>\n");
     printf("      Send one MIT control frame. The selected motor must be enabled.\n");
-    printf("  mit <index00> <pos> <torque> <vel> <kp> <kd>\n");
-    printf("      Shortcut for mit_set.\n");
     printf("  stand_up\n");
     printf("      Command all online/enabled motors to position 0. KP ramps from zero to\n");
     printf("      home_kp over home_soft_start_ms; KP/KD come from the YAML config.\n");

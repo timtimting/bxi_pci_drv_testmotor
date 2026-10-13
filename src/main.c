@@ -39,8 +39,8 @@ typedef struct
 
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
-    "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_position_pp", "pp", "ethercat_zero",
-    "ethercat_info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
+    "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_position_pp", "ethercat_mit", "pp", "ethercat_zero",
+    "ethercat_info", "info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
     "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",

@@ -24,7 +24,7 @@ typedef struct {
     ec_slave_config_state_t state;
     unsigned int output_offset;
     unsigned int input_offset;
-    uint8_t output_shadow[13];
+    uint8_t output_shadow[23];
 } etherlab_slave_context;
 
 static ec_master_t *etherlab_master;
@@ -56,6 +56,23 @@ static const ec_sync_info_t etherlab_syncs[] = {
     {2, EC_DIR_OUTPUT, 1, &etherlab_pdos[0], EC_WD_ENABLE},
     {3, EC_DIR_INPUT, 1, &etherlab_pdos[1], EC_WD_DISABLE},
     {0xff, EC_DIR_INVALID, 0, NULL, EC_WD_DEFAULT},
+};
+
+static const ec_pdo_entry_info_t etherlab_mit_rx[] = {
+    {0x6040,0,16}, {0x4010,0,32}, {0x4011,0,32}, {0x4012,0,32},
+    {0x4013,0,32}, {0x4014,0,32}, {0x6060,0,8},
+};
+static const ec_pdo_entry_info_t etherlab_mit_tx[] = {
+    {0x6041,0,16}, {0x4000,0,32}, {0x4001,0,32}, {0x4002,0,32}, {0x603f,0,16},
+};
+static const ec_pdo_info_t etherlab_mit_pdos[] = {
+    {0x1601,7,etherlab_mit_rx}, {0x1a01,5,etherlab_mit_tx},
+};
+static const ec_sync_info_t etherlab_mit_syncs[] = {
+    {0,EC_DIR_OUTPUT,0,NULL,EC_WD_DISABLE}, {1,EC_DIR_INPUT,0,NULL,EC_WD_DISABLE},
+    {2,EC_DIR_OUTPUT,1,&etherlab_mit_pdos[0],EC_WD_ENABLE},
+    {3,EC_DIR_INPUT,1,&etherlab_mit_pdos[1],EC_WD_DISABLE},
+    {0xff,EC_DIR_INVALID,0,NULL,EC_WD_DEFAULT},
 };
 
 static int etherlab_interface_matches_master(const char *interface)
@@ -235,7 +252,7 @@ int ec_config_map(void *process_image)
         if (ec_slave[slave].eep_man != 0x00010203u ||
             ec_slave[slave].eep_id != 0x00000402u) continue;
         if (ecrt_slave_config_pdos(etherlab_slaves[slave].config,
-                                   EC_END, etherlab_syncs) != 0) return 0;
+                                   EC_END, ethercat_mit_mapping ? etherlab_mit_syncs : etherlab_syncs) != 0) return 0;
         int output_offset = ecrt_slave_config_reg_pdo_entry(
             etherlab_slaves[slave].config, 0x6040, 0, etherlab_domain, NULL);
         int input_offset = ecrt_slave_config_reg_pdo_entry(
@@ -243,10 +260,10 @@ int ec_config_map(void *process_image)
         if (output_offset < 0 || input_offset < 0) return 0;
         etherlab_slaves[slave].output_offset = (unsigned int)output_offset;
         etherlab_slaves[slave].input_offset = (unsigned int)input_offset;
-        ec_slave[slave].Obytes = 13;
-        ec_slave[slave].Ibytes = 14;
-        ec_slave[slave].Obits = 104;
-        ec_slave[slave].Ibits = 112;
+        ec_slave[slave].Obytes = ethercat_mit_mapping ? 23 : 13;
+        ec_slave[slave].Ibytes = ethercat_mit_mapping ? 16 : 14;
+        ec_slave[slave].Obits = ec_slave[slave].Obytes * 8;
+        ec_slave[slave].Ibits = ec_slave[slave].Ibytes * 8;
         ec_group[0].outputsWKC++;
         ec_group[0].inputsWKC++;
     }
@@ -297,7 +314,7 @@ int ec_send_processdata(void)
             if (ec_slave[slave].Obits == 0) continue;
             memcpy(etherlab_domain_data + etherlab_slaves[slave].output_offset,
                    etherlab_slaves[slave].output_shadow,
-                   sizeof(etherlab_slaves[slave].output_shadow));
+                   ec_slave[slave].Obytes);
         }
     }
     etherlab_set_application_time();

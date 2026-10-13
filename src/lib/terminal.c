@@ -293,6 +293,35 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_DISABLE, state->config.chinese_ui,
             interface, selection, 0u, 0.0, 0u, NULL, NULL);
+    } else if (strcmp(cmd, "mit") == 0 || strcmp(cmd, "ethercat_mit") == 0) {
+        double values[5];
+        float mit_values[4];
+        unsigned int hold_ms=0u, slave_id;
+        bool all_slaves;
+        const char *interface=ETHERCAT_DEFAULT_INTERFACE;
+        int i;
+        if (argc < 7 || argc > 9 ||
+            console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) != 0) goto mit_usage;
+        for (i=0; i<5; ++i) {
+            char *end;
+            errno=0;
+            values[i]=strtod(argv[i+2], &end);
+            if (errno || end==argv[i+2] || *end || !isfinite(values[i]) || fabs(values[i])>FLT_MAX) goto mit_usage;
+        }
+        if (values[3]<0 || values[4]<0) goto mit_usage;
+        if (argc>=8) {
+            if (parse_uint_arg(argv[7], &hold_ms) != 0) {
+                if (argc==9) goto mit_usage;
+                interface=argv[7]; hold_ms=0u;
+            }
+        }
+        if (argc==9) interface=argv[8];
+        for (i=0; i<4; ++i) mit_values[i]=(float)values[i+1];
+        return console_ethercat_background_submit_ex(ETHERCAT_TASK_MIT, state->config.chinese_ui,
+            interface, argv[1], hold_ms, values[0], 0u, NULL, NULL, 10u, 0u, 0u, 0u, mit_values);
+mit_usage:
+        printf("usage: mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms:0..60000] [network_interface]\n");
+        return -1;
     } else if (strcmp(cmd, "ethercat_position") == 0) {
         double output_rad;
         unsigned int hold_ms = 0u;
@@ -359,7 +388,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             ETHERCAT_TASK_POSITION_PP, state->config.chinese_ui,
             interface, selection, hold_ms, output_rad, 0u, NULL, NULL,
             ETHERCAT_CIA402_MODE_PROFILE_POSITION, profile_velocity,
-            profile_acceleration, profile_deceleration);
+            profile_acceleration, profile_deceleration, NULL);
     } else if (strcmp(cmd, "ethercat_zero") == 0) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
@@ -382,7 +411,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         return console_ethercat_background_submit(ETHERCAT_TASK_ZERO, state->config.chinese_ui,
             interface, selection, 0u, 0.0, 0u, NULL, NULL);
-    } else if (strcmp(cmd, "ethercat_info") == 0) {
+    } else if ((strcmp(cmd, "ethercat_info") == 0 || strcmp(cmd, "info") == 0)) {
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
         unsigned int slave_id;
@@ -545,8 +574,7 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_send_special(state, -1, BXI_MOTOR_CMD_DISABLE, cmd);
-    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0 ||
-               strcmp(cmd, "mit") == 0) {
+    } else if (strcmp(cmd, "mit_set") == 0 || strcmp(cmd, "motor_set") == 0) {
         return console_motor_set(state, argc, argv);
     } else if (strcmp(cmd, "stand_up") == 0 || strcmp(cmd, "mit_move_zero") == 0) {
         if (argc != 1) {

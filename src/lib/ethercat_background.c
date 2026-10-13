@@ -4,7 +4,7 @@ static const char *console_ethercat_task_name(ethercat_task task)
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
         "ethercat_position", "ethercat_position_pp", "ethercat_zero", "ethercat_info",
         "ethercat_pnread", "ethercat_pn077", "ethercat_save",
-        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044"
+        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit"
     };
     return names[task];
 }
@@ -341,6 +341,57 @@ static int console_ethercat_session_zero(bool chinese, const uint8_t selected[EC
     return 0;
 }
 
+static int console_ethercat_set_control_word_and_wait(const uint8_t selected[EC_MAXSLAVE],
+                                                      uint16_t word, uint16_t state)
+{
+    console_ethercat_set_control_word(selected, word);
+    return console_ethercat_wait_for_status(selected, state);
+}
+
+static int console_ethercat_session_mit(const ethercat_background_args *command,
+                                       const uint8_t selected[EC_MAXSLAVE])
+{
+    int slave;
+    uint8_t disabled[EC_MAXSLAVE] = {0};
+    bool needs_enable = false;
+    for (slave=1; slave<=ec_slavecount; ++slave) {
+        if (!selected[slave]) continue;
+        uint16_t status = console_ethercat_read_u16(ec_slave[slave].inputs) & 0x006fu;
+        if ((status != 0x0027u && status != 0x0040u) ||
+            console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 14u) != 0u) {
+            printf("mit: slave%d state invalid; use ethercat_disable and resolve fault first\n", slave);
+            return -1;
+        }
+        if (status == 0x0040u) { disabled[slave]=1u; needs_enable=true; }
+    }
+    for (slave=1; slave<=ec_slavecount; ++slave) {
+        if (!selected[slave]) continue;
+        uint8_t *out = ec_slave[slave].outputs;
+        console_ethercat_write_float(out+2, (float)command->output_rad);
+        console_ethercat_write_float(out+6, command->mit_velocity);
+        console_ethercat_write_float(out+10, command->mit_torque);
+        console_ethercat_write_float(out+14, command->mit_kp);
+        console_ethercat_write_float(out+18, command->mit_kd);
+        out[22]=10u;
+        ethercat_session.monitor[slave]=true;
+        ethercat_session.motion_context[slave]=command->output_context;
+        ethercat_session.disable_at_us[slave]=0u;
+    }
+    if (needs_enable &&
+        (console_ethercat_set_control_word_and_wait(disabled, 0x0006u, 0x0021u) != 0 ||
+         console_ethercat_set_control_word_and_wait(disabled, 0x0007u, 0x0023u) != 0 ||
+         console_ethercat_set_control_word_and_wait(disabled, 0x000fu, 0x0027u) != 0)) {
+        console_ethercat_session_disable(selected);
+        return -1;
+    }
+    for (slave=1; slave<=ec_slavecount; ++slave) {
+        if (selected[slave]) ethercat_session.disable_at_us[slave]=command->hold_ms == 0 ? 0 :
+            console_ethercat_monotonic_us()+(uint64_t)command->hold_ms*1000u;
+    }
+    printf("mit: mode=10 pos=%.6f rad vel=%.6f rad/s tff=%.6f N.m kp=%.6f kd=%.6f\n", command->output_rad, command->mit_velocity, command->mit_torque, command->mit_kp, command->mit_kd);
+    return 0;
+}
+
 static int console_ethercat_session_command(const ethercat_background_args *command)
 {
     uint8_t selected[EC_MAXSLAVE] = {0};
@@ -349,6 +400,13 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
         printf("%s\n", command->chinese ?
                "网卡与后台主站不匹配；现有循环不变。" :
                "Interface does not match background master; existing cycle unchanged.");
+        return -1;
+    }
+    if ((command->task == ETHERCAT_TASK_MIT && !ethercat_mit_mapping) ||
+        (ethercat_mit_mapping && (command->task == ETHERCAT_TASK_ENABLE ||
+         command->task == ETHERCAT_TASK_POSITION || command->task == ETHERCAT_TASK_POSITION_PP ||
+         command->task == ETHERCAT_TASK_ZERO))) {
+        printf("PDO mapping differs; exit console and start the desired control mode first.\n");
         return -1;
     }
     if (command->task == ETHERCAT_TASK_SCAN)
@@ -370,6 +428,8 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
         return -1;
     }
     switch (command->task) {
+    case ETHERCAT_TASK_MIT:
+        return console_ethercat_session_mit(command, selected);
     case ETHERCAT_TASK_ENABLE:
         return console_ethercat_session_enable(command, selected);
     case ETHERCAT_TASK_DISABLE:
@@ -476,6 +536,11 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
             console_ethercat_monotonic_us() + (uint64_t)hold_ms * 1000u;
         ethercat_session.motion_context[slave] = console_output_get_context();
     }
+    if (ethercat_background_arguments.task == ETHERCAT_TASK_MIT &&
+        console_ethercat_session_mit(&ethercat_background_arguments, selected) != 0) {
+        result = -1;
+
+    }
     if (ethercat_background_arguments.task == ETHERCAT_TASK_POSITION &&
         console_ethercat_session_position(&ethercat_background_arguments, selected) != 0) {
         result = -1;
@@ -511,9 +576,11 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
 
 static int console_ethercat_background_execute(const ethercat_background_args *command)
 {
+    ethercat_mit_mapping = command->task == ETHERCAT_TASK_MIT;
     switch (command->task) {
     case ETHERCAT_TASK_SCAN:
         return console_ethercat_scan(command->chinese, command->interface);
+    case ETHERCAT_TASK_MIT:
     case ETHERCAT_TASK_ENABLE:
     case ETHERCAT_TASK_POSITION:
     case ETHERCAT_TASK_POSITION_PP:
@@ -612,7 +679,7 @@ static int console_ethercat_background_submit_ex(ethercat_task task, bool chines
                                                  const char *cycle, uint8_t position_mode,
                                                  uint32_t profile_velocity,
                                                  uint32_t profile_acceleration,
-                                                 uint32_t profile_deceleration)
+                                                 uint32_t profile_deceleration, const float *mit_values)
 {
     ethercat_background_args command = {0};
     unsigned int slave_id;
@@ -627,6 +694,11 @@ static int console_ethercat_background_submit_ex(ethercat_task task, bool chines
           console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0)) ||
         hold_ms > ETHERCAT_KAIXUAN_ENABLE_MAX_HOLD_MS ||
         !isfinite(output_rad) ||
+        (task == ETHERCAT_TASK_MIT &&
+         (position_mode != 10u || fabs(output_rad) > FLT_MAX || mit_values == NULL ||
+          !isfinite(mit_values[0]) || !isfinite(mit_values[1]) ||
+          !isfinite(mit_values[2]) || !isfinite(mit_values[3]) ||
+          mit_values[2] < 0.0f || mit_values[3] < 0.0f)) ||
         (task == ETHERCAT_TASK_PN077 && value > 1u) ||
         (task == ETHERCAT_TASK_PNREAD && value > 9999u) ||
         ((task == ETHERCAT_TASK_ENABLE || task == ETHERCAT_TASK_POSITION ||
@@ -650,6 +722,10 @@ static int console_ethercat_background_submit_ex(ethercat_task task, bool chines
            "EtherLab is unavailable; install its development library and rebuild.");
     return -1;
 #endif
+    if (mit_values) {
+        command.mit_velocity=mit_values[0]; command.mit_torque=mit_values[1];
+        command.mit_kp=mit_values[2]; command.mit_kd=mit_values[3];
+    }
     command.task = task;
     command.output_context = console_output_get_context();
     command.chinese = chinese;
@@ -737,5 +813,5 @@ static int console_ethercat_background_submit(ethercat_task task, bool chinese,
 {
     return console_ethercat_background_submit_ex(
         task, chinese, interface, selection, hold_ms, output_rad, value,
-        shift, cycle, ETHERCAT_CIA402_MODE_CSP, 0u, 0u, 0u);
+        shift, cycle, ETHERCAT_CIA402_MODE_CSP, 0u, 0u, 0u, NULL);
 }
