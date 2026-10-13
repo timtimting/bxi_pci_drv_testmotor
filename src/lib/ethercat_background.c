@@ -131,10 +131,11 @@ static int console_ethercat_session_enable(const ethercat_background_args *comma
         if (!selected[slave]) continue;
         status = console_ethercat_read_u16(ec_slave[slave].inputs);
         control = console_ethercat_read_u16(ec_slave[slave].outputs);
-        if (console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u) != 0u ||
+        if (console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + (ethercat_mit_mapping ? 14u : 12u)) != 0u ||
             (ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL) return -1;
         if ((status & 0x006fu) == 0x0027u && control == 0x000fu) {
-            if (((uint8_t *)ec_slave[slave].outputs)[12] != command->position_mode) {
+            if (((uint8_t *)ec_slave[slave].outputs)[ethercat_mit_mapping ? 22 : 12] !=
+                (ethercat_mit_mapping ? ETHERCAT_CIA402_MODE_MIT : command->position_mode)) {
                 printf("[slave%d] %s\n", slave, command->chinese ?
                        "当前已使能但位置模式不同；请先执行 ethercat_disable 再切换模式。" :
                        "Drive is enabled in a different position mode; run ethercat_disable before switching modes.");
@@ -161,7 +162,7 @@ static int console_ethercat_session_enable(const ethercat_background_args *comma
                                                    command->profile_deceleration) != 0) {
         return -1;
     }
-    if (console_ethercat_selected_ready(to_enable, targets, command->position_mode) != 0) return -1;
+    if (console_ethercat_selected_ready(to_enable, targets, ethercat_mit_mapping ? ETHERCAT_CIA402_MODE_MIT : command->position_mode) != 0) return -1;
     control_word = 0x0006u;
     console_ethercat_set_control_word(to_enable, control_word);
     if (console_ethercat_wait_for_status(to_enable, 0x0021u) != 0) goto failed;
@@ -179,8 +180,8 @@ enabled:
             console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
     }
     printf("%s\n", command->chinese ?
-           "ethercat_enable: 已确认使能，复用后台主站。" :
-           "ethercat_enable: operation-enabled confirmed on the existing master.");
+           "ethercat_enable: 已确认使能，复用后台 PDO 主站。" :
+           "ethercat_enable: operation-enabled confirmed on the existing PDO master.");
     return 0;
 
 failed:
@@ -191,7 +192,7 @@ failed:
         if (!to_enable[slave]) continue;
         printf("[slave%d] SW=0x%04x PDO_error=0x%04x\n", slave,
                console_ethercat_read_u16(ec_slave[slave].inputs),
-               console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 12u));
+               console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + (ethercat_mit_mapping ? 14u : 12u)));
     }
     console_ethercat_session_disable(to_enable);
     return -1;
@@ -200,6 +201,38 @@ failed:
 static int console_ethercat_session_position(const ethercat_background_args *command,
                                             const uint8_t selected[EC_MAXSLAVE])
 {
+    if (ethercat_mit_mapping) {
+        int slave;
+        if (!isfinite(command->output_rad) || fabs(command->output_rad) > FLT_MAX) return -1;
+        for (slave = 1; slave <= ec_slavecount; ++slave) {
+            if (!selected[slave]) continue;
+            const uint8_t *out = ec_slave[slave].outputs;
+            const uint8_t *in = ec_slave[slave].inputs;
+            if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
+                console_ethercat_read_u16(out) != 0x000fu ||
+                (console_ethercat_read_u16(in) & 0x006fu) != 0x0027u ||
+                console_ethercat_read_u16(in + 14u) != 0u ||
+                out[22] != ETHERCAT_CIA402_MODE_MIT ||
+                console_ethercat_read_float(out + 14u) <= 0.0f) {
+                printf("[slave%d] ethercat_position: %s\n", slave, command->chinese ?
+                       "要求 MIT 已使能且 KP>0；请先用 mit 设置位置增益。" :
+                       "Requires enabled MIT and KP>0; set position gains with mit first.");
+                return -1;
+            }
+        }
+        for (slave = 1; slave <= ec_slavecount; ++slave) {
+            if (!selected[slave]) continue;
+            console_ethercat_write_float((uint8_t *)ec_slave[slave].outputs + 2u,
+                                          (float)command->output_rad);
+            ethercat_session.motion_context[slave] = command->output_context;
+            ethercat_session.disable_at_us[slave] = command->hold_ms == 0u ? 0u :
+                console_ethercat_monotonic_us() + (uint64_t)command->hold_ms * 1000u;
+        }
+        if (console_ethercat_mailbox_cycle() != 0) return -1;
+        printf("ethercat_position: MIT PDO target_output_rad=%.6f; KP/KD/velocity/tff retained\n",
+               command->output_rad);
+        return 0;
+    }
     int32_t targets[EC_MAXSLAVE] = {0};
     int16_t ratios[EC_MAXSLAVE] = {0};
     int slave;
@@ -403,10 +436,10 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
         return -1;
     }
     if ((command->task == ETHERCAT_TASK_MIT && !ethercat_mit_mapping) ||
-        (ethercat_mit_mapping && (command->task == ETHERCAT_TASK_ENABLE ||
-         command->task == ETHERCAT_TASK_POSITION || command->task == ETHERCAT_TASK_POSITION_PP ||
-         command->task == ETHERCAT_TASK_ZERO))) {
-        printf("PDO mapping differs; exit console and start the desired control mode first.\n");
+        (ethercat_mit_mapping && command->task == ETHERCAT_TASK_POSITION_PP)) {
+        printf("%s\n", command->chinese ?
+               "PP/CSP 与 MIT PDO 格式不同；请退出后直接启动所需模式。" :
+               "PP/CSP and MIT PDO layouts differ; restart with the desired mode.");
         return -1;
     }
     if (command->task == ETHERCAT_TASK_SCAN)
@@ -577,8 +610,8 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
 
 static int console_ethercat_background_execute(const ethercat_background_args *command)
 {
-    ethercat_mit_mapping = command->task == ETHERCAT_TASK_MIT ||
-                           command->task == ETHERCAT_TASK_SCAN;
+    /* All ordinary background sessions share MIT PDOs; PP is explicit opt-in. */
+    ethercat_mit_mapping = command->task != ETHERCAT_TASK_POSITION_PP;
     switch (command->task) {
     case ETHERCAT_TASK_SCAN:
         return console_ethercat_scan(command->chinese, command->interface);
@@ -590,7 +623,7 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
                                         command->hold_ms,
                                         command->has_sync0_shift ? command->sync0_shift : NULL,
                                         command->has_sync0_cycle_ms ? command->sync0_cycle_ms : NULL,
-                                        command->position_mode,
+                                        ethercat_mit_mapping ? ETHERCAT_CIA402_MODE_MIT : command->position_mode,
                                         command->profile_velocity,
                                         command->profile_acceleration,
                                         command->profile_deceleration);

@@ -2753,9 +2753,15 @@ static int console_ethercat_enable(bool chinese,
         chinese ? "收尾与实时快照" : "finalization and live snapshot", stage_started_us);
     console_ethercat_log_enable_stage(chinese,
         chinese ? "使能初始化总计" : "enable initialization total", enable_started_us);
+    if (ethercat_mit_mapping) {
+        printf("%s\n", chinese ?
+               "ethercat_enable: MIT PDO 已使能，KP/KD/前馈为零；用 mit 设置控制参数，ethercat_disable 停止。" :
+               "ethercat_enable: MIT PDO enabled with zero KP/KD/feedforward; set parameters with mit, stop with ethercat_disable.");
+    } else {
     printf("%s\n", chinese ?
            "ethercat_enable: 已使能并保持当前位置；可用 ethercat_disable 停止，Ctrl-C 也会自动失能。" :
            "ethercat_enable: enabled and holding current positions; use ethercat_disable to stop, or Ctrl-C to disable on exit.");
+    }
     if (ethercat_background_owner) {
         failure_stage = "background-pdo-session";
         memcpy(ethercat_session.configured, configured, sizeof(configured));

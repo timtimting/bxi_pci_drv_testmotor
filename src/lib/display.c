@@ -124,13 +124,13 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  ethercat_scan [network_interface]\n");
         printf("      交互扫描预热 MIT PDO/DC 并保持失能，随后可直接执行 mit；独立 --ethercat-scan 仍只读。\n");
         printf("  ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=<0.5|1|2|4|5|8>] [network_interface]\n");
-        printf("      默认周期 1ms、shift=0；交互模式下循环在后台运行并返回提示符，hold_ms 到期自动失能。\n");
+        printf("      交互默认 MIT PDO（mode=10）、1ms、shift=0；使能时 KP/KD/tff 为零，hold_ms 到期自动失能。\n");
         printf("      所有交互 EtherCAT 命令提交同一后台队列；提交不等于成功，请等待后台结果。\n");
         printf("      查询/位置命令复用已有主站；周期可设 0.5/1/2/4/5/8ms，运行中不能修改周期/shift。\n");
         printf("  ethercat_disable <slave_id|all> [network_interface]\n");
         printf("      后台发送 0x0000 并确认失能，保留 OP/PDO；Ctrl-C、power_off 或退出终端释放主站。\n");
         printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
-        printf("      CSP 位控（0x6060=8），默认周期 1ms；output_rad 为输出端绝对弧度，按各从站 Pn051 换算，省略 hold_ms 时持续控制，Ctrl-C 失能。\n");
+        printf("      交互模式更新 MIT PDO 浮点位置，不按 Pn051 换算；先用 mit 设置 KP>0，更新位置保留 KP/KD/速度/前馈。\n");
         printf("      已有会话直接更新目标，不重新使能；正数 hold_ms 到期只失能，保留后台主站。\n");
         printf("  mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
         printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");
@@ -247,7 +247,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  ethercat_disable <slave_id|all> [network_interface]\n");
     printf("      Confirm selected slaves disabled, keeping OP/PDO active; Ctrl-C, power_off or exit releases the master.\n");
     printf("  ethercat_position <slave_id|all> <output_rad> [hold_ms] [network_interface]\n");
-    printf("      CSP control (0x6060=8) at a default 1ms cycle; output_rad is an absolute output-side angle converted with each slave's Pn051. Omit hold_ms to control until Ctrl-C.\n");
+    printf("      Interactive MIT PDO position update: output-side float rad, no Pn051 conversion. Set KP>0 with mit first; retains KP/KD/velocity/tff.\n");
     printf("      Update targets without re-enabling; positive hold_ms disables at expiry but retains the background master.\n");
     printf("  mit <slave_id|all> <pos_rad> <vel_rad_s> <tff_Nm> <kp> <kd> [hold_ms] [network_interface]\n");
     printf("  ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_accel] [profile_decel] [hold_ms] [network_interface]\n");

@@ -244,7 +244,7 @@ info <slave_id|all> [network_interface]
 MIT 会话以 `0x6060=10` 和专用 PDO（输出 23 字节、输入 16 字节）启动，目标对象为
 `0x4010..0x4014`，反馈对象为 `0x4000..0x4002`。位置不再通过 Pn051 换算。
 首次使用时，可先执行 `ethercat_scan` 预热 MIT 会话，再执行 `mit`；也可直接执行 `mit`。
-如果已通过 CSP 或 PP 命令建立了后台会话，请退出终端再启动 MIT。MIT 与 CSP/PP 之间切换也需要退出重启终端。
+如果已通过显式 PP 命令建立了后台会话，请退出终端再启动 MIT。默认交互扫描、使能和位置更新统一使用 MIT PDO；显式 PP 会话仍使用独立位置 PDO 格式，切换需要退出重启终端。
 同一 MIT 会话内可以更新目标、失能、再次执行 MIT 使能，退出或 Ctrl-C 会失能。
 所有开璇从站使用该会话的 PDO 格式，只有选中的从站接收使能和目标。
 
@@ -288,10 +288,11 @@ ethercat_disable all
 
 分别观察目标从站的 CW/SW、反馈和定时失能，另一台应保持失能。
 之后再在目标和标定参数合适时测试 `mit all`。扫描预热后的 MIT 会话可直接使用以上命令；
-若要改用 CSP/PP，请退出终端并以 CSP/PP 命令重新建立会话。若 PRE-OP/SAFE-OP 失败，保留程序输出以及
+若要改用显式 PP，请退出终端并以 PP 命令重新建立会话。若 PRE-OP/SAFE-OP 失败，保留程序输出以及
 `sudo dmesg -T | tail -n 100` 中的 EtherCAT 日志后再排查。
 
-多从站地址与等待预算回归测试（依赖 EtherLab 开发库）可运行：
+多从站地址与等待预算回归测试（依赖 EtherLab 开发库）可运行；将下方源文件换为
+`tests/ethercat_mit_session_test.c` 可验证 MIT 使能、位置更新及多从站失能：
 
 ```sh
 cc -DHAVE_ETHERLAB=1 -Isrc -Isrc/lib -Ilib -ffunction-sections -fdata-sections \
@@ -339,9 +340,9 @@ sudo ./build/motor_console --ethercat-enable enp86s0 1 sync0_cycle_ms=0.5
 
 交互终端同样可输入 `ethercat_enable 1 sync0_cycle_ms=0.5`。所有交互式 `ethercat_*` 命令进入同一个后台队列，提交后立即返回提示符；“已提交”不等于执行成功，请等待后台结果。命令按提交顺序执行，最多等待 16 条，队列满时拒绝新命令。参数错误、从站或网卡不匹配不会停止已有主站。
 
-尚无周期会话时，首次使能会打印各阶段耗时（毫秒）和初始化总耗时，包括主站申请、从站发现、PDO/DC 配置、SDO 快照、主站激活、SAFE-OP 等待、PDO/WKC、OP 及 CiA402 使能。等待 SAFE-OP 时约每秒输出主站响应数、链路状态及各从站的 EtherCAT AL 状态；这能区分主站激活耗时与状态等待，但不能进一步显示 EtherLab 内核配置状态机的内部步骤。`7s` 是等待超时上限，不是固定延时。已运行的后台主站上再次执行 `ethercat_enable` 不重走这些初始化阶段。
+尚无周期会话时，首次使能会打印各阶段耗时（毫秒）和初始化总耗时，包括主站申请、从站发现、PDO/DC 配置、SDO 快照、主站激活、SAFE-OP 等待、PDO/WKC、OP 及 CiA402 使能。等待 SAFE-OP 时约每秒输出主站响应数、链路状态及各从站的 EtherCAT AL 状态；这能区分主站激活耗时与状态等待，但不能进一步显示 EtherLab 内核配置状态机的内部步骤。SAFE-OP 按每台 7 秒分配等待预算，最多 60 秒，并非固定延时。已运行的后台主站上再次执行 `ethercat_enable` 不重走这些初始化阶段。
 
-使能成功后，后台持续交换 PDO。`ethercat_position` 接收绝对输出端角度，按各从站 Pn051 换算后更新原循环的电机端目标；Pn051 无效、目标超出计数范围、未使能或有故障时拒绝更新。首次执行位置命令且尚无周期会话时，先后台使能并保持当前位置，再提交目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。
+交互使能、扫描默认统一建立 MIT PDO 会话（mode=10），首次使能使用当前输出端位置、零速度、零前馈和零 KP/KD；此时不会保持位置。重复使能已使能从站时保留原控制参数；重新使能失能从站会恢复零增益。使能成功后，后台持续交换 PDO。`ethercat_position` 接收绝对输出端弧度，直接更新浮点位置并保留 KP/KD、速度和前馈，不按 Pn051 换算；必须先通过 `mit` 设置 KP>0。未使能、零 KP 或有故障时拒绝更新目标。位置是阶跃目标，不是限速轨迹。`ethercat_disable` 只失能指定从站，保留主站和 PDO；随后可以重新 `ethercat_enable`，不会重开主站。`enable`/`position` 的 `hold_ms` 沿用定时失能语义：正数到期后发送失能但不关闭主站，省略或为 0 则持续保持到显式失能；新命令覆盖所选从站的保持期限。
 
 `ethercat_scan` 在周期会话中显示已有拓扑和最新状态，不重新扫描；`ethercat_info` 显示会话初始化时缓存的 SDO 配置及最新 PDO，查询未缓存的从站直接拒绝。`ethercat_pnread` 使用异步 SDO 请求，等待响应时继续 PDO 通信。每次请求有超时，失败或仍忙时不会重用在途请求。设零、参数写入及保存命令在会话中要求目标从站已确认失能，请先执行 `ethercat_disable`，不会自动失能其他电机；保存参数的 100ms 等待期间也继续交换 PDO。Pn028/044/106/107 写入回读后更新 `motion snapshot`，其他 SDO 配置仍为使能前快照；最新参数值可用 `ethercat_pnread` 查看。尚无周期会话时，交互扫描会预热 PDO 并保持失能；只读 `ethercat_info` 仍不会自动启动 PDO 或使能。
 
@@ -370,6 +371,22 @@ sudo ./build/motor_console --ethercat-disable enp86s0 all
 ```
 
 交互模式下 `ethercat_disable <slave_id|all>` 提交后台失能请求，执行后确认所选从站的 CiA-402 失能状态，其他从站不受影响。已有周期会话保留 OP 和 PDO 通信；要释放 EtherLab master 请退出终端或执行 `power_off`。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
+
+交互 MIT PDO 推荐流程：
+
+```text
+ethercat_scan
+ethercat_enable all
+info all
+# 设置目标和增益，实际目标需按机构选择：
+mit 1 0 0 0 50 10
+ethercat_position 1 0.01 1000
+ethercat_disable all
+```
+
+扫描后的 `ethercat_enable` 复用 MIT 主站，不再因 CSP/MIT PDO 格式不同而拒绝。
+`ethercat_zero` 在 MIT 会话中仍要求失能，通过 SDO 执行 Pn101 校零。
+独立 CLI 位置控制及显式 PP 保留原 PDO 格式；SDO 配置参数不属于周期运动指令。
 
 ### EtherCAT CSP 位控
 
@@ -417,25 +434,17 @@ ethercat_position_pp <slave_id|all> <output_rad> <profile_velocity> [profile_acc
 
 ```text
 power_on
-# CSP/PP 示例：在新终端中直接建立位置模式会话，不先执行 MIT 扫描预热
+# 显式 PP 示例：在新终端中直接执行 PP，不先执行 MIT 扫描预热
 
-# CSP：先使能，再发送输出端目标
-ethercat_enable 1
-ethercat_position 1 0.01 1000
-ethercat_info 1
-
-# 切换到 PP：必须先失能；首次 PP 命令会写参数、重新进入 operation-enabled 并发送设定点
-ethercat_disable 1
+# PP 会自动使能，写入 profile 参数并发送目标
 ethercat_position_pp 1 0.02 1000 100 100 1000
 ethercat_info 1
 
 # PP 下发送第二个输出端目标，仍使用上一次已写入的 profile 参数
 ethercat_position_pp 1 0.01 1000
 
-# 切回 CSP：先失能，再由 enable 将模式恢复为 CSP
+# 结束 PP；回到默认 MIT 控制需要退出并重新启动终端
 ethercat_disable 1
-ethercat_enable 1
-ethercat_position 1 0.01 1000
 ```
 
 调试时以每条命令的后台结果为准：关注 `PP 设定点已确认`、`setpoint_ack=yes`，以及 `ethercat_info` 的实时 `SW`、实际输出端角度和目标输出端角度。`hold_ms` 到期只发送失能并保留后台 PDO 主站。
