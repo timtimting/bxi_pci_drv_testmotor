@@ -2299,12 +2299,14 @@ static int console_ethercat_prepare_scan_session(bool chinese)
                "ethercat_scan: master activation failed");
         goto cleanup;
     }
-    printf("%s\n", chinese ? "ethercat_scan: 正在等待 SAFE-OP，最长 7s" :
-           "ethercat_scan: waiting for SAFE-OP, up to 7s");
-    if ((ec_statecheck_with_progress(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE,
+    printf("%s %.1fs (slaves=%d)\n", chinese ? "ethercat_scan: 正在等待 SAFE-OP，最长" :
+           "ethercat_scan: waiting for SAFE-OP, up to",
+           etherlab_safe_op_timeout_us() / 1000000.0, ec_slavecount);
+    if ((ec_statecheck_with_progress(0, EC_STATE_SAFE_OP, etherlab_safe_op_timeout_us(),
                                      chinese, "ethercat_scan") & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_scan: 从站未进入 SAFE-OP" :
                "ethercat_scan: slaves did not reach SAFE-OP");
+        console_ethercat_print_scan_failure(configured);
         goto cleanup;
     }
     printf("%s\n", chinese ? "ethercat_scan: SAFE-OP 已确认；正在验证 PDO/WKC" :
@@ -2600,10 +2602,11 @@ static int console_ethercat_enable(bool chinese,
         goto cleanup;
     }
     failure_stage = "pre-op-to-safe-op";
-    printf("%s %ds\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
-           "ethercat_enable: waiting for SAFE-OP, up to", EC_TIMEOUTSTATE / 1000000);
+    printf("%s %.1fs (slaves=%d)\n", chinese ? "ethercat_enable: 正在等待 SAFE-OP，最长" :
+           "ethercat_enable: waiting for SAFE-OP, up to",
+           etherlab_safe_op_timeout_us() / 1000000.0, ec_slavecount);
     stage_result = ec_statecheck_with_progress(0, EC_STATE_SAFE_OP,
-                                               EC_TIMEOUTSTATE, chinese,
+                                               etherlab_safe_op_timeout_us(), chinese,
                                                "ethercat_enable");
     stage_started_us = console_ethercat_log_enable_stage(chinese,
         chinese ? "等待所有从站 SAFE-OP" : "all-slave SAFE-OP wait", stage_started_us);
@@ -2903,7 +2906,7 @@ static int console_ethercat_position_profile(bool chinese,
                "ethercat_position: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, etherlab_safe_op_timeout_us()) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_position: 从站未进入 SAFE-OP" :
                "ethercat_position: slaves did not reach SAFE-OP");
         goto cleanup;
@@ -3081,7 +3084,7 @@ static int console_ethercat_zero(bool chinese, const char *interface, const char
                "ethercat_zero: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP ||
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, etherlab_safe_op_timeout_us()) & 0x0fu) != EC_STATE_SAFE_OP ||
         console_ethercat_selected_ready(selected, zero_positions, ETHERCAT_CIA402_MODE_CSP) != 0 ||
         console_ethercat_wait_for_initial_pdo() != 0) {
         printf("%s\n", chinese ? "ethercat_zero: PDO 映射或 SAFE-OP 初始化失败" :
@@ -4155,7 +4158,7 @@ static int console_ethercat_disable(bool chinese,
                "ethercat_disable: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    if ((ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) & 0x0fu) != EC_STATE_SAFE_OP) {
+    if ((ec_statecheck(0, EC_STATE_SAFE_OP, etherlab_safe_op_timeout_us()) & 0x0fu) != EC_STATE_SAFE_OP) {
         printf("%s\n", chinese ? "ethercat_disable: 从站未进入 SAFE-OP" :
                "ethercat_disable: slaves did not reach SAFE-OP");
         goto cleanup;

@@ -269,6 +269,36 @@ ethercat_save 1
 成功后更新 `info` 缓存。命令不会自动使能或保存；写入失败时以后台结果和回读值为准。
 独立命令行也支持 `sudo ./build/motor_console --ethercat-pn082 enp86s0 1 10`。
 
+多电机测试时，先确认 `sudo ethercat slaves` 能看到全部从站。终端使用的从站编号为
+拓扑位置加一（1、2……），配置按绝对拓扑位置定位，不依赖 EEPROM alias。
+SAFE-OP 等待按每台 7 秒分配预算，最多 60 秒；两台等待 14 秒。等待期间保持 PDO/DC 通信。
+超时会打印每台 AL 状态、AL 状态码及 PDO 状态；SDO 读取失败会打印从站和对象地址。
+这些诊断用于区分配置、地址及同步问题，等待预算增加不代表硬件故障已排除。
+
+MIT 多电机测试可以在新终端中依次执行（零增益、零前馈不保持位置）：
+
+```text
+mit 1 0 0 0 0 0 1000
+info all
+mit 2 0 0 0 0 0 1000
+info all
+ethercat_disable all
+```
+
+分别观察目标从站的 CW/SW、反馈和定时失能，另一台应保持失能。
+之后再在目标和标定参数合适时测试 `mit all`。从 `ethercat_scan` 建立的 CSP 会话测试 MIT
+仍需退出终端重新启动。若 PRE-OP/SAFE-OP 失败，保留程序输出以及
+`sudo dmesg -T | tail -n 100` 中的 EtherCAT 日志后再排查。
+
+多从站地址与等待预算回归测试（依赖 EtherLab 开发库）可运行：
+
+```sh
+cc -DHAVE_ETHERLAB=1 -Isrc -Isrc/lib -Ilib -ffunction-sections -fdata-sections \
+  tests/ethercat_multislave_test.c src/lib/bxi_motor_comm.c lib/libbxi_pci_drv.a \
+  -Wl,--gc-sections -lethercat -lm -lpthread -o /tmp/ethercat_multislave_test
+/tmp/ethercat_multislave_test
+```
+
 原 CAN MIT 控制继续使用 `mit_set <index00> <pos> <torque> <vel> <kp> <kd>`；
 交互命令 `mit` 现在专用于开璇 EtherCAT，参数顺序按上述格式使用。
 

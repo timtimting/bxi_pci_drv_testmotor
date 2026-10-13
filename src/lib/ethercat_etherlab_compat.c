@@ -223,8 +223,9 @@ int ec_config_init(boolean use_table)
         ec_slave[slave].state = slave_info.al_state;
         ec_slave[slave].hasdc = slave_info.vendor_id == 0x00010203u &&
                                 slave_info.product_code == 0x00000402u;
+        /* Console IDs are absolute ring positions, regardless of EEPROM aliases. */
         etherlab_slaves[slave].config = ecrt_master_slave_config(
-            etherlab_master, slave_info.alias, (uint16_t)position,
+            etherlab_master, 0, (uint16_t)position,
             slave_info.vendor_id, slave_info.product_code);
         if (etherlab_slaves[slave].config == NULL) return 0;
         etherlab_slaves[slave].register_request =
@@ -366,6 +367,14 @@ static const char *etherlab_al_state_name(uint8_t state)
     }
 }
 
+/* EtherLab configures slaves in sequence; each DC sync check can take 5s. */
+static int etherlab_safe_op_timeout_us(void)
+{
+    unsigned int count = ec_slavecount > 0 ? (unsigned int)ec_slavecount : 1u;
+    uint64_t budget = (uint64_t)EC_TIMEOUTSTATE * count;
+    return (int)(budget > 60000000u ? 60000000u : budget);
+}
+
 static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout_us,
                                bool report_progress, bool chinese,
                                const char *command_name)
@@ -402,9 +411,11 @@ static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout
                        master_state.slaves_responding, ec_slavecount,
                        master_state.link_up ? "UP" : "DOWN");
                 for (candidate = 1; candidate <= ec_slavecount; ++candidate) {
-                    printf("  slave=%d AL=%s(0x%02x)\n", candidate,
+                    printf("  slave=%d AL=%s(0x%02x) online=%u operational=%u\n", candidate,
                            etherlab_al_state_name(ec_slave[candidate].state),
-                           (unsigned int)ec_slave[candidate].state);
+                           (unsigned int)ec_slave[candidate].state,
+                           etherlab_slaves[candidate].state.online,
+                           etherlab_slaves[candidate].state.operational);
                 }
                 next_progress_us = now + 1000000u;
             }
@@ -539,7 +550,12 @@ int ec_SDOread(uint16 slave, uint16 index, uint8 subindex, boolean complete_acce
     }
     result = ecrt_master_sdo_upload(etherlab_master, (uint16_t)(slave - 1), index,
         subindex, data, (size_t)*size, &actual, &abort_code);
-    if (result != 0 || actual > INT_MAX) return 0;
+    if (result != 0 || actual > INT_MAX) {
+        printf("SDO upload failed: slave=%u ring_position=%u object=0x%04x:%02x result=%d abort=0x%08x\n",
+               (unsigned int)slave, (unsigned int)(slave - 1), (unsigned int)index,
+               (unsigned int)subindex, result, (unsigned int)abort_code);
+        return 0;
+    }
     *size = (int)actual;
     return (int)actual;
 }
