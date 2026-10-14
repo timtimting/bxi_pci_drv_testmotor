@@ -1,4 +1,5 @@
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
@@ -35,6 +36,7 @@ public:
         bool pci = declare_parameter<bool>("init_pci", false);
         bool power = declare_parameter<bool>("auto_power_on", false);
         bool scan = declare_parameter<bool>("auto_scan", true);
+        auto_scan_ = scan;
         default_hold_ms_ = declare_parameter<int>("default_hold_ms", 1000);
         double feedback_hz = declare_parameter<double>("feedback_hz", 100.0);
         if (default_hold_ms_ < 1 || default_hold_ms_ > 60000 ||
@@ -112,6 +114,8 @@ private:
             c.duration_ms = default_hold_ms_;
         if (m.action == m.QUALITY && c.duration_ms == 0) c.duration_ms = 10000;
         int result = bxi_ros_command(&c);
+        if (result == 0 && m.action == m.POWER_ON && auto_scan_)
+            result = bxi_ros_scan();
         std_msgs::msg::String status;
         status.data = "action=" + std::to_string(m.action) + " slave=" + std::to_string(m.slave_id) +
             (result == 0 ? " accepted; see feedback/backend logs for execution" : " rejected");
@@ -120,6 +124,7 @@ private:
     void publish_states() {
         struct bxi_ros_state raw[255];
         size_t count = bxi_ros_feedback(raw, 255);
+        report_online(raw, count);
         bxi_motor_msgs::msg::MotorStateArray msg; msg.header.stamp = now();
         for (size_t i = 0; i < count; ++i) {
             const auto &s = raw[i]; bxi_motor_msgs::msg::MotorState m;
@@ -152,6 +157,28 @@ private:
         actuator_states_->publish(named);
 
     }
+    void report_online(const struct bxi_ros_state *raw, size_t count) {
+        std::unordered_set<uint16_t> online;
+        for (size_t i = 0; i < count; ++i)
+            if (raw[i].valid) online.insert(raw[i].slave_id);
+        if (online_reported_ && online == online_slaves_) return;
+        online_reported_ = true;
+        online_slaves_ = online;
+        RCLCPP_INFO(get_logger(), "PDO online slaves: %zu; configured arm motors: %zu (names follow configured ring order)",
+                    online.size(), joint_names_.size());
+        for (const auto &name : joint_names_) {
+            const auto id = name_to_slave_.at(name);
+            RCLCPP_INFO(get_logger(), "  slave=%u joint=%s %s", static_cast<unsigned>(id), name.c_str(),
+                        online.count(id) ? "ONLINE (valid PDO)" : "UNAVAILABLE (no valid PDO)");
+        }
+        for (auto id : online)
+            if (std::none_of(name_to_slave_.begin(), name_to_slave_.end(),
+                [id](const auto &entry) { return entry.second == id; }))
+                RCLCPP_WARN(get_logger(), "  slave=%u ONLINE but has no configured joint name", static_cast<unsigned>(id));
+    }
+    bool auto_scan_;
+    bool online_reported_ = false;
+    std::unordered_set<uint16_t> online_slaves_;
     bool ignore_unmapped_joints_;
     std::vector<std::string> joint_names_;
     std::unordered_map<std::string, uint16_t> name_to_slave_;

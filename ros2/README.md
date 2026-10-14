@@ -14,6 +14,10 @@ ros2 launch bxi_motor_control motors.launch.py interface:=enp86s0
 ```
 
 默认自动扫描并预热 MIT、保持失能，不初始化 PCI。电机需外部供电。
+扫描日志显示网口发现的从站总数；PDO 就绪后节点按配置列出每个关节的 ONLINE/UNAVAILABLE，
+并在在线集合变化时重新输出。ONLINE 表示有新鲜有效的 PDO 反馈，不代表伺服使能。
+关节名称按配置的串联顺序映射，不能从驱动身份自动识别机械关节；中间电机被移除时须核对映射。
+通过 POWER_ON 管理命令上电后，auto_scan=true 时也会自动提交扫描与 MIT 预热。
 需要 BXI 上下电时加 `init_pci:=true auto_power_on:=true`。运行用户需要 EtherLab/BXI 设备权限，
 launch 不自动调用 sudo。不能与 motor_console 或其他驱动同时占用同一 EtherCAT master。
 
