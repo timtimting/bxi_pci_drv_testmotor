@@ -1192,3 +1192,8 @@ flash_all config/flash_plan_debug.yaml
 | `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save/reg_info` 对单台电机的实际发送函数 |
 | `console_parse_register_type_arg` | `src/lib/control.c` | 解析用户输入的 `type`：int/bool/float/uint/version 或 0..4 |
 | `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按用户指定类型转成 32 位 raw value |
+
+## ROS 2 版本
+
+ROS 2 Humble 启动及话题控制见 [ros2/README.md](ros2/README.md)。节点复用 1 kHz MIT PDO 后台，
+提供类型化命令和电机反馈，默认扫描预热后保持失能。

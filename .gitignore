@@ -3,3 +3,8 @@ build
 .*
 
 !.gitignore
+
+__pycache__/
+*.pyc
+install/
+log/

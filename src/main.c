@@ -67,6 +67,7 @@ static const char *const console_command_words[] = {
 #include "lib/debug.c"
 #include "lib/terminal.c"
 
+#ifndef MOTOR_CONSOLE_EMBEDDED
 int main(int argc, char **argv)
 {
     char resolved_config_path[PATH_LEN];
@@ -546,3 +547,5 @@ int main(int argc, char **argv)
     }
     return ret == 0 ? 0 : 1;
 }
+
+#endif /* MOTOR_CONSOLE_EMBEDDED */

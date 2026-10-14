@@ -1,0 +1,17 @@
+uint16 slave_id
+bool valid
+float64 sample_age_ms
+uint16 status_word
+uint16 control_word
+uint16 error_code
+uint8 mode
+float32 position
+float32 velocity
+float32 torque
+float32 target_position
+float32 target_velocity
+float32 target_torque
+float32 kp
+float32 kd
+bool pn082_valid
+int16 pn082
