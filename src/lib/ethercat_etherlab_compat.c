@@ -115,7 +115,15 @@ static int etherlab_interface_matches_master(const char *interface)
         if (configured_devices[index] >= 'A' && configured_devices[index] <= 'F')
             configured_devices[index] = (char)(configured_devices[index] - 'A' + 'a');
     }
-    return strstr(configured_devices, mac_address) != NULL;
+    /* main_devices is ordered by master index; never request master 0
+     * merely because this interface belongs to some configured master. */
+    char *saveptr = NULL;
+    unsigned int master_index = 0;
+    for (char *device = strtok_r(configured_devices, ",; \t\r\n", &saveptr);
+         device != NULL; device = strtok_r(NULL, ",; \t\r\n", &saveptr), ++master_index) {
+        if (strcmp(device, mac_address) == 0) return (int)master_index + 1;
+    }
+    return 0;
 }
 
 static void etherlab_update_slave_states(void)
@@ -175,8 +183,9 @@ static void etherlab_set_application_time(void)
 
 int ec_init(char *interface)
 {
-    if (interface == NULL || etherlab_interface_matches_master(interface) == 0) return 0;
-    etherlab_master = ecrt_request_master(0);
+    int matching_master = interface == NULL ? 0 : etherlab_interface_matches_master(interface);
+    if (matching_master == 0) return 0;
+    etherlab_master = ecrt_request_master((unsigned int)(matching_master - 1));
     if (etherlab_master == NULL) return 0;
     memset(ec_slave, 0, sizeof(ec_slave));
     memset(etherlab_slaves, 0, sizeof(etherlab_slaves));

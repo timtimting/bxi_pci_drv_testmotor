@@ -23,6 +23,36 @@ launch 不自动调用 sudo。不能与 motor_console 或其他驱动同时占�
 
 ## 名称映射
 
+### 双网卡、双臂独立链
+
+运行机器的 EtherLab 配置（通常 `/etc/ethercat.conf`）需设置两个主站，修改和重启服务前停止电机控制：
+
+```sh
+MASTER0_DEVICE="48:21:0b:72:f7:70"
+MASTER1_DEVICE="6c:1f:f7:c5:03:f3"
+```
+
+重启 EtherCAT 服务后，在电机供电时用 `ethercat master -m 0` 和 `ethercat master -m 1`
+核对设备绑定及链路。网卡应由现有 EtherLab 驱动配置支持，尤其新 USB 网卡需核对 generic 驱动支持。
+仅插入网卡或修改 ROS interface 参数不会自动创建第二个主站。
+
+```bash
+ros2 launch bxi_motor_control dual_arms.launch.py \
+  left_interface:=enp86s0 right_interface:=enx6c1ff7c503f3
+```
+
+左臂旧网卡、右臂新网卡，两条链各自使用从站 1..7（肩 Y/X/Z、肘 Y、腕 X/Y/Z）。
+两个独立进程各自目标 1kHz PDO，左节点负责 PCI 上下电；左侧预热完成后才启动右节点。
+任何节点退出会关闭整个 launch。外部供电时设置 `init_pci:=false auto_power_on:=false`。
+两侧接收同一个 `/hardware/actuators_cmds`，按 l_/r_ 名称选择各自关节。
+跨两条链的更新不保证同步或同时成功，无法保证跨主站原子更新。
+
+反馈分别发布 `/hardware/left/actuator_states` 和 `/hardware/right/actuator_states`，
+本启动方式暂不合并为单个 14 电机反馈消息。管理和诊断话题分别位于
+`/left_motor_control/command`、`/right_motor_control/command` 及各自的 `states`、`command_status`。
+管理命令的 slave_id 是各自链的本地编号，0 表示该链全部电机；电源命令只发送到左节点。
+不要在运行时单独给左节点 POWER_OFF 后继续控制右链，停止整个 launch 可统一释放主站和下电。
+
 编辑 `ros2/bxi_motor_control/config/joints.yaml`，重新构建安装配置；也可通过启动参数
 `joints_file:=/绝对路径/joints.yaml` 使用外部文件，无需重新构建。
 
