@@ -857,6 +857,8 @@ static void print_boot_terminal_output(flash_state *state,
 {
     unsigned int i;
 
+    (void)can_id; /* Boot terminal payload does not use the CAN identifier. */
+
     for (i = 0u; i < len; i++) {
         unsigned char ch = data[i];
         size_t idx = entry->index;

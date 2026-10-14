@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.8)
+# Accept the legacy Python option used by existing ROS build instructions.
+if(DEFINED PYTHON_EXECUTABLE)
+  if(DEFINED Python3_EXECUTABLE AND NOT "${Python3_EXECUTABLE}" STREQUAL "${PYTHON_EXECUTABLE}")
+    message(FATAL_ERROR "PYTHON_EXECUTABLE and Python3_EXECUTABLE must select the same interpreter")
+  endif()
+  set(Python3_EXECUTABLE "${PYTHON_EXECUTABLE}")
+endif()
 project(bxi_motor_control LANGUAGES C CXX)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)

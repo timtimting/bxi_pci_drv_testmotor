@@ -487,7 +487,7 @@ int ec_writestate(uint16 slave)
 int ec_FPRD(uint16 configadr, uint16 reg, uint16 length, void *data, int timeout_us)
 {
     ec_reg_request_t *request;
-    unsigned int slave = configadr;
+    int slave = (int)configadr;
     unsigned int attempt;
     (void)timeout_us;
     if (etherlab_master == NULL || slave == 0 || slave > ec_slavecount ||
