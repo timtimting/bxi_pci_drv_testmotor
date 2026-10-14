@@ -32,6 +32,8 @@ int bxi_ros_init(const char *config, const char *interface, int init_pci)
 
 int bxi_ros_scan(void)
 {
+    if (!ros_initialized) return -1;
+    console_output_begin_command();
     return console_ethercat_background_submit(ETHERCAT_TASK_SCAN, false,
         ros_interface, "all", 0, 0, 0, NULL, NULL);
 }
@@ -39,6 +41,7 @@ int bxi_ros_scan(void)
 int bxi_ros_command(const struct bxi_ros_command *command)
 {
     if (!ros_initialized || !command || command->slave_id >= EC_MAXSLAVE) return -1;
+    console_output_begin_command();
     char selection[16];
     if (command->slave_id) snprintf(selection, sizeof(selection), "%u", command->slave_id);
     else snprintf(selection, sizeof(selection), "all");

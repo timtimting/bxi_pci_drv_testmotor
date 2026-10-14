@@ -6,8 +6,17 @@ int main(void)
     assert(bxi_ros_init("config/motor_console.yaml", "enp86s0", 0) == 0);
     struct bxi_ros_command command = {.action = 255};
     assert(bxi_ros_command(&command) == -1);
+    console_output_context context = console_output_get_context();
+    assert(context.sequence != 0); /* ROS calls must carry a notification/log ID. */
+    ethercat_scan_wait_sequence = context.sequence;
+    ethercat_scan_wait_done = false;
+    console_ethercat_scan_notify(0);
+    assert(ethercat_scan_wait_done && ethercat_scan_wait_result == 0);
+    ethercat_scan_wait_sequence = 0;
+    ethercat_scan_wait_done = false;
     command.action = 7;
     assert(bxi_ros_command(&command) == -1); /* No PCI access unless enabled. */
+    assert(console_output_get_context().sequence > context.sequence);
     command.action = 3; command.slave_id = 256;
     assert(bxi_ros_command(&command) == -1);
     command.slave_id = 1; command.position = NAN;
