@@ -10,13 +10,13 @@
 #include <assert.h>
 
 
-static uint8_t domain_data[78];
+static uint8_t domain_data[14 * 39];
 int ecrt_master_activate(ec_master_t *m) { (void)m; return 0; }
 uint8_t *ecrt_domain_data(const ec_domain_t *d) { (void)d; return domain_data; }
 int ecrt_master_receive(ec_master_t *m) { (void)m; return 0; }
 int ecrt_domain_process(ec_domain_t *d) { (void)d; return 0; }
 int ecrt_domain_state(const ec_domain_t *d, ec_domain_state_t *s) {
-    (void)d; s->working_counter = 6; return 0;
+    (void)d; s->working_counter = (unsigned int)ec_slavecount * 3; return 0;
 }
 int ecrt_slave_config_state(const ec_slave_config_t *c, ec_slave_config_state_t *s) {
     (void)c; memset(s, 0, sizeof(*s)); s->al_state = EC_STATE_OPERATIONAL;
@@ -94,6 +94,27 @@ int main(void) {
     cmd.task = ETHERCAT_TASK_DISABLE;
     assert(console_ethercat_session_command(&cmd) == 0);
     assert(console_ethercat_read_u16(out) == 0 && console_ethercat_read_u16(ec_slave[2].outputs) == 0);
+    cmd.task = ETHERCAT_TASK_MIT_BATCH; cmd.batch_count = 2; cmd.hold_ms = 1000;
+    cmd.batch[0] = (ethercat_mit_target){1, 0.25f, 0.5f, 1.0f, 50.5f, 10.25f};
+    cmd.batch[1] = (ethercat_mit_target){2, -0.5f, -0.25f, 2.0f, 20.5f, 3.25f};
+    assert(console_ethercat_session_command(&cmd) == 0);
+    assert(console_ethercat_read_float(out + 2) == 0.25f);
+    assert(console_ethercat_read_float((uint8_t *)ec_slave[2].outputs + 2) == -0.5f);
+    assert(console_ethercat_read_float((uint8_t *)ec_slave[2].outputs + 14) == 20.5f);
+    cmd.batch[0].position = 0.75f; cmd.batch[1].kp = NAN;
+    assert(console_ethercat_session_command(&cmd) == -1);
+    assert(console_ethercat_read_float(out + 2) == 0.25f); /* Whole invalid frame rejected. */
+    cmd.batch[1].kp = 20.5f; cmd.batch[1].slave_id = 1;
+    assert(console_ethercat_session_command(&cmd) == -1);
+    assert(console_ethercat_read_float(out + 2) == 0.25f);
+    cmd.batch[1].slave_id = 2;
+    console_ethercat_write_u16(ec_slave[2].inputs, 0x0008); /* One drive faults. */
+    assert(console_ethercat_session_mit(&cmd, (uint8_t[EC_MAXSLAVE]){[1]=1,[2]=1}) == -1);
+    assert(console_ethercat_read_float(out + 2) == 0.25f);
+    cmd.task = ETHERCAT_TASK_DISABLE;
+    assert(console_ethercat_session_command(&cmd) == 0);
+    cmd.batch_count = 0;
+    puts("PASS: two-motor batch parameters, duplicate/invalid frame rejection and no partial target changes");
     uint8_t saved_outputs[2][23];
     memcpy(saved_outputs[0], ec_slave[1].outputs, 23);
     memcpy(saved_outputs[1], ec_slave[2].outputs, 23);
@@ -150,6 +171,34 @@ int main(void) {
     assert(ethercat_skipped_cycles > skipped_before);
     assert(console_ethercat_background_submit_ex(ETHERCAT_TASK_ENABLE, false, "enp86s0", "1",
         0, 0, 0, NULL, "0.5", ETHERCAT_CIA402_MODE_CSP, 0, 0, 0, NULL) == -1);
+    /* Full confirmed dual-arm frame: 14 independent targets in one PDO cycle. */
+    ec_slavecount = 14; ec_group[0].outputsWKC = 14; ec_group[0].inputsWKC = 14;
+    ethercat_expected_work_counter = 42;
+    cmd.task = ETHERCAT_TASK_MIT_BATCH; cmd.batch_count = 14; cmd.hold_ms = 1000;
+    for (int slave = 1; slave <= 14; ++slave) {
+        ethercat_session.configured[slave] = 1;
+        etherlab_slaves[slave].config = (ec_slave_config_t *)1;
+        etherlab_slaves[slave].output_offset = (slave - 1) * 39;
+        ec_slave[slave].outputs = etherlab_slaves[slave].output_shadow;
+        memset(ec_slave[slave].outputs, 0, 23);
+        ec_slave[slave].inputs = domain_data + (slave - 1) * 39 + 23;
+        memset(ec_slave[slave].inputs, 0, 16);
+        ec_slave[slave].state = EC_STATE_OPERATIONAL;
+        ec_slave[slave].Obits = 184; ec_slave[slave].Ibits = 128;
+        console_ethercat_write_u16(ec_slave[slave].inputs, 0x40);
+        cmd.batch[slave - 1] = (ethercat_mit_target){slave, slave * 0.01f, 0, slave * 0.1f, slave * 1.0f, 0.5f};
+    }
+    assert(console_ethercat_session_command(&cmd) == 0);
+    for (int slave = 1; slave <= 14; ++slave) {
+        const uint8_t *target = ec_slave[slave].outputs;
+        assert(console_ethercat_read_u16(target) == 15 && target[22] == 10);
+        assert(console_ethercat_read_float(target + 2) == slave * 0.01f);
+        assert(console_ethercat_read_float(target + 10) == slave * 0.1f);
+        assert(console_ethercat_read_float(target + 14) == slave * 1.0f);
+    }
+    cmd.task = ETHERCAT_TASK_DISABLE; strcpy(cmd.selection, "all");
+    assert(console_ethercat_session_command(&cmd) == 0);
+    puts("PASS: 14-motor dual-arm frame and disable-all, expected WKC=42");
     puts("PASS: fixed 1ms background grid, scheduling skips, WKC loss metrics and communication after test");
     puts("PASS: communication quality duration, interval/jitter counters, failure reporting and unchanged PDO targets");
     puts("PASS: MIT PDO enable, repeated enable preserves gains, float position updates, two-slave isolation and disable-all");

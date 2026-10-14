@@ -5,6 +5,7 @@
   <maintainer email="timtimting@users.noreply.github.com">Tim</maintainer>
   <license>LicenseRef-Proprietary</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>communication</depend>
   <depend>rclcpp</depend><depend>bxi_motor_msgs</depend><depend>std_msgs</depend>
   <exec_depend>launch_ros</exec_depend><exec_depend>ament_index_python</exec_depend>
   <export><build_type>ament_cmake</build_type></export>

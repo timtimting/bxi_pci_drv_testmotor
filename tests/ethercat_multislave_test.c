@@ -27,7 +27,8 @@ int main(void) {
  ec_slavecount=1; assert(etherlab_safe_op_timeout_us()==7000000);
  ec_slavecount=2; assert(etherlab_safe_op_timeout_us()==14000000);
  ec_slavecount=3; assert(etherlab_safe_op_timeout_us()==21000000);
- ec_slavecount=255; assert(etherlab_safe_op_timeout_us()==60000000);
+ ec_slavecount=14; assert(etherlab_safe_op_timeout_us()==98000000);
+ ec_slavecount=255; assert(etherlab_safe_op_timeout_us()==120000000);
  assert(ec_config_init(FALSE)==2); assert(config_calls==2);
  assert(etherlab_slaves[1].config != etherlab_slaves[2].config);
  uint8_t outputs[2][23], inputs[2][16] = {{0}};

@@ -372,7 +372,7 @@ static int etherlab_safe_op_timeout_us(void)
 {
     unsigned int count = ec_slavecount > 0 ? (unsigned int)ec_slavecount : 1u;
     uint64_t budget = (uint64_t)EC_TIMEOUTSTATE * count;
-    return (int)(budget > 60000000u ? 60000000u : budget);
+    return (int)(budget > 120000000u ? 120000000u : budget);
 }
 
 static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout_us,

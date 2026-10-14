@@ -68,6 +68,45 @@ int bxi_ros_command(const struct bxi_ros_command *command)
         selection, duration, 0, value, NULL, NULL);
 }
 
+int bxi_ros_batch(const struct bxi_ros_command *commands, size_t count, uint32_t duration_ms)
+{
+    if (!ros_initialized || !commands || count == 0 || count > ETHERCAT_MIT_BATCH_MAX ||
+        duration_ms == 0 || duration_ms > 60000) return -1;
+    ethercat_background_args frame = {0};
+    uint8_t seen[EC_MAXSLAVE] = {0};
+    for (size_t i = 0; i < count; ++i) {
+        const struct bxi_ros_command *c = &commands[i];
+        if (!c->slave_id || c->slave_id >= EC_MAXSLAVE || seen[c->slave_id] ||
+            !isfinite(c->position) || !isfinite(c->velocity) || !isfinite(c->torque) ||
+            !isfinite(c->kp) || !isfinite(c->kd) || c->kp < 0 || c->kd < 0) return -1;
+        seen[c->slave_id] = 1;
+        frame.batch[i] = (ethercat_mit_target){c->slave_id, c->position, c->velocity, c->torque, c->kp, c->kd};
+    }
+    console_output_begin_command();
+    frame.task = ETHERCAT_TASK_MIT_BATCH;
+    frame.output_context = console_output_get_context();
+    frame.hold_ms = duration_ms;
+    frame.batch_count = count;
+    snprintf(frame.interface, sizeof(frame.interface), "%s", ros_interface);
+    pthread_mutex_lock(&ethercat_background_mutex);
+    bool ready = ethercat_background_started && !ethercat_background_stop_requested &&
+                 !stop_requested && ethercat_command_count < ETHERCAT_COMMAND_QUEUE_SIZE;
+    uint64_t now = time_us();
+    for (size_t i = 0; ready && i < count; ++i) {
+        const ethercat_cached_slave *s = &ethercat_cached_slaves[commands[i].slave_id];
+        ready = s->valid && s->live_valid && s->obytes == 23 && s->ibytes == 16 &&
+                s->outputs[22] == ETHERCAT_CIA402_MODE_MIT &&
+                now >= s->live_timestamp_us && now - s->live_timestamp_us <= 100000;
+    }
+    if (ready) {
+        ethercat_command_queue[(ethercat_command_head + ethercat_command_count) % ETHERCAT_COMMAND_QUEUE_SIZE] = frame;
+        ethercat_command_count++;
+        pthread_cond_broadcast(&ethercat_background_condition);
+    }
+    pthread_mutex_unlock(&ethercat_background_mutex);
+    return ready ? 0 : -1;
+}
+
 size_t bxi_ros_feedback(struct bxi_ros_state *out, size_t capacity)
 {
     size_t count = 0;

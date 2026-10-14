@@ -36,7 +36,8 @@ typedef enum {
     ETHERCAT_TASK_PN044,
     ETHERCAT_TASK_MIT,
     ETHERCAT_TASK_PN082,
-    ETHERCAT_TASK_QUALITY
+    ETHERCAT_TASK_QUALITY,
+    ETHERCAT_TASK_MIT_BATCH
 } ethercat_task;
 
 typedef struct {
@@ -81,12 +82,20 @@ static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_nam
 }
 
 typedef struct {
+    unsigned int slave_id;
+    float position, velocity, torque, kp, kd;
+} ethercat_mit_target;
+#define ETHERCAT_MIT_BATCH_MAX 255u
+
+typedef struct {
     ethercat_task task;
     bool chinese;
     console_output_context output_context;
     unsigned int hold_ms;
     double output_rad;
     float mit_velocity, mit_torque, mit_kp, mit_kd;
+    size_t batch_count;
+    ethercat_mit_target batch[ETHERCAT_MIT_BATCH_MAX];
     unsigned int value;
     uint8_t position_mode;
     uint32_t profile_velocity;

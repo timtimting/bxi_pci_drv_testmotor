@@ -1,0 +1,22 @@
+bxi_motor_control:
+  ros__parameters:
+    # Confirmed ring order: left 1..7, right 8..14; shoulder Y/X/Z, elbow Y, wrist X/Y/Z.
+    joint_names:
+      - l_shoulder_y_joint
+      - l_shoulder_x_joint
+      - l_shoulder_z_joint
+      - l_elbow_y_joint
+      - l_wrist_x_joint
+      - l_wrist_y_joint
+      - l_wrist_z_joint
+      - r_shoulder_y_joint
+      - r_shoulder_x_joint
+      - r_shoulder_z_joint
+      - r_elbow_y_joint
+      - r_wrist_x_joint
+      - r_wrist_y_joint
+      - r_wrist_z_joint
+    slave_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    topic_prefix: /hardware/
+    # Accept full-body ELF3 command frames; only mapped arm joints are sent.
+    ignore_unmapped_joints: true

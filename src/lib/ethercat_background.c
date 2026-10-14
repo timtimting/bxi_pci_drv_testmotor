@@ -4,7 +4,7 @@ static const char *console_ethercat_task_name(ethercat_task task)
         "ethercat_scan", "ethercat_enable", "ethercat_disable",
         "ethercat_position", "ethercat_position_pp", "ethercat_zero", "ethercat_info",
         "ethercat_pnread", "ethercat_pn077", "ethercat_save",
-        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit", "ethercat_pn082", "ethercat_quality"
+        "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "mit", "ethercat_pn082", "ethercat_quality", "ethercat_mit_batch"
     };
     return names[task];
 }
@@ -381,6 +381,13 @@ static int console_ethercat_set_control_word_and_wait(const uint8_t selected[EC_
     return console_ethercat_wait_for_status(selected, state);
 }
 
+static const ethercat_mit_target *console_ethercat_batch_target(const ethercat_background_args *command, int slave)
+{
+    for (size_t i = 0; i < command->batch_count; ++i)
+        if (command->batch[i].slave_id == (unsigned int)slave) return &command->batch[i];
+    return NULL;
+}
+
 static int console_ethercat_session_mit(const ethercat_background_args *command,
                                        const uint8_t selected[EC_MAXSLAVE])
 {
@@ -390,7 +397,8 @@ static int console_ethercat_session_mit(const ethercat_background_args *command,
     for (slave=1; slave<=ec_slavecount; ++slave) {
         if (!selected[slave]) continue;
         uint16_t status = console_ethercat_read_u16(ec_slave[slave].inputs) & 0x006fu;
-        if ((status != 0x0027u && status != 0x0040u) ||
+        if ((ec_slave[slave].state & 0x0fu) != EC_STATE_OPERATIONAL ||
+            (status != 0x0027u && status != 0x0040u) ||
             console_ethercat_read_u16((uint8_t *)ec_slave[slave].inputs + 14u) != 0u) {
             printf("mit: slave%d state invalid; use ethercat_disable and resolve fault first\n", slave);
             return -1;
@@ -400,11 +408,12 @@ static int console_ethercat_session_mit(const ethercat_background_args *command,
     for (slave=1; slave<=ec_slavecount; ++slave) {
         if (!selected[slave]) continue;
         uint8_t *out = ec_slave[slave].outputs;
-        console_ethercat_write_float(out+2, (float)command->output_rad);
-        console_ethercat_write_float(out+6, command->mit_velocity);
-        console_ethercat_write_float(out+10, command->mit_torque);
-        console_ethercat_write_float(out+14, command->mit_kp);
-        console_ethercat_write_float(out+18, command->mit_kd);
+        const ethercat_mit_target *target = console_ethercat_batch_target(command, slave);
+        console_ethercat_write_float(out+2, target ? target->position : (float)command->output_rad);
+        console_ethercat_write_float(out+6, target ? target->velocity : command->mit_velocity);
+        console_ethercat_write_float(out+10, target ? target->torque : command->mit_torque);
+        console_ethercat_write_float(out+14, target ? target->kp : command->mit_kp);
+        console_ethercat_write_float(out+18, target ? target->kd : command->mit_kd);
         out[22]=10u;
         ethercat_session.monitor[slave]=true;
         ethercat_session.motion_context[slave]=command->output_context;
@@ -421,6 +430,7 @@ static int console_ethercat_session_mit(const ethercat_background_args *command,
         if (selected[slave]) ethercat_session.disable_at_us[slave]=command->hold_ms == 0 ? 0 :
             console_ethercat_monotonic_us()+(uint64_t)command->hold_ms*1000u;
     }
+    if (command->task == ETHERCAT_TASK_MIT_BATCH) return 0; /* Streaming frames avoid per-frame console output. */
     printf("mit: mode=10 pos=%.6f rad vel=%.6f rad/s tff=%.6f N.m kp=%.6f kd=%.6f\n", command->output_rad, command->mit_velocity, command->mit_torque, command->mit_kp, command->mit_kd);
     return 0;
 }
@@ -435,7 +445,7 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
                "Interface does not match background master; existing cycle unchanged.");
         return -1;
     }
-    if ((command->task == ETHERCAT_TASK_MIT && !ethercat_mit_mapping) ||
+    if (((command->task == ETHERCAT_TASK_MIT || command->task == ETHERCAT_TASK_MIT_BATCH) && !ethercat_mit_mapping) ||
         (ethercat_mit_mapping && command->task == ETHERCAT_TASK_POSITION_PP)) {
         printf("%s\n", command->chinese ?
                "PP/CSP 与 MIT PDO 格式不同；请退出后直接启动所需模式。" :
@@ -444,7 +454,19 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
     }
     if (command->task == ETHERCAT_TASK_SCAN)
         return console_ethercat_scan(command->chinese, command->interface);
-    if (console_ethercat_session_selection(command->selection, selected) != 0) {
+    if (command->task == ETHERCAT_TASK_MIT_BATCH) {
+        if (!command->batch_count || command->batch_count > ETHERCAT_MIT_BATCH_MAX) return -1;
+        for (size_t i = 0; i < command->batch_count; ++i) {
+            const ethercat_mit_target *t = &command->batch[i];
+            unsigned int id = t->slave_id;
+            if (!id || id > (unsigned int)ec_slavecount || selected[id] ||
+                !ethercat_session.configured[id] || !ec_slave[id].outputs || !ec_slave[id].inputs ||
+                ec_slave[id].Obits != 184 || ec_slave[id].Ibits < 128 ||
+                !isfinite(t->position) || !isfinite(t->velocity) || !isfinite(t->torque) ||
+                !isfinite(t->kp) || !isfinite(t->kd) || t->kp < 0 || t->kd < 0) return -1;
+            selected[id] = 1;
+        }
+    } else    if (console_ethercat_session_selection(command->selection, selected) != 0) {
         printf("%s\n", command->chinese ?
                "从站不存在或未配置到后台 PDO；现有循环不变。" :
                "Slave absent or not configured for background PDO; existing cycle unchanged.");
@@ -463,6 +485,7 @@ static int console_ethercat_session_command(const ethercat_background_args *comm
     switch (command->task) {
     case ETHERCAT_TASK_QUALITY:
         return console_ethercat_quality_start(command);
+    case ETHERCAT_TASK_MIT_BATCH:
     case ETHERCAT_TASK_MIT:
         return console_ethercat_session_mit(command, selected);
     case ETHERCAT_TASK_ENABLE:
@@ -595,6 +618,7 @@ static int console_ethercat_run_session(const uint8_t selected[EC_MAXSLAVE],
 
             console_output_current = command.output_context;
             command_result = console_ethercat_session_command(&command);
+            if (command.task != ETHERCAT_TASK_MIT_BATCH || command_result != 0)
             printf("%s: %s\n", console_ethercat_task_name(command.task),
                    command_result == 0 ? (command.chinese ? "后台执行完成" : "background complete") :
                    (command.chinese ? "后台执行失败" : "background failed"));
@@ -616,6 +640,9 @@ static int console_ethercat_background_execute(const ethercat_background_args *c
     /* All ordinary background sessions share MIT PDOs; PP is explicit opt-in. */
     ethercat_mit_mapping = command->task != ETHERCAT_TASK_POSITION_PP;
     switch (command->task) {
+    case ETHERCAT_TASK_MIT_BATCH:
+        printf("ethercat_mit_batch: run scan before submitting streaming frames\n");
+        return -1;
     case ETHERCAT_TASK_QUALITY:
         printf("ethercat_quality: run ethercat_scan first to establish the PDO session\n");
         return -1;
