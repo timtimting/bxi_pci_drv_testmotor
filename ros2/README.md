@@ -93,4 +93,13 @@ ROS_LOCALHOST_ONLY=1 /usr/bin/python3 tests/ros_topics_smoke_test.py
 
 该测试自动启动 auto_scan=false/init_pci=false 的节点，验证反馈发布、命令传递、拒绝状态与退出，
 不访问电机。它需要本机 DDS 通信权限。完整实机检查仍需验证扫描、使能、反馈、定时失能以及 1kHz 质量统计。
-若 EtherLab 安装在非标准目录，除构建路径外，还需要将其 lib 目录加入运行环境的 LD_LIBRARY_PATH。
+构建时选中的 EtherLab 库目录会写入节点的安装 RUNPATH，因此安装后无需额外配置
+EtherLab 的 LD_LIBRARY_PATH。若将安装结果复制到另一台机器，需确保该路径存在或在目标机器重新构建。
+旧构建若遇到 `libethercat.so.1` 找不到，可临时执行：
+
+```bash
+export LD_LIBRARY_PATH=/usr/local/etherlab/lib:/usr/local/etherlab/lib64:${LD_LIBRARY_PATH}
+```
+
+长期修复应更新代码并重新构建 `bxi_motor_control`；可用 `ldd install/bxi_motor_control/lib/bxi_motor_control/motor_node`
+检查 `libethercat.so.1` 实际加载位置。

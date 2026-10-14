@@ -27,6 +27,10 @@ add_executable(motor_node src/node.cpp)
 target_compile_features(motor_node PRIVATE cxx_std_17)
 ament_target_dependencies(motor_node rclcpp std_msgs bxi_motor_msgs)
 target_link_libraries(motor_node motor_backend)
+# CMake strips build RPATH on installation. Preserve the selected EtherLab
+# directory explicitly, without importing unrelated paths (e.g. Conda) from links.
+get_filename_component(ETHERLAB_LIBRARY_DIR "${ETHERLAB_LIBRARY}" DIRECTORY)
+set_target_properties(motor_node PROPERTIES INSTALL_RPATH "${ETHERLAB_LIBRARY_DIR}")
 install(TARGETS motor_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME} FILES_MATCHING PATTERN "*.py")
 install(FILES "${DRIVER_ROOT}/config/motor_console.yaml" "${DRIVER_ROOT}/config/flash_plan_default.yaml" "${DRIVER_ROOT}/config/kaixuan_modules.json" DESTINATION share/${PROJECT_NAME}/config)
