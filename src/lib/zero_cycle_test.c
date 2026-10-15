@@ -112,18 +112,47 @@ static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry 
     frame_ring_clear(&state->frames);
     console_use_motor(state, m);
     uint64_t sent = time_us();
+    unsigned int transmissions = 1, received = 0, text_frames = 0, decode_failures = 0;
+    rx_can_frame observed[8]; size_t observed_count = 0;
     console_expect_reply(state, m->bus);
     if (send_debug_mit(state, target, velocity, kp, kd, 0)) return -1;
     while (!stop_requested && time_us() - sent < 100000) {
         rx_can_frame frame;
         if (!frame_ring_pop(&state->frames, &frame, 10)) continue;
-        if (frame.time_us < sent || frame.bus != m->bus || !mit_reply_frame_matches(&frame, m->id)) continue;
+        if (frame.time_us < sent || frame.bus != m->bus) continue;
+        ++received;
+        if (boot_output_id_matches(frame.can_id, m->id)) ++text_frames;
+        else if (observed_count < sizeof(observed)/sizeof(observed[0])) observed[observed_count++] = frame;
+        if (!mit_reply_frame_matches(&frame, m->id)) continue;
         int result = state->motors[m - state->config.entries].mit_aux_enabled ?
             bxi_motor_unpack_reply(frame.data, frame.len, &state->limits, reply) :
             bxi_motor_unpack_reply_legacy_ntc(frame.data, frame.len, &state->limits, reply);
         if (!result && isfinite(reply->position) && isfinite(reply->velocity)) return 0;
+        ++decode_failures;
     }
-    fprintf(stderr, "zero_cycle_test: ERROR fresh MIT feedback timeout\n");
+    fprintf(stderr, "zero_cycle_test: ERROR %s: bus=%u motor_id=%u expected_CAN_ID=0x%03X byte0=0x%02X len>=8; sends=%u received=%u boot_text=%u decode_failures=%u. Raw diagnostics in .boot.log\n",
+            stop_requested ? "interrupted" : "fresh MIT feedback timeout (100ms)", m->bus, m->id,
+            0x10u | m->id, m->id, transmissions, received, text_frames, decode_failures);
+    pthread_mutex_lock(&boot_capture_mutex);
+    if (boot_capture_file) {
+        uint8_t tx[BXI_MOTOR_MIT_LEN];
+        bxi_motor_pack_mit(tx, &state->limits, target, velocity, kp, kd, 0);
+        fprintf(boot_capture_file, "\nMIT_TIMEOUT bus=%u motor_id=%u expected_id=0x%03X expected_byte0=0x%02X sends=%u rx_bus=%u rx_text=%u decode_failures=%u\n"
+                "MIT_TX canfd=%d p=%.9g v=%.9g kp=%.9g kd=%.9g CAN_ID=0x%03X data=",
+                m->bus, m->id, 0x10u|m->id, m->id, transmissions, received, text_frames, decode_failures,
+                state->debug_use_canfd, target, velocity, kp, kd, m->id);
+        for (unsigned int i = 0; i < sizeof(tx); ++i) fprintf(boot_capture_file, "%02X ", tx[i]);
+        fputc('\n', boot_capture_file);
+        for (size_t i = 0; i < observed_count; ++i) {
+            const rx_can_frame *frame = &observed[i];
+            fprintf(boot_capture_file, "MIT_RX time_us=%llu CAN_ID=0x%03X len=%u flags=0x%02X data=",
+                    (unsigned long long)frame->time_us, frame->can_id, frame->len, frame->flags);
+            for (unsigned int j = 0; j < frame->len; ++j) fprintf(boot_capture_file, "%02X ", frame->data[j]);
+            fputc('\n', boot_capture_file);
+        }
+        fflush(boot_capture_file);
+    }
+    pthread_mutex_unlock(&boot_capture_mutex);
     return -1;
 }
 

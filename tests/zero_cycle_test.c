@@ -133,6 +133,11 @@ int main(void)
     assert(fread(captured, 1, sizeof(captured) - 1, capture) > 0);
     assert(strstr(captured, "BOOT\n") && !strstr(captured, "hex:"));
     assert(!strstr(captured, "OTHER")); fclose(capture);
+    rx_can_frame mit_frame = {0}; mit_frame.can_id = 0x11; mit_frame.len = 8; mit_frame.data[0] = 1;
+    assert(mit_reply_frame_matches(&mit_frame, 1));
+    mit_frame.data[0] = 0x11; assert(!mit_reply_frame_matches(&mit_frame, 1));
+    mit_frame.data[0] = 1; mit_frame.len = 6; assert(!mit_reply_frame_matches(&mit_frame, 1));
+    mit_frame.len = 8; mit_frame.can_id = 0x7f1; assert(!mit_reply_frame_matches(&mit_frame, 1));
     zero_encoder_snapshot enc_before = zero_encoder_parse("ENC1: raw=62000 pos=0.951134\r\nENC2: angle=17.5 deg pos=0.048661 turn\r\nENC2_RAW_DEG=12.3\n");
     zero_encoder_snapshot enc_after = zero_encoder_parse("ENC1: raw=62001 pos=6.951052\nENC2: angle=128.0 deg pos=0.355631 turn\nENC2_RAW_DEG=12.4\n");
     assert(enc_before.enc1_valid && enc_before.enc2_valid && enc_before.raw2_valid);
