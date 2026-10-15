@@ -35,7 +35,20 @@ int main(void)
     assert(zero_cycle_load(path, &c) != 0);
     unlink(path);
     assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
-    assert(c.count == 5 && c.speed == .2 && c.kp == 50 && c.kd == 5);
+    assert(c.count == 5 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
+    custom_command_words = console_command_words;
+    custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
+    const char *line = "zero_cycle_test 01 config/zero_c";
+    size_t count = 0;
+    const char *const *words = completion_words_for_line(line, strlen(line), &count);
+    assert(words && count == 1 && !strcmp(words[0], "config/zero_cycle_test.yaml"));
+    line = "zero_cycle_test 01 confi";
+    words = completion_words_for_line(line, strlen(line), &count);
+    assert(words && count == 1 && !strcmp(words[0], "config/"));
+    char input[256] = "zero_cycle_test 01 confi";
+    size_t length = strlen(input), cursor = length;
+    complete_line(input, &length, &cursor, sizeof(input), "");
+    assert(!strcmp(input, "zero_cycle_test 01 config/")); /* No space after directory. */
     puts("PASS: random sector coverage, reproducibility and invalid config rejection");
     return 0;
 }

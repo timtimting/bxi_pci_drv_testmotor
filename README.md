@@ -741,10 +741,12 @@ flash_all config/flash_plan_debug.yaml
 从下电状态执行，单次测试一台普通旋转关节（不支持夹爪）：
 
 ```text
-zero_cycle_test 00 config/zero_cycle_test.yaml
+zero_cycle_test 00
 ```
 
-先填写配置中的 `gear_ratio`，必须等于实机固件的实际减速比，默认 0 会拒绝运行。
+默认读取 `config/zero_cycle_test.yaml`（相对当前工作目录）；也可执行
+`zero_cycle_test 00 /路径/测试.yaml` 指定其他配置，配置路径支持 Tab 补全文件和目录。
+配置中的 `gear_ratio` 必须等于实机固件的实际减速比，0 会拒绝运行。
 参考 `/home/tim-dxt/bxi_ws/bxi_motor_source.zip` 的普通关节固件：MIT 目标与
 `Encoder.position / GR * 2π` 比较，回复位置也由此计算，因此总线位置是输出端 rad，
 上位机 MIT 打包本身不换算减速比。源码 `USE_ENC2=1` 的参考 GR 为 `7056/361`，

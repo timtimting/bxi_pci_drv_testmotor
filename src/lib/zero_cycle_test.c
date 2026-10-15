@@ -122,10 +122,11 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
 static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
 {
     unsigned int index; size_t slot; zero_cycle_config c;
-    if (argc != 3 || console_parse_index_arg(argv[1], &index) ||
-        zero_cycle_load(argv[2], &c)) {
-        printf("usage: zero_cycle_test <index00> <config.yaml>\n"); return -1;
+    if ((argc != 2 && argc != 3) || console_parse_index_arg(argv[1], &index)) {
+        printf("usage: zero_cycle_test <index00> [config.yaml]\n"); return -1;
     }
+    const char *config_path = argc == 3 ? argv[2] : "config/zero_cycle_test.yaml";
+    if (zero_cycle_load(config_path, &c)) return -1;
     const motor_map_entry *m = console_motor_by_index(state, index, &slot);
     if (!m || strstr(m->type, "hand")) { fprintf(stderr, "zero_cycle_test: unknown motor or unsupported hand\n"); return -1; }
     const bxi_motor_limits *limits = limits_for_entry(state, m);
@@ -159,21 +160,57 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
         double motor_target = zero_cycle_target(n, &seed, c.max_turns);
         float target = motor_target * 2 * M_PI / c.ratio;
+        printf(console_text(state,
+               "\n========== 第 %u 轮开始：目标电机端 %+.6f 圈（%+.3f°），输出端 %+.3f° ==========\n",
+               "\n========== Cycle %u start: motor target %+.6f turns (%+.3f deg), output target %+.3f deg ==========\n"),
+               n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
+        fflush(stdout);
         if (console_send_special(state, slot, BXI_MOTOR_CMD_ENABLE, "zero_cycle_enable") ||
             zero_cycle_move(state, m, &c, target, &reply)) goto done;
         /* Sample after disabling, so the baseline includes any release motion. */
         if (console_send_special(state, slot, BXI_MOTOR_CMD_DISABLE, "zero_cycle_disable") ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
         float before = reply.position;
+        printf(console_text(state, "第 %u 轮：已记录断电前位置，准备断电 %u ms 并重新上电读取。\n",
+                                  "Cycle %u: baseline recorded; power off for %u ms, then reboot and read position.\n"),
+               n + 1, c.off_ms);
+        fflush(stdout);
         uint64_t off_begin = time_us();
         if (console_power_off(state)) goto done;
         while (!stop_requested && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
         if (stop_requested || console_power_on(state) || !state->motors[slot].online ||
-            zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
+            zero_cycle_sample(state, m, 0, 0, 0, &reply)) {
+            printf(console_text(state, "第 %u 轮失败：重新上电后未能获取有效位置，无法比较。\n",
+                                      "Cycle %u FAILED: no valid position after reboot; comparison unavailable.\n"), n + 1);
+            goto done;
+        }
         double error = (reply.position - before) * c.ratio / (2 * M_PI);
         bool ok = fabs(error) <= c.tolerance;
         fprintf(csv, "%u,%.9g,%.9g,%.9g,%.9g,%s\n", n + 1, motor_target, before, reply.position, error, ok ? "PASS" : "FAIL"); fflush(csv);
-        printf("zero_cycle_test: cycle=%u target_motor_turns=%.6f before_rad=%.7f after_rad=%.7f error_motor_turns=%.7f %s\n", n + 1, motor_target, before, reply.position, error, ok ? "PASS" : "ERROR position mismatch");
+        double before_turns = before * c.ratio / (2 * M_PI);
+        double after_turns = reply.position * c.ratio / (2 * M_PI);
+        printf(console_text(state,
+               "\n========== 第 %u 轮上下电零位识别结果：%s ==========\n"
+               "  目标位置（电机端）：%+.6f 圈 / %+.3f°\n"
+               "  断电之前（电机端）：%+.6f 圈 / %+.3f°\n"
+               "  重新上电（电机端）：%+.6f 圈 / %+.3f°\n"
+               "  上电后 - 断电前 ：%+.7f 圈 / %+.4f°\n"
+               "  允许绝对差值    ：%.6f 圈 / %.3f°\n"
+               "  目标跟踪误差    ：%+.6f 圈（断电前实际位置 - 目标）\n"
+               "====================================================\n\n",
+               "\n========== Cycle %u power-cycle recognition: %s ==========\n"
+               "  Motor target : %+.6f turns / %+.3f deg\n"
+               "  Before off   : %+.6f turns / %+.3f deg\n"
+               "  After reboot : %+.6f turns / %+.3f deg\n"
+               "  After-before : %+.7f turns / %+.4f deg\n"
+               "  Absolute tolerance: %.6f turns / %.3f deg\n"
+               "  Tracking error: %+.6f turns (before-target)\n"
+               "====================================================\n\n"),
+               n + 1, ok ? console_text(state, "成功 PASS", "PASS") : console_text(state, "失败 FAIL", "FAIL"),
+               motor_target, motor_target * 360, before_turns, before_turns * 360,
+               after_turns, after_turns * 360, error, error * 360,
+               c.tolerance, c.tolerance * 360, before_turns - motor_target);
+        fflush(stdout);
         if (!ok) goto done;
         ++passed;
     }

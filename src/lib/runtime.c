@@ -4529,6 +4529,8 @@ static int copy_nth_token(const char *line, unsigned int target, char *out, size
     return -1;
 }
 
+#include <glob.h>
+
 static const char *const *completion_words_for_line(const char *line, size_t len, size_t *count)
 {
     int start = current_token_start(line, len);
@@ -4546,6 +4548,19 @@ static const char *const *completion_words_for_line(const char *line, size_t len
     if (copy_nth_token(line, 0u, first, sizeof(first)) != 0) {
         *count = 0u;
         return NULL;
+    }
+    if (custom_command_words != NULL && strcmp(first, "zero_cycle_test") == 0 && tokens_before == 2u) {
+        static glob_t paths;
+        char pattern[PATH_LEN];
+        globfree(&paths);
+        memset(&paths, 0, sizeof(paths));
+        if (snprintf(pattern, sizeof(pattern), "%.*s*", (int)(len - start), line + start) >= (int)sizeof(pattern) ||
+            glob(pattern, GLOB_MARK, NULL, &paths) != 0) {
+            *count = 0;
+            return NULL;
+        }
+        *count = paths.gl_pathc;
+        return (const char *const *)paths.gl_pathv;
     }
     if (strcmp(first, "mode") == 0 && tokens_before == 1u) {
         *count = sizeof(mode_words) / sizeof(mode_words[0]);
@@ -4740,6 +4755,11 @@ static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_le
         fflush(stdout);
         return;
     }
+    if (word_count > sizeof(matches) / sizeof(matches[0])) {
+        printf("\nToo many candidates; type a longer prefix.\n");
+        redraw_prompt_cursor(prompt, line, *len, *cursor);
+        return;
+    }
 
     for (i = 0u; i < word_count && match_count < sizeof(matches) / sizeof(matches[0]); i++) {
         if (starts_with(words[i], prefix)) {
@@ -4767,7 +4787,8 @@ static void complete_line(char *line, size_t *len, size_t *cursor, size_t max_le
             fflush(stdout);
             return;
         }
-        if (*len == 0u || line[*len - 1u] != ' ') {
+        if ((*len == 0u || line[*len - 1u] != ' ') &&
+            (match_len == 0 || match[match_len - 1u] != '/')) {
             if (insert_text_at_cursor(line, len, cursor, max_len, " ", 1u) != 0) {
                 putchar('\a');
                 fflush(stdout);
