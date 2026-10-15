@@ -40,7 +40,7 @@ static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up", "stand_sine",
-    "reg_read", "reg_write", "reg_save", "reg_info", "zero_cycle_test",
+    "reg_read", "reg_write", "reg_save", "reg_info", "zero_cycle_test", "zero_cycle_group_test",
     "flash_single", "flash_all", "flash_debug",
     "motor_dbg", "can_dbg",
     "can_status",
@@ -53,6 +53,7 @@ static const char *const console_command_words[] = {
 #include "lib/flash.c"
 #include "lib/debug.c"
 #include "lib/zero_cycle_test.c"
+#include "lib/zero_cycle_group_test.c"
 #include "lib/terminal.c"
 
 #ifndef MOTOR_CONSOLE_TEST

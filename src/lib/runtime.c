@@ -270,6 +270,8 @@ typedef struct
 static pthread_mutex_t boot_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *boot_capture_file;
 static unsigned int boot_capture_bus, boot_capture_id;
+static struct { unsigned int bus, id; FILE *file; } group_boot_capture[32];
+static size_t group_boot_capture_count;
 
 static const char *state_label_for_code(const motor_map_config *config,
                                         unsigned int code);
@@ -1047,17 +1049,22 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     frame_ring_push(&state->frames, &frame);
 
     pthread_mutex_lock(&boot_capture_mutex);
+    FILE *capture = NULL;
     if (boot_capture_file && frame.bus == boot_capture_bus &&
-        boot_output_id_matches(frame.can_id, boot_capture_id)) {
+        boot_output_id_matches(frame.can_id, boot_capture_id)) capture = boot_capture_file;
+    for (size_t i = 0; i < group_boot_capture_count; ++i)
+        if (frame.bus == group_boot_capture[i].bus && boot_output_id_matches(frame.can_id, group_boot_capture[i].id))
+            capture = group_boot_capture[i].file;
+    if (capture) {
         /* Preserve the byte stream across CAN frames; CR is redundant in
          * firmware CR/LF output. Raw values are printed by firmware queries. */
         for (unsigned int k = 0; k < frame.len; ++k) {
             unsigned char ch = frame.data[k];
             if (ch == '\r') continue;
-            if (isprint(ch) || ch == '\n' || ch == '\t') fputc(ch, boot_capture_file);
-            else fprintf(boot_capture_file, "\\x%02X", ch);
+            if (isprint(ch) || ch == '\n' || ch == '\t') fputc(ch, capture);
+            else fprintf(capture, "\\x%02X", ch);
         }
-        fflush(boot_capture_file);
+        fflush(capture);
     }
     pthread_mutex_unlock(&boot_capture_mutex);
 
@@ -4570,7 +4577,7 @@ static const char *const *completion_words_for_line(const char *line, size_t len
         *count = 0u;
         return NULL;
     }
-    if (custom_command_words != NULL && strcmp(first, "zero_cycle_test") == 0 && tokens_before == 2u) {
+    if (custom_command_words != NULL && (!strcmp(first, "zero_cycle_test") || !strcmp(first, "zero_cycle_group_test")) && tokens_before == 2u) {
         static glob_t paths;
         char pattern[PATH_LEN];
         globfree(&paths);
