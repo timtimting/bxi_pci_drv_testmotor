@@ -265,6 +265,12 @@ typedef struct
     char config_path[PATH_LEN];
 } flash_state;
 
+/* Optional raw boot capture, independent of terminal output suppression.
+ * Both callback writes and capture lifetime changes hold this mutex. */
+static pthread_mutex_t boot_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
+static FILE *boot_capture_file;
+static unsigned int boot_capture_bus, boot_capture_id;
+
 static const char *state_label_for_code(const motor_map_config *config,
                                         unsigned int code);
 
@@ -1039,6 +1045,22 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     }
     memcpy(frame.data, msg->frame.data, frame.len);
     frame_ring_push(&state->frames, &frame);
+
+    pthread_mutex_lock(&boot_capture_mutex);
+    if (boot_capture_file && frame.bus == boot_capture_bus &&
+        boot_output_id_matches(frame.can_id, boot_capture_id)) {
+        fprintf(boot_capture_file, "\n[time_us=%llu bus=%u can_id=0x%X len=%u] hex:",
+                (unsigned long long)frame.time_us, frame.bus, frame.can_id, (unsigned)frame.len);
+        for (unsigned int k = 0; k < frame.len; ++k) fprintf(boot_capture_file, " %02X", frame.data[k]);
+        fputs(" text: ", boot_capture_file);
+        for (unsigned int k = 0; k < frame.len; ++k) {
+            unsigned char ch = frame.data[k];
+            if (isprint(ch) || ch == '\n' || ch == '\r' || ch == '\t') fputc(ch, boot_capture_file);
+            else fprintf(boot_capture_file, "\\x%02X", ch);
+        }
+        fflush(boot_capture_file);
+    }
+    pthread_mutex_unlock(&boot_capture_mutex);
 
     if (msg->bus == state->bus && can_id == state->rx_id) {
         rx_ring_push(&state->rx, msg->frame.data, msg->frame.len);

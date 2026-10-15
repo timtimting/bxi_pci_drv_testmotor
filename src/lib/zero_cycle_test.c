@@ -132,6 +132,73 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
     return -1;
 }
 
+static void zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_t slot,
+                              const zero_cycle_config *c, unsigned int failed_cycle,
+                              double target_turns, float baseline, const char *csv_path)
+{
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s.retries.log", csv_path);
+    FILE *log = fopen(log_path, "wx");
+    if (!log) { perror(log_path); return; }
+    double baseline_turns = baseline * c->ratio / (2 * M_PI);
+    fprintf(log, "Failed cycle=%u motor_index=%u bus=%u id=%u gear_ratio=%.12g\n"
+                 "target_motor_turns=%.9g original_before_motor_turns=%.9g tolerance_motor_turns=%.9g\n"
+                 "10 additional power cycles, NO motion/enable/zero; all errors relative to original baseline.\n",
+            failed_cycle, m->index, m->bus, m->id, c->ratio, target_turns, baseline_turns, c->tolerance);
+    pthread_mutex_lock(&boot_capture_mutex);
+    boot_capture_bus = m->bus; boot_capture_id = m->id; boot_capture_file = log;
+    pthread_mutex_unlock(&boot_capture_mutex);
+    printf(console_text(state,
+           "\n失败点复测：保持当前位置，不使能、不运动、不置零；额外上下电 10 次。\n上电原始输出及角度记录：%s\n",
+           "\nFailed-point retest: 10 additional power cycles, no enable/motion/zero.\nRaw boot output and angle results: %s\n"), log_path);
+    unsigned int completed = 0, valid = 0, matched = 0;
+    for (unsigned int i = 1; i <= 10 && !stop_requested; ++i) {
+        pthread_mutex_lock(&boot_capture_mutex);
+        fprintf(log, "\n\n========== RETEST %u/10 POWER OFF/ON ==========\n", i); fflush(log);
+        pthread_mutex_unlock(&boot_capture_mutex);
+        uint64_t off_begin = time_us();
+        if (zero_cycle_operation(state, 0, slot)) break;
+        while (!stop_requested && time_us() - off_begin < (uint64_t)c->off_ms * 1000) sleep_ms(10);
+        if (stop_requested) break;
+        bxi_motor_reply reply;
+        int powered = zero_cycle_operation(state, 1, slot);
+        bool readable = powered == 0 && state->motors[slot].online &&
+                        zero_cycle_sample(state, m, 0, 0, 0, &reply) == 0;
+        ++completed;
+        if (readable) {
+            ++valid;
+            double turns = reply.position * c->ratio / (2 * M_PI);
+            double delta = turns - baseline_turns;
+            bool ok = fabs(delta) <= c->tolerance;
+            matched += ok;
+            printf(console_text(state,
+                   "复测 %2u/10：上电电机端 %+.6f 圈 / %+.3f°，相对原断电前差值 %+.7f 圈 / %+.4f°，%s\n",
+                   "Retest %2u/10: motor %+.6f turns / %+.3f deg; delta from original baseline %+.7f turns / %+.4f deg; %s\n"),
+                   i, turns, turns * 360, delta, delta * 360, ok ? "PASS" : "FAIL");
+            pthread_mutex_lock(&boot_capture_mutex);
+            fprintf(log, "\nRESULT retry=%u output_rad=%.9g motor_turns=%.9g motor_deg=%.9g delta_motor_turns=%.9g delta_motor_deg=%.9g %s\n",
+                    i, reply.position, turns, turns * 360, delta, delta * 360, ok ? "PASS" : "FAIL");
+            pthread_mutex_unlock(&boot_capture_mutex);
+        } else {
+            printf("zero_cycle_test: retest=%u/10 ERROR no valid position after power-on\n", i);
+            pthread_mutex_lock(&boot_capture_mutex);
+            fprintf(log, "\nRESULT retry=%u ERROR no valid position\n", i);
+            pthread_mutex_unlock(&boot_capture_mutex);
+        }
+        /* Keep capturing late startup messages, without motion commands. */
+        console_quiet_sleep_ms(1000);
+        fflush(stdout);
+    }
+    pthread_mutex_lock(&boot_capture_mutex);
+    boot_capture_file = NULL;
+    fprintf(log, "\nSUMMARY completed=%u valid=%u baseline_matches=%u interrupted=%d\n", completed, valid, matched, stop_requested != 0);
+    fclose(log);
+    pthread_mutex_unlock(&boot_capture_mutex);
+    printf(console_text(state, "失败点复测结束：完成 %u/10，有效读取 %u 次，与原断电前一致 %u 次。日志：%s\n",
+                              "Retest finished: completed %u/10, valid %u, baseline matches %u. Log: %s\n"),
+           completed, valid, matched, log_path);
+}
+
 static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
 {
     unsigned int index; size_t slot; zero_cycle_config c;
@@ -221,7 +288,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                after_turns, after_turns * 360, error, error * 360,
                c.tolerance, c.tolerance * 360, before_turns - motor_target);
         fflush(stdout);
-        if (!ok) goto done;
+        if (!ok) {
+            zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path);
+            goto done;
+        }
         ++passed;
     }
     result = stop_requested ? -1 : 0;

@@ -51,6 +51,25 @@ int main(void)
     size_t length = strlen(input), cursor = length;
     complete_line(input, &length, &cursor, sizeof(input), "");
     assert(!strcmp(input, "zero_cycle_test 01 config/")); /* No space after directory. */
-    puts("PASS: random sector coverage, reproducibility and invalid config rejection");
+    /* Raw boot capture works while terminal output is disabled, and excludes
+     * other buses and motor IDs. No hardware initialization is performed. */
+    static flash_state state;
+    rx_ring_init(&state.rx); frame_ring_init(&state.frames);
+    FILE *capture = tmpfile(); assert(capture);
+    boot_capture_file = capture; boot_capture_bus = 0; boot_capture_id = 2;
+    canfd_packet packet = {0};
+    packet.bus = 0; packet.frame.can_id = 0x7f2; packet.frame.len = 5;
+    memcpy(packet.frame.data, "BOOT\n", 5);
+    can_rx_callback(&state, &packet);
+    packet.bus = 1; memcpy(packet.frame.data, "OTHER", 5);
+    can_rx_callback(&state, &packet);
+    packet.bus = 0; packet.frame.can_id = 0x7f3;
+    can_rx_callback(&state, &packet);
+    boot_capture_file = NULL;
+    rewind(capture); char captured[1024] = {0};
+    assert(fread(captured, 1, sizeof(captured) - 1, capture) > 0);
+    assert(strstr(captured, "BOOT") && strstr(captured, "42 4F 4F 54 0A"));
+    assert(!strstr(captured, "OTHER")); fclose(capture);
+    puts("PASS: random coverage, config, completion and silent raw boot capture filtering");
     return 0;
 }
