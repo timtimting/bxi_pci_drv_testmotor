@@ -735,3 +735,42 @@ flash_all config/flash_plan_debug.yaml
 | `console_reg_send_one` | `src/lib/control.c` | `reg_read/reg_write/reg_save/reg_info` 对单台电机的实际发送函数 |
 | `console_parse_register_type_arg` | `src/lib/control.c` | 解析用户输入的 `type`：int/bool/float/uint/version 或 0..4 |
 | `console_parse_register_value_arg` | `src/lib/control.c` | `reg_write` 输入值解析，并按用户指定类型转成 32 位 raw value |
+
+### 上下电零位识别随机测试（CAN）
+
+从下电状态执行，单次测试一台普通旋转关节（不支持夹爪）：
+
+```text
+zero_cycle_test 00 config/zero_cycle_test.yaml
+```
+
+先填写配置中的 `gear_ratio`，必须等于实机固件的实际减速比，默认 0 会拒绝运行。
+参考 `/home/tim-dxt/bxi_ws/bxi_motor_source.zip` 的普通关节固件：MIT 目标与
+`Encoder.position / GR * 2π` 比较，回复位置也由此计算，因此总线位置是输出端 rad，
+上位机 MIT 打包本身不换算减速比。源码 `USE_ENC2=1` 的参考 GR 为 `7056/361`，
+约 19.54570637；不能据此认定所有实机固件均相同。
+
+测试配置角度和误差用电机端“圈”，下发时换算成输出端弧度。
+`max_motor_turns` 最大 9，且必须严格小于减速比一半，以保持在输出端零位 ±半圈以内。
+若单圈识别算法采用其他可识别区间，应按实际固件调整测试范围。
+以参考减速比为例，电机端 ±9 圈约对应输出端 ±2.8932 rad。
+
+首次上电仅发送一次置零，验证反馈接近零；随后分成 36 个等宽角度区间，按置换顺序
+逐区间随机取非固定角度，每 36 次覆盖所有区间。`seed` 可固定以复现目标序列。
+按 `motor_turns_per_second` 平滑插值，每次都检查新鲜 MIT 回复，并等待位置和速度
+满足稳定条件；目标到位后失能，再记录断电前的实际位置。默认断电间隔 `off_ms: 1000`，
+包括已有 power_off 的 300ms 等待；上电启动、扫描和预热耗时额外计算。
+重新上电后保持失能，以零增益 MIT 查询实际位置，与断电前位置直接比较，不做整圈取模。
+
+`count` 和 `duration_s` 为次数与总时长限制，0 关闭对应限制，至少一个非零；
+两者都配置时先达到的限制生效。时长在周期边界判断，不会中途截断一个上下电周期，
+因此实际耗时可能超过配置时长一个周期。`move_timeout_ms` 限制每次运动和稳定等待。
+`tolerance_motor_turns` 是电机端绝对误差，配置过小低于 MIT 量化能力会拒绝运行。
+KP/KD 为原 MIT 输出端控制单位，需按待测电机负载设置。
+
+超差、通信超时、到位超时或中断都会停止测试并尝试下电。CSV 写入
+`/tmp/zero-cycle-<pid>-<time>.csv`，包含目标角度、断电前后输出端位置、
+电机端误差及 PASS/FAIL。断电前已失能，假设断电期间机械位置不变；
+外部负载造成的位移也会表现为位置不一致。
+电源开关为整组共享，测试会影响所有连接的电机。此命令会修改待测电机的零位，
+不自动恢复旧零位，不额外发送保存寄存器命令；是否持久化由固件置零命令决定。

@@ -88,6 +88,8 @@ static int console_run_command(flash_state *state, int argc, char **argv)
             return -1;
         }
         return console_power_off(state);
+    } else if (strcmp(cmd, "zero_cycle_test") == 0) {
+        return console_zero_cycle_test(state, argc, argv);
     } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
             printf("%s: motor_probe\n", console_text(state, "用法", "usage"));
