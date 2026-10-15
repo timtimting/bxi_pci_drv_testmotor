@@ -1,0 +1,55 @@
+--- a/Core/Src/app/fsm.c
++++ b/Core/Src/app/fsm.c
+@@ -725,7 +725,9 @@
+ 					DBG("FOC: DISARMED | PWM: OFF\r\n");
+ 					DBG("TEMP[C]: NTC1=%.1f NTC2=%.1f%s WND=%.1f DRV=%.1f coeff=%.2f\r\n",
+ 						Foc.ntc1, Foc.ntc2, ntc2_status, Foc.winding_temp_est, Foc.tmp_drv, temper_coefficient);
+-					DBG("ENC1: raw=%d pos=%.3f\r\n", Encoder.raw, Encoder.position);
++					DBG("ENC1: raw=%d pos=%.9f\r\n", Encoder.raw, Encoder.position);
++                    DBG("ENC1_CPR=%u cnt=%d cnt_usr=%d turns=%d zero_offset=%d\r\n",
++                        (unsigned)ENCODER_CPR, Encoder.cnt, Encoder.cnt_usr, Encoder.turns, UsrConfig.usr_enc1_offset);
+ 					DBG("NTC ADC: NTC1=%u NTC2=%u\r\n",
+ 						(unsigned int)Foc.adc_ntc1, (unsigned int)Foc.adc_ntc2);
+                     DBG("NTC RAW: NTC1=%u (%.3fV) NTC2=%u (%.3fV)\r\n",
+@@ -737,8 +739,15 @@
+ 						DBG("!!! NTC2 FAIL: %.1fC !!!\r\n", Foc.ntc2);
+ 					}
+ 					#if USE_ENC2
+-					DBG("ENC2: angle=%.3f deg pos=%.3f turn\r\n",
++					DBG("ENC2: angle=%.9f deg pos=%.9f turn\r\n",
+ 						ldc1614.angle, LDC1614_GetPos_Usr());
++                    DBG("ENC2_RAW_DEG=%.9f cal_deg=%.9f turns=%d last_rad=%.9f zero_rad=%.9f dir=%d calib_valid=%d\r\n",
++                        ldc1614.raw, ldc1614.angle, ldc1614.turns, ldc1614.last_angle,
++                        UsrConfig.usr_enc2_offset, UsrConfig.ldc1614_dir, UsrConfig.ldc1614_calib_valid);
++                    DBG("ENC2_CHANNELS=%lu,%lu,%lu,%lu\r\n",
++                        (unsigned long)ldc1614.sensor_readings[0], (unsigned long)ldc1614.sensor_readings[1],
++                        (unsigned long)ldc1614.sensor_readings[2], (unsigned long)ldc1614.sensor_readings[3]);
++                    DBG("ENC_RATIO compiled=%.9f configured=%.9f\r\n", (double)GR, UsrConfig.reduction_ratio);
+ 					#endif
+ 					DBG("TICK: %ld\r\n", HAL_GetTick());
+ 					DBG("=================================\r\n");
+--- a/Core/Src/main.c
++++ b/Core/Src/main.c
+@@ -904,6 +904,8 @@
+   DBG("HW    : %s\n\r", detected_motor);
+   DBG("PRO   : %s\n\r", target_motor);
+   DBG("CON   : %s\n\r", config_match_status);
++  DBG("CONFIG_READ result=%d stored=0x%08lx expected=0x%08lx\n\r", load_flag,
++      (unsigned long)USR_CONFIG_get_stored_version(), (unsigned long)USR_CONFIG_VERSION);
+ 
+   if (boot_ntc_status == HAL_OK) {
+     boot_print_temp("NTC1  : ", boot_ntc1);
+@@ -1006,6 +1008,13 @@
+   }else{
+     float enc1_pos = Encoder.position;
+     float turns = enc2_pos - enc1_pos;
++    DBG("BOOT_ENC1 raw=%u cnt=%d cnt_usr=%d cpr=%u zero=%d enc1_turns=%.9f\n\r",
++        (unsigned)Encoder.raw, Encoder.cnt, Encoder.cnt_usr, (unsigned)ENCODER_CPR,
++        UsrConfig.usr_enc1_offset, enc1_pos);
++    DBG("BOOT_ENC2 raw_deg=%.9f cal_deg=%.9f enco_turns=%d zero_rad=%.9f calib_valid=%d\n\r",
++        ldc1614.raw, ldc1614.angle, ldc1614.turns, UsrConfig.usr_enc2_offset, UsrConfig.ldc1614_calib_valid);
++    DBG("BOOT_RESTORE enc2_motor_turns=%.9f diff=%.9f rounded=%.0f compiled_gr=%.9f configured_gr=%.9f\n\r",
++        enc2_pos, turns, round(turns), (double)GR, UsrConfig.reduction_ratio);
+     Encoder.turns = round(turns);
+     Encoder.position = Encoder.turns + (float)Encoder.cnt_usr / (float)ENCODER_CPR;
+     Encoder.position_last = Encoder.position;

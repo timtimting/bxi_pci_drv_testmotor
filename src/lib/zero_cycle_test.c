@@ -132,9 +132,95 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
     return -1;
 }
 
+typedef struct {
+    bool enc1_valid, enc2_valid, raw2_valid;
+    int raw1;
+    unsigned int cpr1;
+    double pos1, angle2, pos2, raw2;
+} zero_encoder_snapshot;
+
+static zero_encoder_snapshot zero_encoder_parse(const char *text)
+{
+    zero_encoder_snapshot s = {0}; s.cpr1 = 65536; /* Reference firmware fallback. */
+    const char *p = strstr(text, "ENC1: raw=");
+    if (p) s.enc1_valid = sscanf(p, "ENC1: raw=%d pos=%lf", &s.raw1, &s.pos1) == 2;
+    p = strstr(text, "ENC1_CPR=");
+    if (p) { unsigned int cpr; if (sscanf(p, "ENC1_CPR=%u", &cpr) == 1 && cpr) s.cpr1 = cpr; }
+    p = strstr(text, "ENC2: angle=");
+    if (p) s.enc2_valid = sscanf(p, "ENC2: angle=%lf deg pos=%lf turn", &s.angle2, &s.pos2) == 2;
+    p = strstr(text, "ENC2_RAW_DEG=");
+    if (p) s.raw2_valid = sscanf(p, "ENC2_RAW_DEG=%lf", &s.raw2) == 1 && isfinite(s.raw2);
+    s.enc1_valid = s.enc1_valid && isfinite(s.pos1);
+    s.enc2_valid = s.enc2_valid && isfinite(s.angle2) && isfinite(s.pos2);
+    return s;
+}
+
+static zero_encoder_snapshot zero_encoder_query(flash_state *state, const motor_map_entry *m, FILE *log, const char *stage)
+{
+    pthread_mutex_lock(&boot_capture_mutex);
+    fprintf(log, "\n--- %s: send menu string 'p' (read-only, disabled) ---\n", stage); fflush(log);
+    pthread_mutex_unlock(&boot_capture_mutex);
+    char text[8192] = {0}; size_t used = 0;
+    console_use_motor(state, m);
+    frame_ring_clear(&state->frames);
+    if (send_boot_data(state, (const uint8_t *)"p", 1) == 0) {
+        uint64_t until = time_us() + 1500000;
+        while (!stop_requested && time_us() < until) {
+            rx_can_frame frame;
+            if (!frame_ring_pop(&state->frames, &frame, 20)) continue;
+            if (frame.bus != m->bus || !boot_output_id_matches(frame.can_id, m->id)) continue;
+            if (used + frame.len < sizeof(text)) {
+                memcpy(text + used, frame.data, frame.len); used += frame.len; text[used] = 0;
+            }
+        }
+    }
+    zero_encoder_snapshot s = zero_encoder_parse(text);
+    pthread_mutex_lock(&boot_capture_mutex);
+    fprintf(log, "\nQUERY_SUMMARY stage=%s ENC1=%s ENC2=%s ENC2_RAW=%s\n", stage,
+            s.enc1_valid ? "received" : "unavailable", s.enc2_valid ? "received" : "unavailable",
+            s.raw2_valid ? "received" : "unavailable (requires diagnostic firmware)"); fflush(log);
+    pthread_mutex_unlock(&boot_capture_mutex);
+    return s;
+}
+
+static double zero_shortest_deg(double deg) { return remainder(deg, 360.0); }
+
+static void zero_encoder_compare(FILE *log, const zero_encoder_snapshot *before,
+                                  const zero_encoder_snapshot *after, double ratio)
+{
+    pthread_mutex_lock(&boot_capture_mutex);
+    if (before->enc1_valid && after->enc1_valid) {
+        /* 65536 CPR is specific to the inspected reference firmware. */
+        double raw_before = before->raw1 * 360.0 / before->cpr1;
+        double raw_after = after->raw1 * 360.0 / after->cpr1;
+        fprintf(log, "ENC1 motor: pos_before=%.6f turns pos_after=%.6f turns delta=%.6f turns / %.4f deg\n"
+                     "ENC1 raw: before=%d / %.4f deg after=%d / %.4f deg shortest_delta=%.4f deg\n",
+                before->pos1, after->pos1, after->pos1-before->pos1, (after->pos1-before->pos1)*360,
+                before->raw1, raw_before, after->raw1, raw_after, zero_shortest_deg(raw_after-raw_before));
+    } else fputs("ENC1 comparison unavailable: firmware 'p' output missing.\n", log);
+    if (before->enc2_valid && after->enc2_valid) {
+        fprintf(log, "ENC2 output: pos_before=%.6f turns pos_after=%.6f turns delta=%.6f turns / %.4f output deg / %.4f motor deg\n"
+                     "ENC2 calibrated angle: before=%.4f deg after=%.4f deg shortest_delta=%.4f output deg\n",
+                before->pos2, after->pos2, after->pos2-before->pos2, (after->pos2-before->pos2)*360,
+                (after->pos2-before->pos2)*360*ratio, before->angle2, after->angle2, zero_shortest_deg(after->angle2-before->angle2));
+        if (before->enc1_valid && after->enc1_valid) {
+            double d1 = after->pos1-before->pos1, d2 = (after->pos2-before->pos2)*ratio;
+            fprintf(log, "RESTORE comparison motor turns: ENC1_delta=%.6f ENC2_delta_scaled=%.6f residual=%.6f\n", d1, d2, d1-d2);
+            if (fabs(d1) > .5 && fabs(zero_shortest_deg((after->raw1-before->raw1)*360.0/before->cpr1)) < 1)
+                fputs("HINT: ENC1 single-turn raw angle is nearly unchanged but restored multi-turn position jumped; inspect ENC2 angle/config/offset and startup turn reconstruction. This does not identify a hardware fault by itself.\n", log);
+        }
+    } else fputs("ENC2 comparison unavailable: firmware 'p' output missing.\n", log);
+    if (before->raw2_valid && after->raw2_valid)
+        fprintf(log, "ENC2 raw angle: before=%.6f deg after=%.6f deg shortest_delta=%.6f output deg\n",
+                before->raw2, after->raw2, zero_shortest_deg(after->raw2-before->raw2));
+    else fputs("ENC2 RAW angle unavailable; calibrated angle is NOT raw angle. Apply firmware diagnostic patch to expose it.\n", log);
+    fflush(log); pthread_mutex_unlock(&boot_capture_mutex);
+}
+
 static void zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_t slot,
                               const zero_cycle_config *c, unsigned int failed_cycle,
-                              double target_turns, float baseline, const char *csv_path)
+                              double target_turns, float baseline, const char *csv_path,
+                              const zero_encoder_snapshot *before_snapshot)
 {
     char log_path[512];
     snprintf(log_path, sizeof(log_path), "%s.retries.log", csv_path);
@@ -146,6 +232,7 @@ static void zero_cycle_retest(flash_state *state, const motor_map_entry *m, size
                  "10 additional power cycles, NO motion/enable/zero; all errors relative to original baseline.\n",
             failed_cycle, m->index, m->bus, m->id, c->ratio, target_turns, baseline_turns, c->tolerance);
     pthread_mutex_lock(&boot_capture_mutex);
+    FILE *previous_capture = boot_capture_file;
     boot_capture_bus = m->bus; boot_capture_id = m->id; boot_capture_file = log;
     pthread_mutex_unlock(&boot_capture_mutex);
     printf(console_text(state,
@@ -185,12 +272,16 @@ static void zero_cycle_retest(flash_state *state, const motor_map_entry *m, size
             fprintf(log, "\nRESULT retry=%u ERROR no valid position\n", i);
             pthread_mutex_unlock(&boot_capture_mutex);
         }
+        if (powered == 0) {
+            zero_encoder_snapshot snapshot = zero_encoder_query(state, m, log, "RETEST_AFTER_BOOT");
+            zero_encoder_compare(log, before_snapshot, &snapshot, c->ratio);
+        }
         /* Keep capturing late startup messages, without motion commands. */
         console_quiet_sleep_ms(1000);
         fflush(stdout);
     }
     pthread_mutex_lock(&boot_capture_mutex);
-    boot_capture_file = NULL;
+    boot_capture_file = previous_capture;
     fprintf(log, "\nSUMMARY completed=%u valid=%u baseline_matches=%u interrupted=%d\n", completed, valid, matched, stop_requested != 0);
     fclose(log);
     pthread_mutex_unlock(&boot_capture_mutex);
@@ -221,9 +312,16 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     }
     char path[256]; snprintf(path, sizeof(path), "/tmp/zero-cycle-%ld-%llu.csv", (long)getpid(), (unsigned long long)time_us());
     FILE *csv = fopen(path, "wx"); if (!csv) { perror(path); return -1; }
+    char readable_path[512]; snprintf(readable_path, sizeof(readable_path), "%s.boot.log", path);
+    FILE *readable = fopen(readable_path, "wx");
+    if (!readable) { perror(readable_path); fclose(csv); return -1; }
     fprintf(csv, "cycle,target_motor_turns,before_output_rad,after_output_rad,error_motor_turns,result\n"); fflush(csv);
     unsigned int seed = c.seed ? c.seed : (unsigned int)time_us();
     printf("zero_cycle_test: index=%02u ratio=%.9g range=+/-%.6g motor turns seed=%u csv=%s\n", index, c.ratio, c.max_turns, seed, path);
+    printf("zero_cycle_test: readable boot/encoder diagnostics: %s\n", readable_path);
+    pthread_mutex_lock(&boot_capture_mutex);
+    boot_capture_bus = m->bus; boot_capture_id = m->id; boot_capture_file = readable;
+    pthread_mutex_unlock(&boot_capture_mutex);
     bool old_output = state->show_can_output, old_input = state->show_motor_input;
     unsigned int old_bus = state->bus, old_id = state->boot_id;
     state->show_can_output = state->show_motor_input = false;
@@ -278,6 +376,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         if (zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
         float before = reply.position;
+        zero_encoder_snapshot before_snapshot = zero_encoder_query(state, m, readable, "BEFORE_POWER_OFF");
         uint64_t off_begin = time_us();
         if (zero_cycle_operation(state, 0, slot)) goto done;
         while (!stop_requested && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
@@ -288,6 +387,8 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             goto done;
         }
         double error = (reply.position - before) * c.ratio / (2 * M_PI);
+        zero_encoder_snapshot after_snapshot = zero_encoder_query(state, m, readable, "AFTER_POWER_ON");
+        zero_encoder_compare(readable, &before_snapshot, &after_snapshot, c.ratio);
         bool ok = fabs(error) <= c.tolerance;
         fprintf(csv, "%u,%.9g,%.9g,%.9g,%.9g,%s\n", n + 1, motor_target, before, reply.position, error, ok ? "PASS" : "FAIL"); fflush(csv);
         double before_turns = before * c.ratio / (2 * M_PI);
@@ -315,7 +416,8 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                c.tolerance, c.tolerance * 360, before_turns - motor_target);
         fflush(stdout);
         if (!ok) {
-            zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path);
+            zero_encoder_compare(stdout, &before_snapshot, &after_snapshot, c.ratio);
+            zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path, &before_snapshot);
             goto done;
         }
         ++passed;
@@ -323,6 +425,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     result = stop_requested ? -1 : 0;
 done:
     if (state->motor_power_on && zero_cycle_operation(state, 0, slot)) result = -1;
+    pthread_mutex_lock(&boot_capture_mutex);
+    boot_capture_file = NULL;
+    fclose(readable);
+    pthread_mutex_unlock(&boot_capture_mutex);
     state->show_can_output = old_output; state->show_motor_input = old_input;
     state->bus = old_bus; state->boot_id = old_id; update_boot_ids(state);
     fprintf(csv, "# result=%s passed=%u\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed); fclose(csv);

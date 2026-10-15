@@ -1049,13 +1049,12 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
     pthread_mutex_lock(&boot_capture_mutex);
     if (boot_capture_file && frame.bus == boot_capture_bus &&
         boot_output_id_matches(frame.can_id, boot_capture_id)) {
-        fprintf(boot_capture_file, "\n[time_us=%llu bus=%u can_id=0x%X len=%u] hex:",
-                (unsigned long long)frame.time_us, frame.bus, frame.can_id, (unsigned)frame.len);
-        for (unsigned int k = 0; k < frame.len; ++k) fprintf(boot_capture_file, " %02X", frame.data[k]);
-        fputs(" text: ", boot_capture_file);
+        /* Preserve the byte stream across CAN frames; CR is redundant in
+         * firmware CR/LF output. Raw values are printed by firmware queries. */
         for (unsigned int k = 0; k < frame.len; ++k) {
             unsigned char ch = frame.data[k];
-            if (isprint(ch) || ch == '\n' || ch == '\r' || ch == '\t') fputc(ch, boot_capture_file);
+            if (ch == '\r') continue;
+            if (isprint(ch) || ch == '\n' || ch == '\t') fputc(ch, boot_capture_file);
             else fprintf(boot_capture_file, "\\x%02X", ch);
         }
         fflush(boot_capture_file);

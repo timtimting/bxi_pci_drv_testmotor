@@ -68,8 +68,19 @@ int main(void)
     boot_capture_file = NULL;
     rewind(capture); char captured[1024] = {0};
     assert(fread(captured, 1, sizeof(captured) - 1, capture) > 0);
-    assert(strstr(captured, "BOOT") && strstr(captured, "42 4F 4F 54 0A"));
+    assert(strstr(captured, "BOOT\n") && !strstr(captured, "hex:"));
     assert(!strstr(captured, "OTHER")); fclose(capture);
+    zero_encoder_snapshot enc_before = zero_encoder_parse("ENC1: raw=62000 pos=0.951134\r\nENC2: angle=17.5 deg pos=0.048661 turn\r\nENC2_RAW_DEG=12.3\n");
+    zero_encoder_snapshot enc_after = zero_encoder_parse("ENC1: raw=62001 pos=6.951052\nENC2: angle=128.0 deg pos=0.355631 turn\nENC2_RAW_DEG=12.4\n");
+    assert(enc_before.enc1_valid && enc_before.enc2_valid && enc_before.raw2_valid);
+    assert(fabs(enc_after.pos1-enc_before.pos1-5.999918) < 1e-6);
+    assert(!zero_encoder_parse("old firmware without enc info").enc1_valid);
+    assert(fabs(zero_shortest_deg(-359.8)-.2) < 1e-6);
+    capture = tmpfile(); assert(capture);
+    zero_encoder_compare(capture, &enc_before, &enc_after, 19.54570637);
+    rewind(capture); memset(captured, 0, sizeof(captured));
+    assert(fread(captured, 1, sizeof(captured)-1, capture) > 0);
+    assert(strstr(captured, "ENC1 motor:") && strstr(captured, "ENC2 output:")); fclose(capture);
     puts("PASS: random coverage, config, completion and silent raw boot capture filtering");
     return 0;
 }
