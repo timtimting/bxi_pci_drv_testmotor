@@ -72,6 +72,35 @@ int main(void)
     assert(c.count == 1000 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
     assert(c.acceleration == 20 && c.arrival_tolerance == .1 && c.settle_speed == .1);
     assert(c.move_retry_count == 2 && c.arrival_wait_ms == 5000 && c.retry_hold_ms == 3000);
+    assert(c.continue_after_position_failure == 1 && c.revisit_after_random_cycles == 3);
+    /* Regression: -13 motor-turn restart jump must command a displacement
+     * of -6.235 turns to return a physical +6.235-turn point to original zero. */
+    limits.p_min = -12.5; limits.p_max = 12.5;
+    double scale = 2*M_PI/c.ratio, current = -6.765*scale;
+    double offset = current-6.235*scale;
+    float compensated;
+    assert(zero_cycle_compensated_target(0, offset, &c, &limits, &compensated) == 0);
+    assert(fabs((compensated-current)/scale + 6.235) < 1e-5);
+    assert(zero_cycle_compensated_target(6.235, offset, &c, &limits, &compensated) == 0);
+    assert(fabs(compensated-current) < 1e-6);
+    assert(zero_cycle_compensated_target(9.1, offset, &c, &limits, &compensated) != 0);
+    assert(zero_cycle_compensated_target(0, 20, &c, &limits, &compensated) != 0);
+    zero_cycle_anomaly points[2] = {{.motor_turns=6.235}, {.motor_turns=-2}};
+    assert(zero_cycle_find_anomaly(points, 2, 6.24, .1) == 0);
+    assert(zero_cycle_find_anomaly(points, 2, -2.01, .1) == 1);
+    assert(zero_cycle_find_anomaly(points, 2, 0, .1) == -1);
+    points[0].observations = 3; points[0].failures = 2;
+    points[0].planned_returns = 2; points[0].reproduced_returns = 1;
+    points[0].fixed_trials = 20; points[0].fixed_failures = 20;
+    zero_cycle_summary(path, points, 1, 1, 2, 0, true, 10, .1);
+    char summary_path[512]; snprintf(summary_path, sizeof(summary_path), "%s.summary.csv", path);
+    FILE *summary_file = fopen(summary_path, "r"); assert(summary_file);
+    char summary_text[2048] = {0};
+    assert(fread(summary_text, 1, sizeof(summary_text)-1, summary_file) > 0);
+    fclose(summary_file); unlink(summary_path);
+    assert(strstr(summary_text, "passed=1 position_failures=2"));
+    assert(strstr(summary_text, "reproduced_returns") && strstr(summary_text, "fixed_retest_trials"));
+    assert(strstr(summary_text, ",3,2,2,1,0,20,20,0,"));
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
     const char *line = "zero_cycle_test 01 config/zero_c";

@@ -19,6 +19,10 @@ retry_hold_ms: 3000
 retry_gain_factor: 1.5
 retry_kp_max: 100
 retry_kd_max: 7.5
+# After fixed-point 10x capture, infer a software coordinate offset, return
+# to the original zero WITHOUT re-zeroing, then continue and revisit anomalies.
+continue_after_position_failure: 1
+revisit_after_random_cycles: 3
 # Motor shaft turns, absolute comparison (no wrapping).
 tolerance_motor_turns: 0.1
 # Stop at whichever limit comes first; 0 disables that limit.
