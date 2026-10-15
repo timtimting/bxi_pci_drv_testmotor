@@ -5,10 +5,12 @@ int main(void)
 {
     unsigned int seed = 1234, replay = seed;
     int sectors[36] = {0};
-    for (unsigned int i = 0; i < 36; ++i) {
-        double target = zero_cycle_target(i, &seed, 9);
+    unsigned int order[36], replay_order[36];
+    for (unsigned int i = 0; i < 72; ++i) {
+        if (i % 36 == 0) memset(sectors, 0, sizeof(sectors));
+        double target = zero_cycle_target(i, &seed, 9, order);
         assert(target > -9 && target < 9);
-        assert(target == zero_cycle_target(i, &replay, 9));
+        assert(target == zero_cycle_target(i, &replay, 9, replay_order));
         int sector = (int)((target + 9) * 2);
         assert(sector >= 0 && sector < 36);
         assert(!sectors[sector]++);
@@ -35,7 +37,7 @@ int main(void)
     assert(zero_cycle_load(path, &c) != 0);
     unlink(path);
     assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
-    assert(c.count == 5 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
+    assert(c.count == 1000 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
     const char *line = "zero_cycle_test 01 config/zero_c";

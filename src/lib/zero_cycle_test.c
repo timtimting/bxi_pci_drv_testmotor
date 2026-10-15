@@ -47,12 +47,35 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
     return 0;
 }
 
-static double zero_cycle_target(unsigned int n, unsigned int *seed, double range)
+static double zero_cycle_target(unsigned int n, unsigned int *seed, double range, unsigned int order[36])
 {
-    /* Visit all 36 equal sectors per block, jitter within each sector. */
-    unsigned int sector = (n % 36u * 17u) % 36u;
+    /* Reshuffle each block, then jitter inside every sector once. */
+    if (n % 36u == 0) {
+        for (unsigned int i = 0; i < 36; ++i) order[i] = i;
+        for (unsigned int i = 35; i > 0; --i) {
+            unsigned int j = (unsigned int)((rand_r(seed) / ((double)RAND_MAX + 1)) * (i + 1));
+            unsigned int swap = order[i]; order[i] = order[j]; order[j] = swap;
+        }
+    }
+    unsigned int sector = order[n % 36u];
     double jitter = (rand_r(seed) + .5) / ((double)RAND_MAX + 1.0);
     return -range + 2 * range * (sector + jitter) / 36.0;
+}
+
+/* Keep routine power/scan/handshake chatter out of the per-cycle report. */
+static int zero_cycle_operation(flash_state *state, int operation, size_t slot)
+{
+    int out = -1, err = -1;
+    if (console_silence_process_output(&out, &err)) {
+        fprintf(stderr, "zero_cycle_test: ERROR cannot suppress routine output\n"); return -1;
+    }
+    int result;
+    if (operation == 1) result = console_power_on(state);
+    else if (operation == 0) result = console_power_off(state);
+    else result = console_send_special(state, slot, (uint8_t)operation, "zero_cycle_handshake");
+    console_restore_process_output(out, err);
+    if (result) fprintf(stderr, "zero_cycle_test: ERROR operation=%d failed\n", operation);
+    return result;
 }
 
 static int zero_cycle_sample(flash_state *state, const motor_map_entry *m,
@@ -89,12 +112,9 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
 {
     if (zero_cycle_sample(state, m, 0, 0, 0, reply)) return -1;
     float start = reply->position;
-    uint64_t begin = time_us(), stable = 0, next_report = 0;
+    uint64_t begin = time_us(), stable = 0;
     double speed_threshold = zero_cycle_speed_threshold(limits_for_entry(state, m), c);
     double ramp_s = fabs(target - start) / (c->speed * 2 * M_PI / c->ratio);
-    printf("zero_cycle_test: move target_motor_turns=%.6f target_output_rad=%.7f ramp_s=%.2f speed_threshold_motor_turns_s=%.6f\n",
-           target * c->ratio / (2 * M_PI), target, ramp_s, speed_threshold);
-    fflush(stdout);
     while (!stop_requested && time_us() - begin < (uint64_t)c->move_timeout_ms * 1000) {
         double t = (time_us() - begin) / 1e6;
         double fraction = ramp_s > 0 ? fmin(t / ramp_s, 1) : 1;
@@ -106,13 +126,6 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
             if (!stable) stable = time_us();
             if (time_us() - stable >= (uint64_t)c->settle_ms * 1000) return 0;
         } else stable = 0;
-        if (time_us() >= next_report) {
-            printf("zero_cycle_test: moving elapsed_s=%.1f phase=%s actual_motor_turns=%.6f error_motor_turns=%.6f speed_motor_turns_s=%.6f stable_ms=%.0f\n",
-                   t, fraction < 1 ? "ramp" : "settle", reply->position * c->ratio / (2 * M_PI),
-                   error, speed, stable ? (time_us() - stable) / 1000.0 : 0.0);
-            fflush(stdout);
-            next_report = time_us() + 1000000;
-        }
         sleep_ms(10);
     }
     fprintf(stderr, "zero_cycle_test: ERROR move/settle timeout or interrupted\n");
@@ -148,9 +161,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     unsigned int old_bus = state->bus, old_id = state->boot_id;
     state->show_can_output = state->show_motor_input = false;
     int result = -1; unsigned int passed = 0; bxi_motor_reply reply;
+    unsigned int order[36];
     uint64_t begin = time_us();
-    if (console_power_on(state) || !state->motors[slot].online ||
-        console_send_special(state, slot, BXI_MOTOR_CMD_ZERO, "zero_cycle_initial_zero")) goto done;
+    if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
+        zero_cycle_operation(state, BXI_MOTOR_CMD_ZERO, slot)) goto done;
     console_quiet_sleep_ms(500);
     if (zero_cycle_sample(state, m, 0, 0, 0, &reply) ||
         fabs(reply.position) * c.ratio / (2 * M_PI) > c.tolerance) {
@@ -158,27 +172,23 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     }
     for (unsigned int n = 0; !stop_requested && (!c.count || n < c.count) &&
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
-        double motor_target = zero_cycle_target(n, &seed, c.max_turns);
+        double motor_target = zero_cycle_target(n, &seed, c.max_turns, order);
         float target = motor_target * 2 * M_PI / c.ratio;
         printf(console_text(state,
                "\n========== 第 %u 轮开始：目标电机端 %+.6f 圈（%+.3f°），输出端 %+.3f° ==========\n",
                "\n========== Cycle %u start: motor target %+.6f turns (%+.3f deg), output target %+.3f deg ==========\n"),
                n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
         fflush(stdout);
-        if (console_send_special(state, slot, BXI_MOTOR_CMD_ENABLE, "zero_cycle_enable") ||
+        if (zero_cycle_operation(state, BXI_MOTOR_CMD_ENABLE, slot) ||
             zero_cycle_move(state, m, &c, target, &reply)) goto done;
         /* Sample after disabling, so the baseline includes any release motion. */
-        if (console_send_special(state, slot, BXI_MOTOR_CMD_DISABLE, "zero_cycle_disable") ||
+        if (zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
         float before = reply.position;
-        printf(console_text(state, "第 %u 轮：已记录断电前位置，准备断电 %u ms 并重新上电读取。\n",
-                                  "Cycle %u: baseline recorded; power off for %u ms, then reboot and read position.\n"),
-               n + 1, c.off_ms);
-        fflush(stdout);
         uint64_t off_begin = time_us();
-        if (console_power_off(state)) goto done;
+        if (zero_cycle_operation(state, 0, slot)) goto done;
         while (!stop_requested && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
-        if (stop_requested || console_power_on(state) || !state->motors[slot].online ||
+        if (stop_requested || zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) {
             printf(console_text(state, "第 %u 轮失败：重新上电后未能获取有效位置，无法比较。\n",
                                       "Cycle %u FAILED: no valid position after reboot; comparison unavailable.\n"), n + 1);
@@ -216,7 +226,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     }
     result = stop_requested ? -1 : 0;
 done:
-    if (state->motor_power_on && console_power_off(state)) result = -1;
+    if (state->motor_power_on && zero_cycle_operation(state, 0, slot)) result = -1;
     state->show_can_output = old_output; state->show_motor_input = old_input;
     state->bus = old_bus; state->boot_id = old_id; update_boot_ids(state);
     fprintf(csv, "# result=%s passed=%u\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed); fclose(csv);
