@@ -73,6 +73,20 @@ int main(void)
     assert(c.acceleration == 20 && c.arrival_tolerance == .1 && c.settle_speed == .1);
     assert(c.move_retry_count == 2 && c.arrival_wait_ms == 5000 && c.retry_hold_ms == 3000);
     assert(c.continue_after_position_failure == 1 && c.revisit_after_random_cycles == 3);
+    zero_cycle_config scan;
+    assert(zero_cycle_load("config/zero_cycle_degree_scan.yaml", &scan) == 0);
+    assert(scan.test_mode == 1 && scan.count == 350 && zero_cycle_scan_steps(&scan) == 175);
+    assert(scan.scan_return_speed_deg_s == 5 && zero_cycle_physical_limit(&scan) > 9);
+    for (unsigned int i = 0; i < 350; ++i) {
+        double target;
+        assert(zero_cycle_scan_target(i, &scan, &target) == 0);
+        double expected_deg = i < 175 ? -(double)(i+1) : (double)(i-174);
+        assert(fabs(target*360/scan.ratio-expected_deg) < 1e-9);
+    }
+    double scan_target;
+    assert(zero_cycle_scan_target(350, &scan, &scan_target) != 0);
+    float scan_command;
+    assert(zero_cycle_compensated_target(zero_cycle_physical_limit(&scan), 0, &scan, &limits, &scan_command) == 0);
     /* Regression: -13 motor-turn restart jump must command a displacement
      * of -6.235 turns to return a physical +6.235-turn point to original zero. */
     limits.p_min = -12.5; limits.p_max = 12.5;
@@ -108,7 +122,7 @@ int main(void)
     assert(strstr(summary_text, ",3,2,2,1,0,20,20,0,"));
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
-    const char *line = "zero_cycle_test 01 config/zero_c";
+    const char *line = "zero_cycle_test 01 config/zero_cycle_t";
     size_t count = 0;
     const char *const *words = completion_words_for_line(line, strlen(line), &count);
     assert(words && count == 1 && !strcmp(words[0], "config/zero_cycle_test.yaml"));

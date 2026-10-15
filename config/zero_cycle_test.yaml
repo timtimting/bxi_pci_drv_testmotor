@@ -1,3 +1,4 @@
+test_mode: random
 # CAN ordinary rotary joint only; replace 0 with the ACTUAL firmware gear ratio.
 # Reference source USE_ENC2=1 defines GR=7056/361 (~19.54570637).
 gear_ratio: 19.54570637

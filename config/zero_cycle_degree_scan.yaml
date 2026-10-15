@@ -1,0 +1,42 @@
+test_mode: degree_scan
+# CAN ordinary rotary joint only; replace 0 with the ACTUAL firmware gear ratio.
+# Reference source USE_ENC2=1 defines GR=7056/361 (~19.54570637).
+gear_ratio: 19.54570637
+# Random-mode limit only; degree_scan uses scan_limit_output_deg instead.
+max_motor_turns: 9
+motor_turns_per_second: 10
+# Smooth trajectory acceleration limit, motor shaft turns/s^2.
+motor_acceleration_turns_per_second2: 20
+# Motion arrival and settling criteria are independent of reboot comparison.
+arrival_tolerance_motor_turns: 0.01
+settle_speed_motor_turns_per_second: 0.1
+# MIT gains in output-side units; select for your unloaded test motor.
+kp: 50
+kd: 5
+# Wait after trajectory, then bounded gain retries (500ms gain ramps).
+arrival_wait_ms: 5000
+move_retry_count: 2
+retry_hold_ms: 3000
+retry_gain_factor: 1.5
+retry_kp_max: 100
+retry_kd_max: 7.5
+# After fixed-point 10x capture, infer a software coordinate offset, return
+# to the original zero WITHOUT re-zeroing, then continue and revisit anomalies.
+continue_after_position_failure: 1
+revisit_after_random_cycles: 3
+# Motor shaft turns, absolute comparison (no wrapping).
+tolerance_motor_turns: 0.1
+# Stop at whichever limit comes first; 0 disables that limit.
+count: 350
+duration_s: 0
+# Actual off interval includes existing power_off's 300ms wait.
+off_ms: 1000
+settle_ms: 500
+move_timeout_ms: 120000
+# 0 selects a time-based seed, printed for reproduction.
+seed: 0
+
+# Output-shaft scan: -1..-175 deg, slow zero return/reboot check, +1..+175 deg.
+scan_step_output_deg: 1
+scan_limit_output_deg: 175
+scan_return_output_deg_per_second: 5
