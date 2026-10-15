@@ -867,7 +867,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                 anomalies[point].motor_turns = physical_before;
                 anomalies[point].first_cycle = n+1;
             }
-        }
+        } else ++passed;
         if (point >= 0) {
             ++anomalies[point].observations;
             if (!ok) ++anomalies[point].failures;
@@ -911,6 +911,16 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                                   "  Target reached: %s; gain retries=%u. PASS/FAIL above tests power-cycle position consistency only.\n"),
                motion_result == 0 ? console_text(state, "是", "YES") : console_text(state, "否（当前位置兜底）", "NO (current-position fallback)"), retries_used);
         fflush(stdout);
+        printf(console_text(state,
+               "========== 本次运行累计：成功 %u 次 | 失败 %u 次 | 共比较 %u 次 ==========\n\n",
+               "========== Run totals: PASS %u | FAIL %u | comparisons %u ==========\n\n"),
+               passed, failures, passed+failures);
+        fprintf(csv, "# progress cycle=%u passed=%u position_failures=%u comparisons=%u\n",
+                n+1, passed, failures, passed+failures); fflush(csv); fflush(stdout);
+        pthread_mutex_lock(&boot_capture_mutex);
+        fprintf(readable, "\nRUNNING_TOTAL cycle=%u passed=%u position_failures=%u comparisons=%u\n",
+                n+1, passed, failures, passed+failures); fflush(readable);
+        pthread_mutex_unlock(&boot_capture_mutex);
         if (!ok) {
             zero_encoder_compare(stdout, &before_snapshot, &after_snapshot, c.ratio);
             zero_cycle_fixed_stats fixed;
@@ -942,7 +952,6 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             if (anomaly_count == 1 && anomalies[0].first_cycle == n+1) random_since_revisit = 0;
             continue;
         }
-        ++passed;
     }
     completed = !zero_cycle_cancel_requested();
     result = zero_cycle_cancel_requested() || failures ? -1 : 0;
