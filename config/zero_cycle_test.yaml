@@ -26,7 +26,7 @@ revisit_after_random_cycles: 3
 # Motor shaft turns, absolute comparison (no wrapping).
 tolerance_motor_turns: 0.1
 # Stop at whichever limit comes first; 0 disables that limit.
-count: 1000
+count: 100
 duration_s: 0
 # Actual off interval includes existing power_off's 300ms wait.
 off_ms: 1000

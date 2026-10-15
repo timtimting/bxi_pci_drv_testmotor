@@ -69,7 +69,7 @@ int main(void)
     assert(zero_cycle_load(path, &c) != 0);
     unlink(path);
     assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
-    assert(c.count == 1000 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
+    assert(c.count == 100 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
     assert(c.acceleration == 20 && c.arrival_tolerance == .1 && c.settle_speed == .1);
     assert(c.move_retry_count == 2 && c.arrival_wait_ms == 5000 && c.retry_hold_ms == 3000);
     assert(c.continue_after_position_failure == 1 && c.revisit_after_random_cycles == 3);
@@ -85,6 +85,11 @@ int main(void)
     assert(fabs(compensated-current) < 1e-6);
     assert(zero_cycle_compensated_target(9.1, offset, &c, &limits, &compensated) != 0);
     assert(zero_cycle_compensated_target(0, 20, &c, &limits, &compensated) != 0);
+    assert(zero_cycle_zero_recheck_ok(-.0445, -.0445, .1));
+    assert(!zero_cycle_zero_recheck_ok(-.0445, 5.955418, .1)); /* Old offset must not mask a failed zero reboot. */
+    assert(!zero_cycle_zero_recheck_ok(0, 6, .1));
+    assert(!zero_cycle_zero_recheck_ok(.09, -.09, .1));
+    assert(!zero_cycle_zero_recheck_ok(0, NAN, .1));
     zero_cycle_anomaly points[2] = {{.motor_turns=6.235}, {.motor_turns=-2}};
     assert(zero_cycle_find_anomaly(points, 2, 6.24, .1) == 0);
     assert(zero_cycle_find_anomaly(points, 2, -2.01, .1) == 1);

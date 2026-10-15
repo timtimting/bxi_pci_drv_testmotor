@@ -1,4 +1,42 @@
 /* Included by main.c. All angles in this test configuration are motor-side turns. */
+static struct termios zero_cycle_saved_terminal;
+static bool zero_cycle_input_active, zero_cycle_user_cancelled;
+
+static int zero_cycle_input_begin(void)
+{
+    zero_cycle_user_cancelled = false;
+    if (!isatty(STDIN_FILENO)) return 0;
+    if (tcgetattr(STDIN_FILENO, &zero_cycle_saved_terminal)) return -1;
+    struct termios terminal = zero_cycle_saved_terminal;
+    terminal.c_lflag &= ~(ICANON | ECHO);
+    terminal.c_cc[VMIN] = 0;
+    terminal.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal)) return -1;
+    zero_cycle_input_active = true;
+    return 0;
+}
+
+static bool zero_cycle_cancel_requested(void)
+{
+    if (zero_cycle_input_active && !zero_cycle_user_cancelled) {
+        char input[64]; ssize_t count;
+        while ((count = read(STDIN_FILENO, input, sizeof(input))) > 0) {
+            for (ssize_t i = 0; i < count; ++i)
+                if (((unsigned char)input[i]) == 0x18) zero_cycle_user_cancelled = true;
+            if (zero_cycle_user_cancelled) break;
+        }
+    }
+    return stop_requested || zero_cycle_user_cancelled;
+}
+
+static void zero_cycle_input_end(void)
+{
+    if (zero_cycle_input_active) {
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &zero_cycle_saved_terminal)) perror("restore test terminal");
+        zero_cycle_input_active = false;
+    }
+}
+
 typedef struct {
     double ratio, max_turns, speed, kp, kd, tolerance;
     double acceleration, arrival_tolerance, settle_speed;
@@ -93,6 +131,7 @@ static double zero_cycle_target(unsigned int n, unsigned int *seed, double range
 /* Keep routine power/scan/handshake chatter out of the per-cycle report. */
 static int zero_cycle_operation(flash_state *state, int operation, size_t slot)
 {
+    if (operation != 0 && zero_cycle_cancel_requested()) return -1;
     int out = -1, err = -1;
     if (console_silence_process_output(&out, &err)) {
         fprintf(stderr, "zero_cycle_test: ERROR cannot suppress routine output\n"); return -1;
@@ -102,6 +141,7 @@ static int zero_cycle_operation(flash_state *state, int operation, size_t slot)
     else if (operation == 0) result = console_power_off(state);
     else result = console_send_special(state, slot, (uint8_t)operation, "zero_cycle_handshake");
     console_restore_process_output(out, err);
+    if (operation != 0 && zero_cycle_cancel_requested()) return -1;
     if (result) fprintf(stderr, "zero_cycle_test: ERROR operation=%d failed\n", operation);
     return result;
 }
@@ -109,6 +149,7 @@ static int zero_cycle_operation(flash_state *state, int operation, size_t slot)
 static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry *m,
                              float target, float velocity, float kp, float kd, bxi_motor_reply *reply)
 {
+    if (zero_cycle_cancel_requested()) return -1;
     frame_ring_clear(&state->frames);
     console_use_motor(state, m);
     uint64_t sent = time_us();
@@ -117,7 +158,7 @@ static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry 
     rx_can_frame observed[8]; size_t observed_count = 0;
     console_expect_reply(state, m->bus);
     if (send_debug_mit(state, target, velocity, kp, kd, 0)) return -1;
-    while (!stop_requested && time_us() - sent < 100000) {
+    while (!zero_cycle_cancel_requested() && time_us() - sent < 100000) {
         /* Keep the current command cyclic while waiting for a reply. A
          * missing response must not turn a 100Hz sender into a 100ms gap. */
         if (time_us() >= next_send && transmissions < 10) {
@@ -151,7 +192,7 @@ static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry 
         ++decode_failures;
     }
     fprintf(stderr, "zero_cycle_test: ERROR %s: bus=%u motor_id=%u expected_CAN_ID=0x%03X byte0=0x%02X len>=8; sends=%u received=%u boot_text=%u decode_failures=%u. Raw diagnostics in .boot.log\n",
-            stop_requested ? "interrupted" : "fresh MIT feedback timeout (100ms)", m->bus, m->id,
+            zero_cycle_cancel_requested() ? "interrupted" : "fresh MIT feedback timeout (100ms)", m->bus, m->id,
             0x10u | m->id, m->id, transmissions, received, text_frames, decode_failures);
     pthread_mutex_lock(&boot_capture_mutex);
     if (boot_capture_file) {
@@ -194,6 +235,7 @@ static int zero_cycle_parse_state(const char *text)
 
 static int zero_cycle_enable_confirmed(flash_state *state, const motor_map_entry *m, size_t slot)
 {
+    if (zero_cycle_cancel_requested()) return -1;
     console_use_motor(state, m);
     frame_ring_clear(&state->frames);
     if (send_debug_special(state, BXI_MOTOR_CMD_ENABLE)) return -1;
@@ -203,7 +245,7 @@ static int zero_cycle_enable_confirmed(flash_state *state, const motor_map_entry
     char text[1024] = {0}; size_t used = 0;
     uint64_t begin = time_us(), next_send = 0, next_query = 0;
     int reported_state = -1;
-    while (!stop_requested && time_us() - begin < 2000000) {
+    while (!zero_cycle_cancel_requested() && time_us() - begin < 2000000) {
         uint64_t now = time_us();
         if (now >= next_send) {
             if (send_debug_mit(state, 0, 0, 0, 0, 0)) return -1;
@@ -234,7 +276,7 @@ static int zero_cycle_enable_confirmed(flash_state *state, const motor_map_entry
             end = strpbrk(text, "\r\n");
         }
     }
-    fprintf(stderr, "zero_cycle_test: ERROR enable not confirmed: STATE=%d (expected 02 MOTOR). Motor may reject enable due to fault/calibration, startup not ready, or unsupported state query; inspect .boot.log.\n", reported_state);
+    if (!zero_cycle_cancel_requested()) fprintf(stderr, "zero_cycle_test: ERROR enable not confirmed: STATE=%d (expected 02 MOTOR). Motor may reject enable due to fault/calibration, startup not ready, or unsupported state query; inspect .boot.log.\n", reported_state);
     return -1;
 }
 
@@ -289,7 +331,7 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
     double next_attempt = ramp_s + c->arrival_wait_ms / 1000.;
     double previous_kp = c->kp, previous_kd = c->kd, desired_kp = c->kp, desired_kd = c->kd;
     double gain_start = 0;
-    while (!stop_requested && time_us() - begin < (uint64_t)c->move_timeout_ms * 1000) {
+    while (!zero_cycle_cancel_requested() && time_us() - begin < (uint64_t)c->move_timeout_ms * 1000) {
         double t = (time_us() - begin) / 1e6;
         float setpoint, set_velocity;
         zero_cycle_trajectory(start, target, t, ramp_s, &setpoint, &set_velocity);
@@ -338,9 +380,9 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
         sleep_ms(10);
     }
     fprintf(stderr, "zero_cycle_test: %s %s target=%.7f actual=%.7f error=%.7f turns (arrival_limit=%.7f); speed=%.5f turns/s (limit=%.5f). Inspect .boot.log MOTION records.\n",
-            stop_requested ? "ERROR" : "WARNING", stop_requested ? "interrupted" : "move timeout; attempt current-position fallback", target/scale, reply->position/scale,
+            zero_cycle_cancel_requested() ? "ERROR" : "WARNING", zero_cycle_cancel_requested() ? "interrupted" : "move timeout; attempt current-position fallback", target/scale, reply->position/scale,
             fabs(reply->position-target)/scale, c->arrival_tolerance, fabs(reply->velocity)/scale, speed_threshold);
-    return stop_requested ? -1 : 1;
+    return zero_cycle_cancel_requested() ? -1 : 1;
 }
 
 static int zero_cycle_settle_current(flash_state *state, const motor_map_entry *m,
@@ -349,7 +391,7 @@ static int zero_cycle_settle_current(flash_state *state, const motor_map_entry *
     float hold = reply->position;
     uint64_t begin = time_us(), stable = 0;
     double speed_threshold = zero_cycle_speed_threshold(limits_for_entry(state, m), c);
-    while (!stop_requested && time_us()-begin < 5000000) {
+    while (!zero_cycle_cancel_requested() && time_us()-begin < 5000000) {
         if (zero_cycle_sample(state, m, hold, c->kp, c->kd, reply)) return -1;
         double speed = fabs(reply->velocity)*c->ratio/(2*M_PI);
         double error = fabs(reply->position-hold)*c->ratio/(2*M_PI);
@@ -359,7 +401,7 @@ static int zero_cycle_settle_current(flash_state *state, const motor_map_entry *
         } else stable = 0;
         sleep_ms(10);
     }
-    fprintf(stderr, "zero_cycle_test: ERROR current position did not settle within 5s; skip power-cycle comparison\n");
+    if (!zero_cycle_cancel_requested()) fprintf(stderr, "zero_cycle_test: ERROR current position did not settle within 5s; skip power-cycle comparison\n");
     return -1;
 }
 
@@ -396,7 +438,7 @@ static zero_encoder_snapshot zero_encoder_query(flash_state *state, const motor_
     frame_ring_clear(&state->frames);
     if (send_boot_data(state, (const uint8_t *)"p", 1) == 0) {
         uint64_t until = time_us() + 1500000;
-        while (!stop_requested && time_us() < until) {
+        while (!zero_cycle_cancel_requested() && time_us() < until) {
             rx_can_frame frame;
             if (!frame_ring_pop(&state->frames, &frame, 20)) continue;
             if (frame.bus != m->bus || !boot_output_id_matches(frame.can_id, m->id)) continue;
@@ -473,14 +515,14 @@ static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_
            "\n失败点复测：保持当前位置，不使能、不运动、不置零；额外上下电 10 次。\n上电原始输出及角度记录：%s\n",
            "\nFailed-point retest: 10 additional power cycles, no enable/motion/zero.\nRaw boot output and angle results: %s\n"), log_path);
     unsigned int completed = 0, valid = 0, matched = 0;
-    for (unsigned int i = 1; i <= 10 && !stop_requested; ++i) {
+    for (unsigned int i = 1; i <= 10 && !zero_cycle_cancel_requested(); ++i) {
         pthread_mutex_lock(&boot_capture_mutex);
         fprintf(log, "\n\n========== RETEST %u/10 POWER OFF/ON ==========\n", i); fflush(log);
         pthread_mutex_unlock(&boot_capture_mutex);
         uint64_t off_begin = time_us();
         if (zero_cycle_operation(state, 0, slot)) break;
-        while (!stop_requested && time_us() - off_begin < (uint64_t)c->off_ms * 1000) sleep_ms(10);
-        if (stop_requested) break;
+        while (!zero_cycle_cancel_requested() && time_us() - off_begin < (uint64_t)c->off_ms * 1000) sleep_ms(10);
+        if (zero_cycle_cancel_requested()) break;
         bxi_motor_reply reply;
         int powered = zero_cycle_operation(state, 1, slot);
         bool readable = powered == 0 && state->motors[slot].online &&
@@ -516,14 +558,14 @@ static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_
     }
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_file = previous_capture;
-    fprintf(log, "\nSUMMARY completed=%u valid=%u baseline_matches=%u interrupted=%d\n", completed, valid, matched, stop_requested != 0);
+    fprintf(log, "\nSUMMARY completed=%u valid=%u baseline_matches=%u interrupted=%d\n", completed, valid, matched, zero_cycle_cancel_requested() != 0);
     fclose(log);
     pthread_mutex_unlock(&boot_capture_mutex);
     printf(console_text(state, "失败点复测结束：完成 %u/10，有效读取 %u 次，与原断电前一致 %u 次。日志：%s\n",
                               "Retest finished: completed %u/10, valid %u, baseline matches %u. Log: %s\n"),
            completed, valid, matched, log_path);
     *stats = (zero_cycle_fixed_stats){completed, valid, matched};
-    return completed == 10 && valid == 10 && !stop_requested ? 0 : -1;
+    return completed == 10 && valid == 10 && !zero_cycle_cancel_requested() ? 0 : -1;
 }
 
 static int zero_cycle_compensated_target(double motor_turns, double offset_rad,
@@ -537,10 +579,17 @@ static int zero_cycle_compensated_target(double motor_turns, double offset_rad,
     return 0;
 }
 
+static bool zero_cycle_zero_recheck_ok(double before_corrected_turns, double after_firmware_turns, double tolerance)
+{
+    return isfinite(after_firmware_turns) && fabs(after_firmware_turns) <= tolerance &&
+           fabs(after_firmware_turns-before_corrected_turns) <= tolerance;
+}
+
 static int zero_cycle_return_original_zero(flash_state *state, const motor_map_entry *m, size_t slot,
-                                           const zero_cycle_config *c, double offset_rad, FILE *log,
+                                           const zero_cycle_config *c, double *software_offset, FILE *log,
                                            const zero_encoder_snapshot *initial_zero)
 {
+    double offset_rad = *software_offset;
     float target;
     if (zero_cycle_compensated_target(0, offset_rad, c, limits_for_entry(state, m), &target)) {
         fprintf(stderr, "zero_cycle_test: ERROR compensated zero outside MIT range\n"); return -1;
@@ -584,6 +633,35 @@ static int zero_cycle_return_original_zero(flash_state *state, const motor_map_e
     pthread_mutex_lock(&boot_capture_mutex);
     fprintf(log, "RECOVERY firmware_output_rad=%.9g offset_output_rad=%.9g corrected_motor_turns=%.9g\n", reply.position, offset_rad, corrected);
     fflush(log); pthread_mutex_unlock(&boot_capture_mutex);
+    puts("原零位已回到，正在再次上下电验证；本次验证不沿用旧偏移来判 PASS。Reboot original zero for verification.");
+    uint64_t off_begin = time_us();
+    if (zero_cycle_operation(state, 0, slot)) return -1;
+    while (!zero_cycle_cancel_requested() && time_us()-off_begin < (uint64_t)c->off_ms*1000) sleep_ms(10);
+    if (zero_cycle_cancel_requested()) return -1;
+    if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
+        zero_cycle_sample(state, m, 0, 0, 0, &reply)) {
+        if (!zero_cycle_cancel_requested()) puts("原零位重启验证无法读取位置：暂停测试。ZERO RECHECK unavailable; test paused.");
+        return zero_cycle_cancel_requested() ? -1 : -2;
+    }
+    double reboot_turns = reply.position*c->ratio/(2*M_PI);
+    zero_encoder_snapshot reboot_snapshot = zero_encoder_query(state, m, log, "ORIGINAL_ZERO_REBOOT_CHECK");
+    bool zero_ok = zero_cycle_zero_recheck_ok(corrected, reboot_turns, c->tolerance);
+    if (initial_zero->enc1_valid && reboot_snapshot.enc1_valid) {
+        double delta = zero_shortest_deg(reboot_snapshot.raw1*360./reboot_snapshot.cpr1-initial_zero->raw1*360./initial_zero->cpr1);
+        if (fabs(delta) > c->arrival_tolerance*360+360./reboot_snapshot.cpr1) zero_ok = false;
+    }
+    if (initial_zero->raw2_valid && reboot_snapshot.raw2_valid &&
+        fabs(zero_shortest_deg(reboot_snapshot.raw2-initial_zero->raw2)) > c->arrival_tolerance*360/c->ratio+.01) zero_ok = false;
+    printf("原零位重启验证：断电前补偿位置 %+.6f 圈，上电后固件读数 %+.6f 圈，差值 %+.6f 圈，容差 %.6f 圈：%s\n",
+           corrected, reboot_turns, reboot_turns-corrected, c->tolerance, zero_ok ? "PASS" : "FAIL / 暂停测试");
+    pthread_mutex_lock(&boot_capture_mutex);
+    fprintf(log, "ORIGINAL_ZERO_REBOOT_RESULT corrected_before_motor_turns=%.9g firmware_after_motor_turns=%.9g delta_motor_turns=%.9g tolerance_motor_turns=%.9g result=%s old_offset_output_rad=%.9g\n",
+            corrected, reboot_turns, reboot_turns-corrected, c->tolerance, zero_ok ? "PASS" : "FAIL", offset_rad);
+    fflush(log); pthread_mutex_unlock(&boot_capture_mutex);
+    if (zero_cycle_cancel_requested()) return -1;
+    if (!zero_ok) return -2;
+    *software_offset = 0;
+    puts("原零位重启验证通过，清除旧软件偏移，继续后续测试。ZERO RECHECK PASS; old software offset cleared.");
     return 0;
 }
 
@@ -660,6 +738,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     char readable_path[512]; snprintf(readable_path, sizeof(readable_path), "%s.boot.log", path);
     FILE *readable = fopen(readable_path, "wx");
     if (!readable) { perror(readable_path); fclose(csv); return -1; }
+    if (zero_cycle_input_begin()) {
+        perror("test terminal input"); fclose(readable); fclose(csv); return -1;
+    }
+    puts("测试期间按 Ctrl+X 退出本次测试（无需回车），停止后下电并返回终端。Press Ctrl+X to stop this test.");
     fprintf(csv, "cycle,target_motor_turns,before_output_rad,after_output_rad,error_motor_turns,result,target_reached,gain_retries,physical_before_motor_turns,physical_after_motor_turns_before_correction,coordinate_offset_motor_turns,test_kind,anomaly_id,before_enc2_raw_deg,after_enc2_raw_deg,requested_anomaly_id,revisit_hit\n"); fflush(csv);
     unsigned int seed = c.seed ? c.seed : (unsigned int)time_us();
     fprintf(csv, "# motor_index=%u bus=%u id=%u gear_ratio=%.12g seed=%u\n", index, m->bus, m->id, c.ratio, seed); fflush(csv);
@@ -675,7 +757,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     unsigned int order[36], random_index = 0, random_since_revisit = 0, revisit_cursor = 0, anomaly_count = 0;
     zero_cycle_anomaly anomalies[ZERO_ANOMALY_MAX] = {0};
     double offset_rad = 0, scale = 2*M_PI/c.ratio;
-    bool completed = false;
+    bool completed = false, recovery_paused = false;
     uint64_t begin = time_us();
     if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
         zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
@@ -711,7 +793,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     fprintf(csv, "# initial_zero_before_rad=%.9g after_rad=%.9g save_ack=%s\n", initial_before, reply.position,
             save_confirmed ? "OK" : "UNCONFIRMED"); fflush(csv); fflush(stdout);
     zero_encoder_snapshot initial_zero_snapshot = zero_encoder_query(state, m, readable, "INITIAL_ORIGINAL_ZERO");
-    for (unsigned int n = 0; !stop_requested && (!c.count || n < c.count) &&
+    for (unsigned int n = 0; !zero_cycle_cancel_requested() && (!c.count || n < c.count) &&
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
         bool revisit = anomaly_count && random_since_revisit >= c.revisit_after_random_cycles;
         unsigned int requested_anomaly = 0;
@@ -736,7 +818,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
         fflush(stdout);
         if (zero_cycle_enable_confirmed(state, m, slot)) {
-            if (!stop_requested && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
+            if (!zero_cycle_cancel_requested() && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
                 zero_encoder_query(state, m, readable, "ENABLE_FAILURE_AFTER_DISABLE");
             goto done;
         }
@@ -744,7 +826,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         int motion_result = zero_cycle_move(state, m, &c, target, &reply, &retries_used);
         if (motion_result < 0 ||
             (motion_result > 0 && zero_cycle_settle_current(state, m, &c, &reply))) {
-            if (!stop_requested && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
+            if (!zero_cycle_cancel_requested() && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
                 zero_encoder_query(state, m, readable, "MOVE_FAILURE_AFTER_DISABLE");
             goto done;
         }
@@ -763,8 +845,8 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         zero_encoder_snapshot before_snapshot = zero_encoder_query(state, m, readable, "BEFORE_POWER_OFF");
         uint64_t off_begin = time_us();
         if (zero_cycle_operation(state, 0, slot)) goto done;
-        while (!stop_requested && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
-        if (stop_requested || zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
+        while (!zero_cycle_cancel_requested() && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
+        if (zero_cycle_cancel_requested() || zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) {
             printf(console_text(state, "第 %u 轮失败：重新上电后未能获取有效位置，无法比较。\n",
                                       "Cycle %u FAILED: no valid position after reboot; comparison unavailable.\n"), n + 1);
@@ -850,15 +932,34 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             offset_rad = reply.position - physical_before*scale;
             fprintf(csv, "# compensation_after_cycle=%u offset_output_rad=%.9g trusted_motor_turns=%.9g latest_firmware_output_rad=%.9g\n",
                     n+1, offset_rad, physical_before, reply.position); fflush(csv);
-            if (zero_cycle_return_original_zero(state, m, slot, &c, offset_rad, readable, &initial_zero_snapshot)) goto done;
+            int recovered = zero_cycle_return_original_zero(state, m, slot, &c, &offset_rad, readable, &initial_zero_snapshot);
+            if (recovered) {
+                recovery_paused = recovered == -2;
+                fprintf(csv, "# recovery_zero_recheck_after_cycle=%u result=%s\n", n+1, recovery_paused ? "FAIL_PAUSED" : "ABORTED"); fflush(csv);
+                goto done;
+            }
+            fprintf(csv, "# recovery_zero_recheck_after_cycle=%u result=PASS software_offset_cleared=1\n", n+1); fflush(csv);
             if (anomaly_count == 1 && anomalies[0].first_cycle == n+1) random_since_revisit = 0;
             continue;
         }
         ++passed;
     }
-    completed = !stop_requested;
-    result = stop_requested || failures ? -1 : 0;
+    completed = !zero_cycle_cancel_requested();
+    result = zero_cycle_cancel_requested() || failures ? -1 : 0;
 done:
+    zero_cycle_input_end();
+    if (zero_cycle_user_cancelled) {
+        puts("\n已收到退出测试请求，正在失能、下电并保存日志与汇总。Test cancellation requested.");
+        completed = false; result = -1;
+        pthread_mutex_lock(&boot_capture_mutex);
+        fputs("\nTEST_STOP reason=user_ctrl_x\n", readable); fflush(readable);
+        pthread_mutex_unlock(&boot_capture_mutex);
+        if (state->motor_power_on) {
+            console_use_motor(state, m);
+            if (send_debug_special(state, BXI_MOTOR_CMD_DISABLE))
+                fputs("zero_cycle_test: cancellation disable send failed; still attempting power off\n", stderr);
+        }
+    }
     if (state->motor_power_on && zero_cycle_operation(state, 0, slot)) { result = -1; completed = false; }
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_file = NULL;
@@ -867,8 +968,9 @@ done:
     state->show_can_output = old_output; state->show_motor_input = old_input;
     state->bus = old_bus; state->boot_id = old_id; update_boot_ids(state);
     const char *outcome = completed ? (failures ? "COMPLETED_WITH_POSITION_FAILURES" : "PASS") : "STOPPED";
+    if (recovery_paused) outcome = "PAUSED_ZERO_RECHECK_FAILED";
     if (result != 0 && !failures) outcome = "STOPPED";
-    fprintf(csv, "# result=%s passed=%u position_failures=%u current_position_fallbacks=%u\n", outcome, passed, failures, fallback_cycles); fclose(csv);
+    fprintf(csv, "# result=%s passed=%u position_failures=%u current_position_fallbacks=%u user_cancelled=%d\n", outcome, passed, failures, fallback_cycles, zero_cycle_user_cancelled); fclose(csv);
     zero_cycle_summary(path, anomalies, anomaly_count, passed, failures, fallback_cycles, completed, (time_us()-begin)/1e6, c.arrival_tolerance);
     printf("zero_cycle_test: %s passed=%u position_failures=%u current_position_fallbacks=%u csv=%s\n", outcome, passed, failures, fallback_cycles, path);
     return result;
