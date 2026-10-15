@@ -19,6 +19,12 @@ int main(void)
     fprintf(f, "gear_ratio: 19.54570637\ncount: 0\nduration_s: 60\n"); fclose(f);
     zero_cycle_config c;
     assert(zero_cycle_load(path, &c) == 0 && c.count == 0 && c.duration_s == 60);
+    bxi_motor_limits limits = bxi_motor_default_limits;
+    limits.v_min = -45; limits.v_max = 45;
+    double decoded_zero_speed = (limits.v_max - limits.v_min) / 4095. / 2 * c.ratio / (2 * M_PI);
+    assert(decoded_zero_speed > c.tolerance); /* Old criterion never settled. */
+    assert(decoded_zero_speed < zero_cycle_speed_threshold(&limits, &c));
+    assert(decoded_zero_speed * 2 > zero_cycle_speed_threshold(&limits, &c));
     f = fopen(path, "w"); fprintf(f, "gear_ratio: 18\n"); fclose(f);
     assert(zero_cycle_load(path, &c) != 0); /* Half output turn is ambiguous. */
     f = fopen(path, "w"); fprintf(f, "gear_ratio: 20\nmax_motor_turns: 9.1\n"); fclose(f);
@@ -28,7 +34,8 @@ int main(void)
     f = fopen(path, "w"); fprintf(f, "gear_ratio: nan\n"); fclose(f);
     assert(zero_cycle_load(path, &c) != 0);
     unlink(path);
-    assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) != 0); /* No guessed ratio. */
+    assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
+    assert(c.count == 5 && c.speed == .2 && c.kp == 50 && c.kd == 5);
     puts("PASS: random sector coverage, reproducibility and invalid config rejection");
     return 0;
 }

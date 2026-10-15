@@ -76,13 +76,25 @@ static int zero_cycle_sample(flash_state *state, const motor_map_entry *m,
     return -1;
 }
 
+static double zero_cycle_speed_threshold(const bxi_motor_limits *limits, const zero_cycle_config *c)
+{
+    /* Symmetric 12-bit velocity has no exact zero code. Allow its half-LSB
+     * residual, without relaxing the independent position comparison. */
+    double half_lsb = (limits->v_max - limits->v_min) / 4095.0 / 2;
+    return fmax(c->tolerance, half_lsb * c->ratio / (2 * M_PI) * 1.01);
+}
+
 static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
                            const zero_cycle_config *c, float target, bxi_motor_reply *reply)
 {
     if (zero_cycle_sample(state, m, 0, 0, 0, reply)) return -1;
     float start = reply->position;
-    uint64_t begin = time_us(), stable = 0;
+    uint64_t begin = time_us(), stable = 0, next_report = 0;
+    double speed_threshold = zero_cycle_speed_threshold(limits_for_entry(state, m), c);
     double ramp_s = fabs(target - start) / (c->speed * 2 * M_PI / c->ratio);
+    printf("zero_cycle_test: move target_motor_turns=%.6f target_output_rad=%.7f ramp_s=%.2f speed_threshold_motor_turns_s=%.6f\n",
+           target * c->ratio / (2 * M_PI), target, ramp_s, speed_threshold);
+    fflush(stdout);
     while (!stop_requested && time_us() - begin < (uint64_t)c->move_timeout_ms * 1000) {
         double t = (time_us() - begin) / 1e6;
         double fraction = ramp_s > 0 ? fmin(t / ramp_s, 1) : 1;
@@ -90,10 +102,17 @@ static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
         if (zero_cycle_sample(state, m, setpoint, c->kp, c->kd, reply)) return -1;
         double error = fabs(reply->position - target) * c->ratio / (2 * M_PI);
         double speed = fabs(reply->velocity) * c->ratio / (2 * M_PI);
-        if (fraction == 1 && error <= c->tolerance && speed <= c->tolerance) {
+        if (fraction == 1 && error <= c->tolerance && speed <= speed_threshold) {
             if (!stable) stable = time_us();
             if (time_us() - stable >= (uint64_t)c->settle_ms * 1000) return 0;
         } else stable = 0;
+        if (time_us() >= next_report) {
+            printf("zero_cycle_test: moving elapsed_s=%.1f phase=%s actual_motor_turns=%.6f error_motor_turns=%.6f speed_motor_turns_s=%.6f stable_ms=%.0f\n",
+                   t, fraction < 1 ? "ramp" : "settle", reply->position * c->ratio / (2 * M_PI),
+                   error, speed, stable ? (time_us() - stable) / 1000.0 : 0.0);
+            fflush(stdout);
+            next_report = time_us() + 1000000;
+        }
         sleep_ms(10);
     }
     fprintf(stderr, "zero_cycle_test: ERROR move/settle timeout or interrupted\n");
