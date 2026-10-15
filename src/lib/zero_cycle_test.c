@@ -231,12 +231,38 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     unsigned int order[36];
     uint64_t begin = time_us();
     if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
-        zero_cycle_operation(state, BXI_MOTOR_CMD_ZERO, slot)) goto done;
+        zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
+        zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
+    float initial_before = reply.position;
+    if (zero_cycle_operation(state, BXI_MOTOR_CMD_ZERO, slot)) goto done;
+    /* The reference firmware only accepts ZERO in menu/disabled state.
+     * Keep its save response visible independently of quiet terminal output. */
+    char save_output[512] = {0};
+    rx_can_frame save_frame;
+    while (frame_ring_pop(&state->frames, &save_frame, 0)) {
+        if (save_frame.bus != m->bus || !boot_output_id_matches(save_frame.can_id, m->id)) continue;
+        size_t used = strlen(save_output);
+        if (used + save_frame.len >= sizeof(save_output)) {
+            memmove(save_output, save_output + 256, used - 256 + 1);
+            used -= 256;
+        }
+        memcpy(save_output + used, save_frame.data, save_frame.len);
+        save_output[used + save_frame.len] = 0;
+    }
+    bool save_failed = strstr(save_output, "User Config Update FAIL!") != NULL;
+    bool save_confirmed = strstr(save_output, "User Config Update OK!") != NULL;
     console_quiet_sleep_ms(500);
-    if (zero_cycle_sample(state, m, 0, 0, 0, &reply) ||
+    if (save_failed || zero_cycle_sample(state, m, 0, 0, 0, &reply) ||
         fabs(reply.position) * c.ratio / (2 * M_PI) > c.tolerance) {
         fprintf(stderr, "zero_cycle_test: ERROR initial zero not confirmed\n"); goto done;
     }
+    printf(console_text(state,
+           "\n初始置零确认：置零前 %+.6f 圈，置零后 %+.6f 圈（电机端）；反馈零位检查 PASS。\n保存回复：%s\n",
+           "\nInitial zero: before %+.6f turns, after %+.6f turns (motor); feedback check PASS.\nSave response: %s\n"),
+           initial_before * c.ratio / (2 * M_PI), reply.position * c.ratio / (2 * M_PI),
+           save_confirmed ? "User Config Update OK!" : console_text(state, "未收到明确保存确认，持久化尚未验证", "No explicit save ACK; persistence unverified"));
+    fprintf(csv, "# initial_zero_before_rad=%.9g after_rad=%.9g save_ack=%s\n", initial_before, reply.position,
+            save_confirmed ? "OK" : "UNCONFIRMED"); fflush(csv); fflush(stdout);
     for (unsigned int n = 0; !stop_requested && (!c.count || n < c.count) &&
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
         double motor_target = zero_cycle_target(n, &seed, c.max_turns, order);
