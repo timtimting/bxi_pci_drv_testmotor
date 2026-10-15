@@ -45,6 +45,7 @@ typedef struct {
     unsigned int continue_after_position_failure, revisit_after_random_cycles;
     unsigned int test_mode; /* 0=random, 1=degree_scan */
     double scan_step_deg, scan_limit_deg, scan_return_speed_deg_s;
+    unsigned int scan_repeats, scan_rounds;
     unsigned int count, duration_s, off_ms, settle_ms, move_timeout_ms, seed;
 } zero_cycle_config;
 
@@ -56,6 +57,7 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         .arrival_wait_ms=5000, .move_retry_count=2, .retry_hold_ms=3000,
         .continue_after_position_failure=1, .revisit_after_random_cycles=3,
         .scan_step_deg=1, .scan_limit_deg=175, .scan_return_speed_deg_s=5,
+        .scan_repeats=1, .scan_rounds=1,
         .count=100, .off_ms=1000, .settle_ms=500, .move_timeout_ms=120000};
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); return -1; }
@@ -77,6 +79,8 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         else ZDOUBLE("scan_step_output_deg", scan_step_deg)
         else ZDOUBLE("scan_limit_output_deg", scan_limit_deg)
         else ZDOUBLE("scan_return_output_deg_per_second", scan_return_speed_deg_s)
+        else ZUINT("scan_repeats_per_angle", scan_repeats)
+        else ZUINT("scan_rounds", scan_rounds)
         else ZDOUBLE("max_motor_turns", max_turns)
         else ZDOUBLE("motor_turns_per_second", speed)
         else ZDOUBLE("motor_acceleration_turns_per_second2", acceleration)
@@ -111,6 +115,8 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         c->scan_step_deg > c->scan_limit_deg || c->scan_return_speed_deg_s <= 0 || c->scan_return_speed_deg_s > 180 ||
         c->scan_limit_deg/c->scan_step_deg > 10000 ||
         fabs(c->scan_limit_deg/c->scan_step_deg-round(c->scan_limit_deg/c->scan_step_deg)) > 1e-6 ||
+        !c->scan_repeats || c->scan_repeats>1000 || c->scan_rounds>100000 ||
+        (c->scan_rounds && 2.0*c->scan_limit_deg/c->scan_step_deg*c->scan_repeats*c->scan_rounds>4294967294.0) ||
         (c->test_mode && c->arrival_tolerance*360/c->ratio >= c->scan_step_deg/2) ||
         c->acceleration <= 0 || c->acceleration > 1000 ||
         c->arrival_tolerance <= 0 || c->arrival_tolerance >= .25 ||
@@ -121,7 +127,7 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         c->retry_hold_ms < c->settle_ms || c->retry_hold_ms < 1000 || c->retry_hold_ms > 60000 ||
         c->continue_after_position_failure > 1 || !c->revisit_after_random_cycles || c->revisit_after_random_cycles > 10000 ||
         c->kp <= 0 || c->kd < 0 || c->tolerance <= 0 || c->tolerance >= .25 ||
-        (!c->count && !c->duration_s) || c->off_ms < 300 || c->off_ms > 60000 ||
+        (!c->count && !c->duration_s && !c->test_mode) || c->off_ms < 300 || c->off_ms > 60000 ||
         c->settle_ms < 100 || c->settle_ms > 60000 || !c->move_timeout_ms || c->move_timeout_ms > 3600000) {
         fprintf(stderr, "zero_cycle_test: invalid config; random range requires <=9 motor turns and <gear_ratio/2. Degree scan requires limit<180 output deg, integer step count and arrival tolerance<half step.\n");
         return -1;
@@ -146,6 +152,22 @@ static int zero_cycle_scan_target(unsigned int index, const zero_cycle_config *c
     double degrees = index < steps ? -(double)(index+1)*c->scan_step_deg : (double)(index-steps+1)*c->scan_step_deg;
     *motor_turns = degrees*c->ratio/360;
     return 0;
+}
+
+static uint64_t zero_cycle_scan_total(const zero_cycle_config *c)
+{
+    return c->scan_rounds ? (uint64_t)2*zero_cycle_scan_steps(c)*c->scan_repeats*c->scan_rounds : UINT64_MAX;
+}
+
+static bool zero_cycle_scan_boundary(unsigned int cycle, const zero_cycle_config *c)
+{
+    return cycle && cycle%((uint64_t)zero_cycle_scan_steps(c)*c->scan_repeats)==0;
+}
+
+static int zero_cycle_scan_cycle_target(unsigned int cycle, const zero_cycle_config *c, double *target)
+{
+    if ((uint64_t)cycle>=zero_cycle_scan_total(c)) return -1;
+    return zero_cycle_scan_target((cycle/c->scan_repeats)%(2*zero_cycle_scan_steps(c)),c,target);
 }
 
 static double zero_cycle_target(unsigned int n, unsigned int *seed, double range, unsigned int order[36])
@@ -836,11 +858,14 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     fprintf(csv, "# initial_zero_before_rad=%.9g after_rad=%.9g save_ack=%s\n", initial_before, reply.position,
             save_confirmed ? "OK" : "UNCONFIRMED"); fflush(csv); fflush(stdout);
     zero_encoder_snapshot initial_zero_snapshot = zero_encoder_query(state, m, readable, "INITIAL_ORIGINAL_ZERO");
+    bool force_scan_move=true;
+    int point_motion_result=0; unsigned int point_retries=0;
+    fprintf(csv,"# scan_repeats_per_angle=%u scan_rounds=%u\n",c.scan_repeats,c.scan_rounds);
     for (unsigned int n = 0; !zero_cycle_cancel_requested() && (!c.count || n < c.count) &&
-         (!c.test_mode || scan_index < 2*zero_cycle_scan_steps(&c)) &&
+         (!c.test_mode || (uint64_t)scan_index < zero_cycle_scan_total(&c)) &&
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
-        if (c.test_mode && scan_index == zero_cycle_scan_steps(&c)) {
-            printf("\n负向扫描完成，按输出端最高 %.3f°/s 缓慢回到原零位，再验证重启零位，随后正向扫描。\n", c.scan_return_speed_deg_s);
+        if (c.test_mode && zero_cycle_scan_boundary(scan_index,&c)) {
+            printf("\n单侧扫描完成，按输出端最高 %.3f°/s 缓慢回到原零位，再验证重启零位，随后继续扫描。\n", c.scan_return_speed_deg_s);
             int restored = zero_cycle_return_original_zero(state, m, slot, &c, &offset_rad, readable, &initial_zero_snapshot);
             fprintf(csv, "# scan_midpoint_zero_recheck=%s\n", restored ? "FAIL" : "PASS"); fflush(csv);
             if (restored) { recovery_paused = restored == -2; goto done; }
@@ -849,8 +874,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         bool revisit = !c.test_mode && anomaly_count && random_since_revisit >= c.revisit_after_random_cycles;
         unsigned int requested_anomaly = 0;
         double motor_target;
+        bool move_point=!c.test_mode || scan_index%c.scan_repeats==0 || force_scan_move;
         if (c.test_mode) {
-            if (zero_cycle_scan_target(scan_index++, &c, &motor_target)) break;
+            printf("扫描第 %u 轮，点内上下电 %u/%u\n",scan_index/(2*zero_cycle_scan_steps(&c)*c.scan_repeats)+1,scan_index%c.scan_repeats+1,c.scan_repeats);
+            if (zero_cycle_scan_cycle_target(scan_index++, &c, &motor_target)) break;
         } else if (revisit) {
             requested_anomaly = revisit_cursor++ % anomaly_count + 1;
             motor_target = anomalies[requested_anomaly-1].motor_turns;
@@ -870,15 +897,19 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                "\n========== Cycle %u start: motor target %+.6f turns (%+.3f deg), output target %+.3f deg ==========\n"),
                n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
         fflush(stdout);
-        if (zero_cycle_enable_confirmed(state, m, slot)) {
+        if (move_point && zero_cycle_enable_confirmed(state, m, slot)) {
             if (!zero_cycle_cancel_requested() && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
                 zero_encoder_query(state, m, readable, "ENABLE_FAILURE_AFTER_DISABLE");
             goto done;
         }
-        unsigned int retries_used;
-        int motion_result = zero_cycle_move(state, m, &c, target, &reply, &retries_used);
+        unsigned int retries_used=point_retries;
+        int motion_result=point_motion_result;
+        if (move_point) {
+            motion_result=zero_cycle_move(state, m, &c, target, &reply, &retries_used);
+            point_motion_result=motion_result; point_retries=retries_used; force_scan_move=false;
+        }
         if (motion_result < 0 ||
-            (motion_result > 0 && zero_cycle_settle_current(state, m, &c, &reply))) {
+            (motion_result > 0 && move_point && zero_cycle_settle_current(state, m, &c, &reply))) {
             if (!zero_cycle_cancel_requested() && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
                 zero_encoder_query(state, m, readable, "MOVE_FAILURE_AFTER_DISABLE");
             goto done;
@@ -891,7 +922,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             fflush(stdout);
         }
         /* Sample after disabling, so the baseline includes any release motion. */
-        if (zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
+        if ((move_point && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot)) ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
         float before = reply.position;
         double physical_before = (before-offset_rad)/scale;
@@ -1002,6 +1033,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                 goto done;
             }
             fprintf(csv, "# recovery_zero_recheck_after_cycle=%u result=PASS software_offset_cleared=1\n", n+1); fflush(csv);
+            force_scan_move=true;
             if (anomaly_count == 1 && anomalies[0].first_cycle == n+1) random_since_revisit = 0;
             continue;
         }

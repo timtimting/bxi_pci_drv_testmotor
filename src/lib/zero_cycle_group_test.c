@@ -264,6 +264,7 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
     uint64_t begin=time_us();
     fprintf(csv,"cycle,bus,id,index,phase,target_output_deg,baseline_output_rad,before_output_rad,after_output_rad,delta_baseline_motor_turns,delta_cycle_motor_turns,result\n");
     fprintf(csv,"# gear_ratio=%.12g seed=%u mode=%s tolerance_motor_turns=%.9g\n",c.ratio,seed,c.test_mode?"degree_scan":"random",c.tolerance);
+    fprintf(csv,"# scan_repeats_per_angle=%u scan_rounds=%u\n",c.scan_repeats,c.scan_rounds);
     if (zero_cycle_input_begin()) goto done;
     state->show_can_output=state->show_motor_input=false;
     pthread_mutex_lock(&boot_capture_mutex);
@@ -305,11 +306,12 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
     }
     double target_turns=0;
     for (unsigned int n=0; !zero_cycle_cancel_requested() && (!c.count || n<c.count) &&
+         (!c.test_mode || (uint64_t)n<zero_cycle_scan_total(&c)) &&
          (!c.duration_s || time_us()-begin<(uint64_t)c.duration_s*1000000); ++n) {
+        bool new_point=!c.test_mode || scan_index%c.scan_repeats==0;
         if (!frozen) {
-            if (c.test_mode && scan_index>=2*zero_cycle_scan_steps(&c)) break;
-            if (c.test_mode && scan_index==zero_cycle_scan_steps(&c)) {
-                puts("全组负向扫描结束，缓慢回零并上下电验证。");
+            if (c.test_mode && zero_cycle_scan_boundary(scan_index,&c)) {
+                puts("全组单侧扫描结束，缓慢回零并上下电验证，然后继续扫描。");
                 if (zero_group_move(state,motors,count,&c,0,true) || zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
                 float zero_before[32];
                 for (size_t i=0;i<count;++i) zero_before[i]=motors[i].reply.position;
@@ -328,19 +330,22 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
                 }
             }
             if (!frozen) {
-                if (c.test_mode) zero_cycle_scan_target(scan_index++,&c,&target_turns);
+                if (c.test_mode) {
+                    printf("扫描第 %u 轮，点内上下电 %u/%u\n",scan_index/(2*zero_cycle_scan_steps(&c)*c.scan_repeats)+1,scan_index%c.scan_repeats+1,c.scan_repeats);
+                    zero_cycle_scan_cycle_target(scan_index++,&c,&target_turns);
+                }
                 else target_turns=zero_cycle_target(n,&seed,c.max_turns,order);
                 printf("\n第 %u 轮，全组目标输出端 %+.3f°\n",n+1,target_turns*360/c.ratio);
-                if (zero_group_move(state,motors,count,&c,target_turns*scale,false) ||
+                if ((new_point && zero_group_move(state,motors,count,&c,target_turns*scale,false)) ||
                     zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
-                for (size_t i=0;i<count;++i) motors[i].before=motors[i].reply.position;
+                if (new_point) for (size_t i=0;i<count;++i) motors[i].before=motors[i].reply.position;
             }
         }
         float previous[32];
         if (zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
         for (size_t i=0;i<count;++i) {
             previous[i]=motors[i].reply.position;
-            if (!frozen) motors[i].before=previous[i];
+            if (!frozen && new_point) motors[i].before=previous[i];
         }
         if (zero_group_power_cycle(state,motors[0].slot,&c) || zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
         bool round_ok=true, was_frozen=frozen;
@@ -352,7 +357,7 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
             printf("第 %u 轮 bus=%u id=%u：基准 %+.3f°，上电 %+.3f°，相对基准差 %+.3f°，本次重启差 %+.3f°（电机端）；%s；累计成功 %u 失败 %u\n",
                    n+1,g->motor->bus,g->motor->id,g->before/scale*360,g->reply.position/scale*360,delta*360,cycle_delta*360,ok?"PASS":"FAIL",g->passed,g->failed);
             fprintf(csv,"%u,%u,%u,%u,%s,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%s\n",n+1,g->motor->bus,g->motor->id,g->motor->index,
-                    was_frozen?"power_only":"motion",target_turns*360/c.ratio,g->before,previous[i],g->reply.position,delta,cycle_delta,ok?"PASS":"FAIL");
+                    was_frozen?"power_only":new_point?"motion":"angle_repeat",target_turns*360/c.ratio,g->before,previous[i],g->reply.position,delta,cycle_delta,ok?"PASS":"FAIL");
         }
         ++rounds; if (round_ok) ++passed; else ++failed;
         if (frozen && !was_frozen) {

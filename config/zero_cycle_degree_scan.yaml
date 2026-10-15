@@ -27,7 +27,7 @@ revisit_after_random_cycles: 3
 # Motor shaft turns, absolute comparison (no wrapping).
 tolerance_motor_turns: 0.1
 # Stop at whichever limit comes first; 0 disables that limit.
-count: 350
+count: 0
 duration_s: 0
 # Actual off interval includes existing power_off's 300ms wait.
 off_ms: 1000
@@ -40,3 +40,7 @@ seed: 0
 scan_step_output_deg: 1
 scan_limit_output_deg: 175
 scan_return_output_deg_per_second: 5
+# Each angle: 10 reboots without motion. One round covers both -175 and +175.
+scan_repeats_per_angle: 10
+# 0 repeats indefinitely (Ctrl+X stops); count/duration_s may impose an earlier limit.
+scan_rounds: 1

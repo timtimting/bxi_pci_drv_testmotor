@@ -67,6 +67,10 @@ int main(void)
     assert(zero_cycle_load(path, &c) != 0);
     f = fopen(path, "w"); fprintf(f, "gear_ratio: nan\n"); fclose(f);
     assert(zero_cycle_load(path, &c) != 0);
+    f = fopen(path, "w"); fprintf(f, "gear_ratio: 20\ntest_mode: degree_scan\narrival_tolerance_motor_turns: 0.01\ncount: 0\nscan_rounds: 0\nscan_repeats_per_angle: 10\n"); fclose(f);
+    assert(!zero_cycle_load(path,&c) && c.scan_rounds==0 && c.scan_repeats==10);
+    f = fopen(path, "a"); fprintf(f, "scan_repeats_per_angle: 0\n"); fclose(f);
+    assert(zero_cycle_load(path,&c));
     unlink(path);
     assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
     assert(c.count == 100 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
@@ -75,7 +79,8 @@ int main(void)
     assert(c.continue_after_position_failure == 1 && c.revisit_after_random_cycles == 3);
     zero_cycle_config scan;
     assert(zero_cycle_load("config/zero_cycle_degree_scan.yaml", &scan) == 0);
-    assert(scan.test_mode == 1 && scan.count == 350 && zero_cycle_scan_steps(&scan) == 175);
+    assert(scan.test_mode == 1 && scan.count == 0 && zero_cycle_scan_steps(&scan) == 175);
+    assert(scan.scan_repeats==10 && scan.scan_rounds==1 && zero_cycle_scan_total(&scan)==3500);
     assert(scan.scan_return_speed_deg_s == 5 && zero_cycle_physical_limit(&scan) > 9);
     for (unsigned int i = 0; i < 350; ++i) {
         double target;
@@ -85,6 +90,20 @@ int main(void)
     }
     double scan_target;
     assert(zero_cycle_scan_target(350, &scan, &scan_target) != 0);
+    scan.scan_rounds=2;
+    assert(zero_cycle_scan_total(&scan)==7000);
+    for (unsigned int i=0;i<7000;++i) {
+        double target;
+        assert(!zero_cycle_scan_cycle_target(i,&scan,&target));
+        unsigned int point=(i/10)%350;
+        double expected=point<175 ? -(double)(point+1) : (double)(point-174);
+        assert(fabs(target*360/scan.ratio-expected)<1e-9);
+        assert(zero_cycle_scan_boundary(i,&scan)==(i>0 && i%1750==0));
+    }
+    assert(zero_cycle_scan_cycle_target(7000,&scan,&scan_target));
+    scan.scan_rounds=0;
+    assert(zero_cycle_scan_total(&scan)==UINT64_MAX);
+    assert(!zero_cycle_scan_cycle_target(7000,&scan,&scan_target));
     float scan_command;
     assert(zero_cycle_compensated_target(zero_cycle_physical_limit(&scan), 0, &scan, &limits, &scan_command) == 0);
     /* Regression: -13 motor-turn restart jump must command a displacement
