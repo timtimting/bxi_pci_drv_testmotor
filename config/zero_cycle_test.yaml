@@ -4,9 +4,21 @@ gear_ratio: 19.54570637
 # Motor shaft turns, relative to initial zero. Must be <=9 and < gear_ratio/2.
 max_motor_turns: 9
 motor_turns_per_second: 10
+# Smooth trajectory acceleration limit, motor shaft turns/s^2.
+motor_acceleration_turns_per_second2: 20
+# Motion arrival and settling criteria are independent of reboot comparison.
+arrival_tolerance_motor_turns: 0.1
+settle_speed_motor_turns_per_second: 0.1
 # MIT gains in output-side units; select for your unloaded test motor.
 kp: 50
 kd: 5
+# Wait after trajectory, then bounded gain retries (500ms gain ramps).
+arrival_wait_ms: 5000
+move_retry_count: 2
+retry_hold_ms: 3000
+retry_gain_factor: 1.5
+retry_kp_max: 100
+retry_kd_max: 7.5
 # Motor shaft turns, absolute comparison (no wrapping).
 tolerance_motor_turns: 0.1
 # Stop at whichever limit comes first; 0 disables that limit.

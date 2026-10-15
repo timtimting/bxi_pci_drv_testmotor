@@ -1,12 +1,19 @@
 /* Included by main.c. All angles in this test configuration are motor-side turns. */
 typedef struct {
     double ratio, max_turns, speed, kp, kd, tolerance;
+    double acceleration, arrival_tolerance, settle_speed;
+    double retry_gain_factor, retry_kp_max, retry_kd_max;
+    unsigned int arrival_wait_ms, move_retry_count, retry_hold_ms;
     unsigned int count, duration_s, off_ms, settle_ms, move_timeout_ms, seed;
 } zero_cycle_config;
 
 static int zero_cycle_load(const char *path, zero_cycle_config *c)
 {
-    *c = (zero_cycle_config){0, 9, 1, 5, 1, .01, 100, 0, 1000, 500, 120000, 0};
+    *c = (zero_cycle_config){.ratio=0, .max_turns=9, .speed=1, .kp=5, .kd=1,
+        .tolerance=.01, .acceleration=20, .arrival_tolerance=.1, .settle_speed=.1,
+        .retry_gain_factor=1.5, .retry_kp_max=100, .retry_kd_max=7.5,
+        .arrival_wait_ms=5000, .move_retry_count=2, .retry_hold_ms=3000,
+        .count=100, .off_ms=1000, .settle_ms=500, .move_timeout_ms=120000};
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); return -1; }
     char line[256]; int bad = 0;
@@ -21,6 +28,12 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         ZDOUBLE("gear_ratio", ratio)
         else ZDOUBLE("max_motor_turns", max_turns)
         else ZDOUBLE("motor_turns_per_second", speed)
+        else ZDOUBLE("motor_acceleration_turns_per_second2", acceleration)
+        else ZDOUBLE("arrival_tolerance_motor_turns", arrival_tolerance)
+        else ZDOUBLE("settle_speed_motor_turns_per_second", settle_speed)
+        else ZDOUBLE("retry_gain_factor", retry_gain_factor)
+        else ZDOUBLE("retry_kp_max", retry_kp_max)
+        else ZDOUBLE("retry_kd_max", retry_kd_max)
         else ZDOUBLE("kp", kp)
         else ZDOUBLE("kd", kd)
         else ZDOUBLE("tolerance_motor_turns", tolerance)
@@ -29,6 +42,9 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         else ZUINT("off_ms", off_ms)
         else ZUINT("settle_ms", settle_ms)
         else ZUINT("move_timeout_ms", move_timeout_ms)
+        else ZUINT("arrival_wait_ms", arrival_wait_ms)
+        else ZUINT("move_retry_count", move_retry_count)
+        else ZUINT("retry_hold_ms", retry_hold_ms)
         else ZUINT("seed", seed)
         else { bad = 1; break; }
 #undef ZDOUBLE
@@ -38,6 +54,13 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
     fclose(f);
     if (bad || c->ratio <= 1 || c->max_turns <= 0 || c->max_turns > 9 ||
         c->max_turns / c->ratio >= .5 || c->speed <= 0 || c->speed > 10 ||
+        c->acceleration <= 0 || c->acceleration > 1000 ||
+        c->arrival_tolerance <= 0 || c->arrival_tolerance >= .25 ||
+        c->settle_speed <= 0 || c->settle_speed > 1 ||
+        c->retry_gain_factor <= 1 || c->retry_gain_factor > 3 ||
+        c->retry_kp_max < c->kp || c->retry_kd_max < c->kd ||
+        c->move_retry_count > 10 || c->arrival_wait_ms < c->settle_ms || c->arrival_wait_ms > 60000 ||
+        c->retry_hold_ms < c->settle_ms || c->retry_hold_ms < 1000 || c->retry_hold_ms > 60000 ||
         c->kp <= 0 || c->kd < 0 || c->tolerance <= 0 || c->tolerance >= .25 ||
         (!c->count && !c->duration_s) || c->off_ms < 300 || c->off_ms > 60000 ||
         c->settle_ms < 100 || c->settle_ms > 60000 || !c->move_timeout_ms || c->move_timeout_ms > 3600000) {
@@ -78,14 +101,14 @@ static int zero_cycle_operation(flash_state *state, int operation, size_t slot)
     return result;
 }
 
-static int zero_cycle_sample(flash_state *state, const motor_map_entry *m,
-                             float target, float kp, float kd, bxi_motor_reply *reply)
+static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry *m,
+                             float target, float velocity, float kp, float kd, bxi_motor_reply *reply)
 {
     frame_ring_clear(&state->frames);
     console_use_motor(state, m);
     uint64_t sent = time_us();
     console_expect_reply(state, m->bus);
-    if (send_debug_mit(state, target, 0, kp, kd, 0)) return -1;
+    if (send_debug_mit(state, target, velocity, kp, kd, 0)) return -1;
     while (!stop_requested && time_us() - sent < 100000) {
         rx_can_frame frame;
         if (!frame_ring_pop(&state->frames, &frame, 10)) continue;
@@ -99,36 +122,190 @@ static int zero_cycle_sample(flash_state *state, const motor_map_entry *m,
     return -1;
 }
 
+static int zero_cycle_sample(flash_state *state, const motor_map_entry *m,
+                             float target, float kp, float kd, bxi_motor_reply *reply)
+{
+    return zero_cycle_sample_velocity(state, m, target, 0, kp, kd, reply);
+}
+
+static int zero_cycle_parse_state(const char *text)
+{
+    int state = -1;
+    for (const char *p = text; (p = strstr(p, "STATE")) != NULL; ++p) {
+        unsigned int value;
+        if (sscanf(p, "STATE : %u", &value) == 1) state = (int)value;
+    }
+    return state;
+}
+
+static int zero_cycle_enable_confirmed(flash_state *state, const motor_map_entry *m, size_t slot)
+{
+    console_use_motor(state, m);
+    frame_ring_clear(&state->frames);
+    if (send_debug_special(state, BXI_MOTOR_CMD_ENABLE)) return -1;
+    /* Generic console_send_special sleeps scan_timeout_ms after enabling.
+     * Keep feeding zero-gain MIT here instead, so an enabled CAN watchdog
+     * cannot expire during that handshake wait. State query 0xC8 is read-only. */
+    char text[1024] = {0}; size_t used = 0;
+    uint64_t begin = time_us(), next_send = 0, next_query = 0;
+    int reported_state = -1;
+    while (!stop_requested && time_us() - begin < 2000000) {
+        uint64_t now = time_us();
+        if (now >= next_send) {
+            if (send_debug_mit(state, 0, 0, 0, 0, 0)) return -1;
+            next_send = now + 10000;
+        }
+        if (now >= next_query) {
+            const uint8_t query = 0xc8;
+            if (send_boot_data(state, &query, 1)) return -1;
+            next_query = now + 100000;
+        }
+        rx_can_frame frame;
+        if (!frame_ring_pop(&state->frames, &frame, 5)) continue;
+        if (frame.bus != m->bus || frame.time_us < begin || !boot_output_id_matches(frame.can_id, m->id)) continue;
+        if (used + frame.len >= sizeof(text)) {
+            memmove(text, text + 512, used - 512 + 1); used -= 512;
+        }
+        memcpy(text + used, frame.data, frame.len); used += frame.len; text[used] = 0;
+        /* Wait for a line terminator so a fragmented state number cannot
+         * prematurely look like state 2. */
+        char *end = strpbrk(text, "\r\n");
+        while (end) {
+            *end = 0;
+            int parsed = zero_cycle_parse_state(text);
+            if (parsed >= 0) reported_state = parsed;
+            if (reported_state == 2) { state->motors[slot].enabled = true; return 0; }
+            size_t consumed = (size_t)(end-text) + 1;
+            memmove(text, text+consumed, used-consumed+1); used -= consumed;
+            end = strpbrk(text, "\r\n");
+        }
+    }
+    fprintf(stderr, "zero_cycle_test: ERROR enable not confirmed: STATE=%d (expected 02 MOTOR). Motor may reject enable due to fault/calibration, startup not ready, or unsupported state query; inspect .boot.log.\n", reported_state);
+    return -1;
+}
+
 static double zero_cycle_speed_threshold(const bxi_motor_limits *limits, const zero_cycle_config *c)
 {
     /* Symmetric 12-bit velocity has no exact zero code. Allow its half-LSB
      * residual, without relaxing the independent position comparison. */
     double half_lsb = (limits->v_max - limits->v_min) / 4095.0 / 2;
-    return fmax(c->tolerance, half_lsb * c->ratio / (2 * M_PI) * 1.01);
+    return fmax(c->settle_speed, half_lsb * c->ratio / (2 * M_PI) * 1.01);
 }
 
-static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
-                           const zero_cycle_config *c, float target, bxi_motor_reply *reply)
+/* Quintic trajectory: zero velocity/acceleration at both ends; duration
+ * bounds peak velocity (1.875*d/T) and acceleration (5.773503*d/T^2). */
+static double zero_cycle_move_duration(double distance, double speed, double acceleration)
 {
+    return fmax(1.875 * fabs(distance) / speed, sqrt(5.773503 * fabs(distance) / acceleration));
+}
+
+static void zero_cycle_trajectory(double start, double target, double t, double duration,
+                                  float *position, float *velocity)
+{
+    double u = duration > 0 ? fmax(0, fmin(t / duration, 1)) : 1;
+    double s = u*u*u*(10 + u*(-15 + 6*u));
+    *position = start + (target-start)*s;
+    *velocity = duration > 0 ? (target-start)*30*u*u*(1-u)*(1-u)/duration : 0;
+}
+
+static void zero_cycle_retry_gains(const zero_cycle_config *c, const bxi_motor_limits *limits,
+                                    unsigned int retry, double *kp, double *kd)
+{
+    double factor = pow(c->retry_gain_factor, retry);
+    *kp = fmin(c->kp * factor, fmin(c->retry_kp_max, limits->kp_max));
+    *kd = fmin(c->kd * factor, fmin(c->retry_kd_max, limits->kd_max));
+}
+
+/* 0=arrived, 1=healthy feedback but arrival attempts exhausted, -1=abort. */
+static int zero_cycle_move(flash_state *state, const motor_map_entry *m,
+                           const zero_cycle_config *c, float target, bxi_motor_reply *reply,
+                           unsigned int *retries_used)
+{
+    *retries_used = 0;
     if (zero_cycle_sample(state, m, 0, 0, 0, reply)) return -1;
     float start = reply->position;
-    uint64_t begin = time_us(), stable = 0;
+    uint64_t begin = time_us(), stable = 0, next_report = 0;
     double speed_threshold = zero_cycle_speed_threshold(limits_for_entry(state, m), c);
-    double ramp_s = fabs(target - start) / (c->speed * 2 * M_PI / c->ratio);
+    double scale = 2 * M_PI / c->ratio;
+    double ramp_s = zero_cycle_move_duration(target-start, c->speed*scale, c->acceleration*scale);
+    if (ramp_s * 1000 + c->settle_ms >= c->move_timeout_ms) {
+        fprintf(stderr, "zero_cycle_test: ERROR move_timeout_ms too short: trajectory=%.1f ms plus settle=%u ms\n", ramp_s*1000, c->settle_ms);
+        return -1;
+    }
+    double next_attempt = ramp_s + c->arrival_wait_ms / 1000.;
+    double previous_kp = c->kp, previous_kd = c->kd, desired_kp = c->kp, desired_kd = c->kd;
+    double gain_start = 0;
     while (!stop_requested && time_us() - begin < (uint64_t)c->move_timeout_ms * 1000) {
         double t = (time_us() - begin) / 1e6;
-        double fraction = ramp_s > 0 ? fmin(t / ramp_s, 1) : 1;
-        float setpoint = start + (target - start) * fraction;
-        if (zero_cycle_sample(state, m, setpoint, c->kp, c->kd, reply)) return -1;
+        float setpoint, set_velocity;
+        zero_cycle_trajectory(start, target, t, ramp_s, &setpoint, &set_velocity);
+        double gain_fraction = fmin(1, fmax(0, (t-gain_start)/.5));
+        double active_kp = previous_kp + (desired_kp-previous_kp)*gain_fraction;
+        double active_kd = previous_kd + (desired_kd-previous_kd)*gain_fraction;
+        if (zero_cycle_sample_velocity(state, m, setpoint, set_velocity, active_kp, active_kd, reply)) return -1;
         double error = fabs(reply->position - target) * c->ratio / (2 * M_PI);
         double speed = fabs(reply->velocity) * c->ratio / (2 * M_PI);
-        if (fraction == 1 && error <= c->tolerance && speed <= speed_threshold) {
+        if (t >= ramp_s && error <= c->arrival_tolerance && speed <= speed_threshold) {
             if (!stable) stable = time_us();
             if (time_us() - stable >= (uint64_t)c->settle_ms * 1000) return 0;
         } else stable = 0;
+        if (t >= next_attempt) {
+            printf(console_text(state,
+                   "目标仍未到位：目标 %+.6f 圈，实际 %+.6f 圈，差值 %+.6f 圈，速度 %.5f 圈/秒。\n",
+                   "Target not reached: target %+.6f actual %+.6f delta %+.6f turns, speed %.5f turns/s.\n"),
+                   target/scale, reply->position/scale, (reply->position-target)/scale, speed);
+            if (*retries_used >= c->move_retry_count) {
+                fputs(console_text(state, "增益重试已耗尽，尝试在当前位置稳定后进行上下电测试。\n",
+                                          "Gain retries exhausted; attempt to settle at current position for power-cycle test.\n"), stdout);
+                fflush(stdout); return 1;
+            }
+            ++*retries_used;
+            previous_kp = active_kp; previous_kd = active_kd;
+            zero_cycle_retry_gains(c, limits_for_entry(state, m), *retries_used, &desired_kp, &desired_kd);
+            gain_start = t; next_attempt = t + c->retry_hold_ms/1000.; stable = 0;
+            printf(console_text(state, "增益重试 %u/%u：KP %.3f → %.3f，KD %.3f → %.3f（500ms 平滑调整）。\n",
+                                      "Gain retry %u/%u: KP %.3f -> %.3f, KD %.3f -> %.3f (500ms ramp).\n"),
+                   *retries_used, c->move_retry_count, previous_kp, desired_kp, previous_kd, desired_kd);
+            fflush(stdout);
+        }
+        if (time_us() >= next_report) {
+            pthread_mutex_lock(&boot_capture_mutex);
+            if (boot_capture_file) {
+                fprintf(boot_capture_file, "\nMOTION elapsed_s=%.3f phase=%s target_motor_turns=%.7f command_motor_turns=%.7f command_motor_speed=%.5f actual_motor_turns=%.7f actual_motor_speed=%.5f error_motor_turns=%.7f torque=%.5f stable_ms=%.1f\n",
+                        t, t < ramp_s ? "trajectory" : "settle", target/scale, setpoint/scale,
+                        set_velocity/scale, reply->position/scale, reply->velocity/scale, error, reply->torque,
+                        stable ? (time_us()-stable)/1000. : 0.);
+                fprintf(boot_capture_file, "MOTION_GAINS retry=%u kp=%.5f kd=%.5f\n", *retries_used, active_kp, active_kd);
+                fflush(boot_capture_file);
+            }
+            pthread_mutex_unlock(&boot_capture_mutex);
+            next_report = time_us() + 1000000;
+        }
         sleep_ms(10);
     }
-    fprintf(stderr, "zero_cycle_test: ERROR move/settle timeout or interrupted\n");
+    fprintf(stderr, "zero_cycle_test: %s %s target=%.7f actual=%.7f error=%.7f turns (arrival_limit=%.7f); speed=%.5f turns/s (limit=%.5f). Inspect .boot.log MOTION records.\n",
+            stop_requested ? "ERROR" : "WARNING", stop_requested ? "interrupted" : "move timeout; attempt current-position fallback", target/scale, reply->position/scale,
+            fabs(reply->position-target)/scale, c->arrival_tolerance, fabs(reply->velocity)/scale, speed_threshold);
+    return stop_requested ? -1 : 1;
+}
+
+static int zero_cycle_settle_current(flash_state *state, const motor_map_entry *m,
+                                     const zero_cycle_config *c, bxi_motor_reply *reply)
+{
+    float hold = reply->position;
+    uint64_t begin = time_us(), stable = 0;
+    double speed_threshold = zero_cycle_speed_threshold(limits_for_entry(state, m), c);
+    while (!stop_requested && time_us()-begin < 5000000) {
+        if (zero_cycle_sample(state, m, hold, c->kp, c->kd, reply)) return -1;
+        double speed = fabs(reply->velocity)*c->ratio/(2*M_PI);
+        double error = fabs(reply->position-hold)*c->ratio/(2*M_PI);
+        if (speed <= speed_threshold && error <= c->arrival_tolerance) {
+            if (!stable) stable = time_us();
+            if (time_us()-stable >= (uint64_t)c->settle_ms*1000) return 0;
+        } else stable = 0;
+        sleep_ms(10);
+    }
+    fprintf(stderr, "zero_cycle_test: ERROR current position did not settle within 5s; skip power-cycle comparison\n");
     return -1;
 }
 
@@ -303,8 +480,9 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     const bxi_motor_limits *limits = limits_for_entry(state, m);
     double max_rad = c.max_turns * 2 * M_PI / c.ratio;
     if (-max_rad < limits->p_min || max_rad > limits->p_max ||
+        c.speed * 2 * M_PI / c.ratio > fmin(limits->v_max, -limits->v_min) ||
         c.kp < limits->kp_min || c.kp > limits->kp_max || c.kd < limits->kd_min || c.kd > limits->kd_max ||
-        2 * c.tolerance * 2 * M_PI / c.ratio < (limits->p_max - limits->p_min) / 65535.) {
+        2 * fmin(c.tolerance, c.arrival_tolerance) * 2 * M_PI / c.ratio < (limits->p_max - limits->p_min) / 65535.) {
         fprintf(stderr, "zero_cycle_test: range/gains exceed MIT limits or tolerance below quantization\n"); return -1;
     }
     if (state->motor_power_on || console_any_enabled(state)) {
@@ -315,7 +493,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     char readable_path[512]; snprintf(readable_path, sizeof(readable_path), "%s.boot.log", path);
     FILE *readable = fopen(readable_path, "wx");
     if (!readable) { perror(readable_path); fclose(csv); return -1; }
-    fprintf(csv, "cycle,target_motor_turns,before_output_rad,after_output_rad,error_motor_turns,result\n"); fflush(csv);
+    fprintf(csv, "cycle,target_motor_turns,before_output_rad,after_output_rad,error_motor_turns,result,target_reached,gain_retries\n"); fflush(csv);
     unsigned int seed = c.seed ? c.seed : (unsigned int)time_us();
     printf("zero_cycle_test: index=%02u ratio=%.9g range=+/-%.6g motor turns seed=%u csv=%s\n", index, c.ratio, c.max_turns, seed, path);
     printf("zero_cycle_test: readable boot/encoder diagnostics: %s\n", readable_path);
@@ -325,7 +503,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     bool old_output = state->show_can_output, old_input = state->show_motor_input;
     unsigned int old_bus = state->bus, old_id = state->boot_id;
     state->show_can_output = state->show_motor_input = false;
-    int result = -1; unsigned int passed = 0; bxi_motor_reply reply;
+    int result = -1; unsigned int passed = 0, fallback_cycles = 0; bxi_motor_reply reply;
     unsigned int order[36];
     uint64_t begin = time_us();
     if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
@@ -370,8 +548,26 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                "\n========== Cycle %u start: motor target %+.6f turns (%+.3f deg), output target %+.3f deg ==========\n"),
                n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
         fflush(stdout);
-        if (zero_cycle_operation(state, BXI_MOTOR_CMD_ENABLE, slot) ||
-            zero_cycle_move(state, m, &c, target, &reply)) goto done;
+        if (zero_cycle_enable_confirmed(state, m, slot)) {
+            if (!stop_requested && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
+                zero_encoder_query(state, m, readable, "ENABLE_FAILURE_AFTER_DISABLE");
+            goto done;
+        }
+        unsigned int retries_used;
+        int motion_result = zero_cycle_move(state, m, &c, target, &reply, &retries_used);
+        if (motion_result < 0 ||
+            (motion_result > 0 && zero_cycle_settle_current(state, m, &c, &reply))) {
+            if (!stop_requested && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
+                zero_encoder_query(state, m, readable, "MOVE_FAILURE_AFTER_DISABLE");
+            goto done;
+        }
+        if (motion_result > 0) {
+            ++fallback_cycles;
+            printf(console_text(state, "本轮目标未到达；使用当前稳定位置 %+.6f 电机圈作为上下电基准，不计为目标到位成功。\n",
+                                      "Target NOT reached; using current stable motor position %+.6f turns as power-cycle baseline, not a motion success.\n"),
+                   reply.position*c.ratio/(2*M_PI));
+            fflush(stdout);
+        }
         /* Sample after disabling, so the baseline includes any release motion. */
         if (zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
@@ -390,7 +586,8 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         zero_encoder_snapshot after_snapshot = zero_encoder_query(state, m, readable, "AFTER_POWER_ON");
         zero_encoder_compare(readable, &before_snapshot, &after_snapshot, c.ratio);
         bool ok = fabs(error) <= c.tolerance;
-        fprintf(csv, "%u,%.9g,%.9g,%.9g,%.9g,%s\n", n + 1, motor_target, before, reply.position, error, ok ? "PASS" : "FAIL"); fflush(csv);
+        fprintf(csv, "%u,%.9g,%.9g,%.9g,%.9g,%s,%s,%u\n", n + 1, motor_target, before, reply.position, error,
+                ok ? "PASS" : "FAIL", motion_result == 0 ? "true" : "false", retries_used); fflush(csv);
         double before_turns = before * c.ratio / (2 * M_PI);
         double after_turns = reply.position * c.ratio / (2 * M_PI);
         printf(console_text(state,
@@ -415,6 +612,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                after_turns, after_turns * 360, error, error * 360,
                c.tolerance, c.tolerance * 360, before_turns - motor_target);
         fflush(stdout);
+        printf(console_text(state, "  目标到位：%s；增益重试 %u 次。本轮 PASS/FAIL 仅判断上下电位置一致性。\n",
+                                  "  Target reached: %s; gain retries=%u. PASS/FAIL above tests power-cycle position consistency only.\n"),
+               motion_result == 0 ? console_text(state, "是", "YES") : console_text(state, "否（当前位置兜底）", "NO (current-position fallback)"), retries_used);
+        fflush(stdout);
         if (!ok) {
             zero_encoder_compare(stdout, &before_snapshot, &after_snapshot, c.ratio);
             zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path, &before_snapshot);
@@ -431,7 +632,7 @@ done:
     pthread_mutex_unlock(&boot_capture_mutex);
     state->show_can_output = old_output; state->show_motor_input = old_input;
     state->bus = old_bus; state->boot_id = old_id; update_boot_ids(state);
-    fprintf(csv, "# result=%s passed=%u\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed); fclose(csv);
-    printf("zero_cycle_test: %s passed=%u csv=%s\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed, path);
+    fprintf(csv, "# result=%s passed=%u current_position_fallbacks=%u\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed, fallback_cycles); fclose(csv);
+    printf("zero_cycle_test: %s passed=%u current_position_fallbacks=%u csv=%s\n", result ? "FAIL_OR_INTERRUPTED" : "PASS", passed, fallback_cycles, path);
     return result;
 }

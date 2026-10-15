@@ -22,11 +22,43 @@ int main(void)
     zero_cycle_config c;
     assert(zero_cycle_load(path, &c) == 0 && c.count == 0 && c.duration_s == 60);
     bxi_motor_limits limits = bxi_motor_default_limits;
+    c.settle_speed = .01;
     limits.v_min = -45; limits.v_max = 45;
     double decoded_zero_speed = (limits.v_max - limits.v_min) / 4095. / 2 * c.ratio / (2 * M_PI);
     assert(decoded_zero_speed > c.tolerance); /* Old criterion never settled. */
     assert(decoded_zero_speed < zero_cycle_speed_threshold(&limits, &c));
     assert(decoded_zero_speed * 2 > zero_cycle_speed_threshold(&limits, &c));
+    c.kp = 50; c.kd = 5; c.retry_gain_factor = 1.5;
+    c.retry_kp_max = 100; c.retry_kd_max = 7.5;
+    limits.kp_max = 500; limits.kd_max = 5;
+    double retry_kp, retry_kd;
+    zero_cycle_retry_gains(&c, &limits, 1, &retry_kp, &retry_kd);
+    assert(retry_kp == 75 && retry_kd == 5); /* KD constrained by motor protocol. */
+    limits.kd_max = 20;
+    zero_cycle_retry_gains(&c, &limits, 2, &retry_kp, &retry_kd);
+    assert(retry_kp == 100 && retry_kd == 7.5); /* Config caps. */
+    zero_cycle_retry_gains(&c, &limits, 10, &retry_kp, &retry_kd);
+    assert(retry_kp == 100 && retry_kd == 7.5);
+    for (int direction = -1; direction <= 1; direction += 2) {
+        double distance = direction * 9.;
+        double duration = zero_cycle_move_duration(distance, 10, 20);
+        float position, velocity, previous_velocity = 0;
+        for (int i = 0; i <= 10000; ++i) {
+            zero_cycle_trajectory(2, 2+distance, duration*i/10000, duration, &position, &velocity);
+            assert(position >= fmin(2, 2+distance)-1e-5 && position <= fmax(2, 2+distance)+1e-5);
+            assert(fabs(velocity) <= 10.0001);
+            if (i) assert(fabs(velocity-previous_velocity)/(duration/10000) <= 20.01);
+            previous_velocity = velocity;
+        }
+        assert(fabs(position-(2+distance)) < 1e-5 && fabs(velocity) < 1e-5);
+    }
+    float static_position, static_velocity;
+    zero_cycle_trajectory(2, 2, 1, 0, &static_position, &static_velocity);
+    assert(static_position == 2 && static_velocity == 0);
+    assert(zero_cycle_parse_state("STATE : 02 MOTOR") == 2);
+    assert(zero_cycle_parse_state("STATE : 00 STARTUP\r\nSTATE : 01 MENU") == 1);
+    assert(zero_cycle_parse_state("position reply received") == -1);
+    assert(zero_cycle_parse_state("Error Code: 20000000") == -1);
     f = fopen(path, "w"); fprintf(f, "gear_ratio: 18\n"); fclose(f);
     assert(zero_cycle_load(path, &c) != 0); /* Half output turn is ambiguous. */
     f = fopen(path, "w"); fprintf(f, "gear_ratio: 20\nmax_motor_turns: 9.1\n"); fclose(f);
@@ -38,6 +70,8 @@ int main(void)
     unlink(path);
     assert(zero_cycle_load("config/zero_cycle_test.yaml", &c) == 0);
     assert(c.count == 1000 && c.speed == 10 && c.kp == 50 && c.kd == 5 && c.tolerance == .1);
+    assert(c.acceleration == 20 && c.arrival_tolerance == .1 && c.settle_speed == .1);
+    assert(c.move_retry_count == 2 && c.arrival_wait_ms == 5000 && c.retry_hold_ms == 3000);
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
     const char *line = "zero_cycle_test 01 config/zero_c";
