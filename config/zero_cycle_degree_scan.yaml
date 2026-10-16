@@ -1,4 +1,5 @@
 test_mode: degree_scan
+scan_start_direction: negative
 # CAN ordinary rotary joint only; replace 0 with the ACTUAL firmware gear ratio.
 # Reference source USE_ENC2=1 defines GR=7056/361 (~19.54570637).
 gear_ratio: 19.54570637
@@ -40,6 +41,8 @@ seed: 0
 scan_step_output_deg: 1
 scan_limit_output_deg: 175
 scan_return_output_deg_per_second: 5
+# Only zero-return arrival checks; normal scan-point and reboot-delta limits stay separate.
+scan_return_tolerance_output_deg: 1
 # Each angle: 10 reboots without motion. One round covers both -175 and +175.
 scan_repeats_per_angle: 10
 # 0 repeats indefinitely (Ctrl+X stops); count/duration_s may impose an earlier limit.

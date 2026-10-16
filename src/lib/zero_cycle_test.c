@@ -1,4 +1,25 @@
 /* Included by main.c. All angles in this test configuration are motor-side turns. */
+static uint64_t zero_cycle_monotonic_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC,&ts);
+    return (uint64_t)ts.tv_sec*1000000+(uint64_t)ts.tv_nsec/1000;
+}
+
+static void zero_cycle_timestamp(FILE *out, const char *stage, uint64_t started)
+{
+    double elapsed=(zero_cycle_monotonic_us()-started)/1e6;
+    uint64_t seconds=(uint64_t)elapsed;
+    time_t now=time(NULL); struct tm local;
+    char stamp[64]; localtime_r(&now,&local);
+    strftime(stamp,sizeof(stamp),"%Y-%m-%d %H:%M:%S%z",&local);
+    if (out==stdout)
+        fprintf(out,"[%s] %s | 累计耗时 %llu小时%02llu分%02llu秒（%.1f 秒）\n",stamp,stage,
+                (unsigned long long)(seconds/3600),(unsigned long long)(seconds/60%60),(unsigned long long)(seconds%60),elapsed);
+    else fprintf(out,"# TIME stage=%s timestamp=\"%s\" elapsed_s=%.3f\n",stage,stamp,elapsed);
+    fflush(out);
+}
+
 static struct termios zero_cycle_saved_terminal;
 static bool zero_cycle_input_active, zero_cycle_user_cancelled;
 
@@ -45,7 +66,9 @@ typedef struct {
     unsigned int continue_after_position_failure, revisit_after_random_cycles;
     unsigned int test_mode; /* 0=random, 1=degree_scan */
     double scan_step_deg, scan_limit_deg, scan_return_speed_deg_s;
+    double scan_return_tolerance_deg;
     unsigned int scan_repeats, scan_rounds;
+    unsigned int scan_start_positive;
     unsigned int count, duration_s, off_ms, settle_ms, move_timeout_ms, seed;
 } zero_cycle_config;
 
@@ -57,6 +80,7 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         .arrival_wait_ms=5000, .move_retry_count=2, .retry_hold_ms=3000,
         .continue_after_position_failure=1, .revisit_after_random_cycles=3,
         .scan_step_deg=1, .scan_limit_deg=175, .scan_return_speed_deg_s=5,
+        .scan_return_tolerance_deg=1,
         .scan_repeats=1, .scan_rounds=1,
         .count=100, .off_ms=1000, .settle_ms=500, .move_timeout_ms=120000};
     FILE *f = fopen(path, "r");
@@ -75,10 +99,16 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
             else if (!strcmp(value, "degree_scan")) c->test_mode = 1;
             else { bad = 1; break; }
         }
+        else if (!strcmp(key,"scan_start_direction")) {
+            if (!strcmp(value,"negative")) c->scan_start_positive=0;
+            else if (!strcmp(value,"positive")) c->scan_start_positive=1;
+            else { bad=1; break; }
+        }
         else ZDOUBLE("gear_ratio", ratio)
         else ZDOUBLE("scan_step_output_deg", scan_step_deg)
         else ZDOUBLE("scan_limit_output_deg", scan_limit_deg)
         else ZDOUBLE("scan_return_output_deg_per_second", scan_return_speed_deg_s)
+        else ZDOUBLE("scan_return_tolerance_output_deg", scan_return_tolerance_deg)
         else ZUINT("scan_repeats_per_angle", scan_repeats)
         else ZUINT("scan_rounds", scan_rounds)
         else ZDOUBLE("max_motor_turns", max_turns)
@@ -113,6 +143,7 @@ static int zero_cycle_load(const char *path, zero_cycle_config *c)
         (!c->test_mode && c->max_turns / c->ratio >= .5) || c->speed <= 0 || c->speed > 10 ||
         c->scan_step_deg <= 0 || c->scan_limit_deg <= 0 || c->scan_limit_deg >= 180 ||
         c->scan_step_deg > c->scan_limit_deg || c->scan_return_speed_deg_s <= 0 || c->scan_return_speed_deg_s > 180 ||
+        c->scan_return_tolerance_deg<=0 || c->scan_return_tolerance_deg>5 ||
         c->scan_limit_deg/c->scan_step_deg > 10000 ||
         fabs(c->scan_limit_deg/c->scan_step_deg-round(c->scan_limit_deg/c->scan_step_deg)) > 1e-6 ||
         !c->scan_repeats || c->scan_repeats>1000 || c->scan_rounds>100000 ||
@@ -140,6 +171,36 @@ static double zero_cycle_physical_limit(const zero_cycle_config *c)
     return c->test_mode ? c->scan_limit_deg*c->ratio/360 : c->max_turns;
 }
 
+/* Strip named overrides into a separate argv without modifying terminal-owned tokens. */
+static int zero_cycle_direction_args(int argc,char **argv,char **filtered,int *filtered_count,int *direction)
+{
+    if (argc<1 || argc>63) return -1;
+    *filtered_count=0; *direction=-1;
+    for (int i=0;i<argc;++i) {
+        const char *value=NULL;
+        if (!strcmp(argv[i],"--direction")) {
+            if (++i>=argc) return -1;
+            value=argv[i];
+        } else if (!strncmp(argv[i],"--direction=",12)) value=argv[i]+12;
+        else if (!strncmp(argv[i],"--",2)) return -1;
+        if (value) {
+            if (*direction!=-1) return -1;
+            if (!strcmp(value,"positive")) *direction=1;
+            else if (!strcmp(value,"negative")) *direction=0;
+            else return -1;
+        } else filtered[(*filtered_count)++]=argv[i];
+    }
+    return 0;
+}
+
+static int zero_cycle_direction_override(zero_cycle_config *c,int direction)
+{
+    if (direction<0) return 0;
+    if (!c->test_mode) { fputs("--direction requires test_mode: degree_scan\n",stderr); return -1; }
+    c->scan_start_positive=(unsigned int)direction;
+    return 0;
+}
+
 static unsigned int zero_cycle_scan_steps(const zero_cycle_config *c)
 {
     return (unsigned int)llround(c->scan_limit_deg/c->scan_step_deg);
@@ -150,6 +211,7 @@ static int zero_cycle_scan_target(unsigned int index, const zero_cycle_config *c
     unsigned int steps = zero_cycle_scan_steps(c);
     if (index >= 2*steps) return -1;
     double degrees = index < steps ? -(double)(index+1)*c->scan_step_deg : (double)(index-steps+1)*c->scan_step_deg;
+    if (c->scan_start_positive) degrees=-degrees;
     *motor_turns = degrees*c->ratio/360;
     return 0;
 }
@@ -552,7 +614,7 @@ typedef struct { unsigned int completed, valid, matched; } zero_cycle_fixed_stat
 static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_t slot,
                               const zero_cycle_config *c, unsigned int failed_cycle,
                               double target_turns, float baseline, const char *csv_path,
-                              const zero_encoder_snapshot *before_snapshot, zero_cycle_fixed_stats *stats)
+                              const zero_encoder_snapshot *before_snapshot, zero_cycle_fixed_stats *stats, uint64_t elapsed_begin)
 {
     *stats = (zero_cycle_fixed_stats){0};
     char log_path[512];
@@ -605,6 +667,10 @@ static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_
             fprintf(log, "\nRESULT retry=%u ERROR no valid position\n", i);
             pthread_mutex_unlock(&boot_capture_mutex);
         }
+        zero_cycle_timestamp(stdout,"失败点复测 / RETEST",elapsed_begin);
+        pthread_mutex_lock(&boot_capture_mutex);
+        zero_cycle_timestamp(log,"RETEST",elapsed_begin);
+        pthread_mutex_unlock(&boot_capture_mutex);
         if (powered == 0) {
             zero_encoder_snapshot snapshot = zero_encoder_query(state, m, log, "RETEST_AFTER_BOOT");
             zero_encoder_compare(log, before_snapshot, &snapshot, c->ratio);
@@ -636,10 +702,17 @@ static int zero_cycle_compensated_target(double motor_turns, double offset_rad,
     return 0;
 }
 
-static bool zero_cycle_zero_recheck_ok(double before_corrected_turns, double after_firmware_turns, double tolerance)
+static bool zero_cycle_zero_recheck_limits(double before_corrected_turns, double after_firmware_turns,
+                                           double zero_tolerance, double comparison_tolerance)
 {
-    return isfinite(after_firmware_turns) && fabs(after_firmware_turns) <= tolerance &&
-           fabs(after_firmware_turns-before_corrected_turns) <= tolerance;
+    return isfinite(before_corrected_turns) && isfinite(after_firmware_turns) &&
+           fabs(before_corrected_turns)<=zero_tolerance && fabs(after_firmware_turns)<=zero_tolerance &&
+           fabs(after_firmware_turns-before_corrected_turns)<=comparison_tolerance;
+}
+
+static double zero_cycle_return_tolerance(const zero_cycle_config *c)
+{
+    return c->test_mode ? c->scan_return_tolerance_deg*c->ratio/360 : c->arrival_tolerance;
 }
 
 static int zero_cycle_return_original_zero(flash_state *state, const motor_map_entry *m, size_t slot,
@@ -660,13 +733,16 @@ static int zero_cycle_return_original_zero(flash_state *state, const motor_map_e
     if (c->test_mode) {
         recovery_config.speed = fmin(c->speed, c->scan_return_speed_deg_s*c->ratio/360);
         recovery_config.acceleration = fmin(c->acceleration, recovery_config.speed*2);
+        recovery_config.arrival_tolerance=zero_cycle_return_tolerance(c);
     }
+    double zero_tolerance=recovery_config.arrival_tolerance;
+    printf("回零到位允许偏差：输出端 %.3f°；上下电位置一致性容差仍为 %.6f 电机圈。\n",zero_tolerance*360/c->ratio,c->tolerance);
     if (zero_cycle_enable_confirmed(state, m, slot) ||
         zero_cycle_move(state, m, &recovery_config, target, &reply, &retries) != 0 ||
         zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
         zero_cycle_sample(state, m, 0, 0, 0, &reply)) return -1;
     double corrected = (reply.position-offset_rad)*c->ratio/(2*M_PI);
-    if (fabs(corrected) > c->arrival_tolerance) {
+    if (fabs(corrected) > zero_tolerance) {
         fprintf(stderr, "zero_cycle_test: ERROR original-zero recovery did not hold after disable: %.6f motor turns\n", corrected);
         return -1;
     }
@@ -681,14 +757,14 @@ static int zero_cycle_return_original_zero(flash_state *state, const motor_map_e
     if (initial_zero->enc1_valid && snapshot.enc1_valid) {
         double delta = zero_shortest_deg(snapshot.raw1*360./snapshot.cpr1-initial_zero->raw1*360./initial_zero->cpr1);
         printf("  原零位 ENC1 raw angle delta=%.6f motor deg\n", delta);
-        if (fabs(delta) > c->arrival_tolerance*360 + 360./snapshot.cpr1) {
+        if (fabs(delta) > zero_tolerance*360 + 360./snapshot.cpr1) {
             fprintf(stderr, "zero_cycle_test: ERROR recovered zero contradicts initial ENC1 raw phase; stop compensation\n"); return -1;
         }
     }
     if (initial_zero->raw2_valid && snapshot.raw2_valid) {
         double delta = zero_shortest_deg(snapshot.raw2-initial_zero->raw2);
         printf("  原零位 ENC2 raw angle delta=%.6f output deg\n", delta);
-        if (fabs(delta) > c->arrival_tolerance*360/c->ratio + .01) {
+        if (fabs(delta) > zero_tolerance*360/c->ratio + .01) {
             fprintf(stderr, "zero_cycle_test: ERROR recovered zero contradicts initial ENC2 raw angle; stop compensation\n"); return -1;
         }
     }
@@ -707,18 +783,18 @@ static int zero_cycle_return_original_zero(flash_state *state, const motor_map_e
     }
     double reboot_turns = reply.position*c->ratio/(2*M_PI);
     zero_encoder_snapshot reboot_snapshot = zero_encoder_query(state, m, log, "ORIGINAL_ZERO_REBOOT_CHECK");
-    bool zero_ok = zero_cycle_zero_recheck_ok(corrected, reboot_turns, c->tolerance);
+    bool zero_ok = zero_cycle_zero_recheck_limits(corrected,reboot_turns,zero_tolerance,c->tolerance);
     if (initial_zero->enc1_valid && reboot_snapshot.enc1_valid) {
         double delta = zero_shortest_deg(reboot_snapshot.raw1*360./reboot_snapshot.cpr1-initial_zero->raw1*360./initial_zero->cpr1);
-        if (fabs(delta) > c->arrival_tolerance*360+360./reboot_snapshot.cpr1) zero_ok = false;
+        if (fabs(delta) > zero_tolerance*360+360./reboot_snapshot.cpr1) zero_ok = false;
     }
     if (initial_zero->raw2_valid && reboot_snapshot.raw2_valid &&
-        fabs(zero_shortest_deg(reboot_snapshot.raw2-initial_zero->raw2)) > c->arrival_tolerance*360/c->ratio+.01) zero_ok = false;
+        fabs(zero_shortest_deg(reboot_snapshot.raw2-initial_zero->raw2)) > zero_tolerance*360/c->ratio+.01) zero_ok = false;
     printf("原零位重启验证：断电前补偿位置 %+.6f 圈，上电后固件读数 %+.6f 圈，差值 %+.6f 圈，容差 %.6f 圈：%s\n",
            corrected, reboot_turns, reboot_turns-corrected, c->tolerance, zero_ok ? "PASS" : "FAIL / 暂停测试");
     pthread_mutex_lock(&boot_capture_mutex);
-    fprintf(log, "ORIGINAL_ZERO_REBOOT_RESULT corrected_before_motor_turns=%.9g firmware_after_motor_turns=%.9g delta_motor_turns=%.9g tolerance_motor_turns=%.9g result=%s old_offset_output_rad=%.9g\n",
-            corrected, reboot_turns, reboot_turns-corrected, c->tolerance, zero_ok ? "PASS" : "FAIL", offset_rad);
+    fprintf(log, "ORIGINAL_ZERO_REBOOT_RESULT corrected_before_motor_turns=%.9g firmware_after_motor_turns=%.9g delta_motor_turns=%.9g tolerance_motor_turns=%.9g result=%s old_offset_output_rad=%.9g zero_tolerance_output_deg=%.9g\n",
+            corrected, reboot_turns, reboot_turns-corrected, c->tolerance, zero_ok ? "PASS" : "FAIL", offset_rad,zero_tolerance*360/c->ratio);
     fflush(log); pthread_mutex_unlock(&boot_capture_mutex);
     if (zero_cycle_cancel_requested()) return -1;
     if (!zero_ok) return -2;
@@ -776,12 +852,19 @@ static void zero_cycle_summary(const char *path, const zero_cycle_anomaly *point
 
 static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
 {
+    uint64_t elapsed_begin=zero_cycle_monotonic_us();
+    char *filtered[64]; int direction;
+    if (zero_cycle_direction_args(argc,argv,filtered,&argc,&direction)) {
+        puts("usage: zero_cycle_test <index00> [config.yaml] [--direction positive|negative]"); return -1;
+    }
+    argv=filtered;
     unsigned int index; size_t slot; zero_cycle_config c;
     if ((argc != 2 && argc != 3) || console_parse_index_arg(argv[1], &index)) {
-        printf("usage: zero_cycle_test <index00> [config.yaml]\n"); return -1;
+        printf("usage: zero_cycle_test <index00> [config.yaml] [--direction positive|negative]\n"); return -1;
     }
     const char *config_path = argc == 3 ? argv[2] : "config/zero_cycle_test.yaml";
     if (zero_cycle_load(config_path, &c)) return -1;
+    if (zero_cycle_direction_override(&c,direction)) return -1;
     const motor_map_entry *m = console_motor_by_index(state, index, &slot);
     if (!m || strstr(m->type, "hand")) { fprintf(stderr, "zero_cycle_test: unknown motor or unsupported hand\n"); return -1; }
     const bxi_motor_limits *limits = limits_for_entry(state, m);
@@ -809,6 +892,8 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     fprintf(csv, "# motor_index=%u bus=%u id=%u gear_ratio=%.12g seed=%u\n", index, m->bus, m->id, c.ratio, seed); fflush(csv);
     fprintf(csv, "# test_mode=%s scan_step_output_deg=%.9g scan_limit_output_deg=%.9g\n", c.test_mode ? "degree_scan" : "random", c.scan_step_deg, c.scan_limit_deg);
     printf("zero_cycle_test: mode=%s\n", c.test_mode ? "degree_scan" : "random");
+    if (c.test_mode) printf("起始方向：%s（%s）\n",c.scan_start_positive?"正向 positive":"负向 negative",direction<0?"配置文件":"命令行覆盖");
+    fprintf(csv,"# scan_start_direction=%s direction_source=%s\n",c.scan_start_positive?"positive":"negative",direction<0?"config":"command_line");
     printf("zero_cycle_test: index=%02u ratio=%.9g range=+/-%.6g motor turns seed=%u csv=%s\n", index, c.ratio, zero_cycle_physical_limit(&c), seed, path);
     printf("zero_cycle_test: readable boot/encoder diagnostics: %s\n", readable_path);
     pthread_mutex_lock(&boot_capture_mutex);
@@ -824,6 +909,9 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     double offset_rad = 0, scale = 2*M_PI/c.ratio;
     bool completed = false, recovery_paused = false;
     uint64_t begin = time_us();
+    zero_cycle_timestamp(stdout,"测试开始 / START",elapsed_begin);
+    zero_cycle_timestamp(csv,"START",elapsed_begin);
+    zero_cycle_timestamp(readable,"START",elapsed_begin);
     if (zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
         zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) ||
         zero_cycle_sample(state, m, 0, 0, 0, &reply)) goto done;
@@ -989,6 +1077,11 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                after_turns, after_turns * 360, error, error * 360,
                c.tolerance, c.tolerance * 360, before_turns - motor_target);
         fflush(stdout);
+        zero_cycle_timestamp(stdout,"本轮结果 / RESULT",elapsed_begin);
+        zero_cycle_timestamp(csv,"RESULT",elapsed_begin);
+        pthread_mutex_lock(&boot_capture_mutex);
+        zero_cycle_timestamp(readable,"RESULT",elapsed_begin);
+        pthread_mutex_unlock(&boot_capture_mutex);
         printf("  软件坐标偏移 / firmware-minus-original: %+.6f 电机圈；异常点 #%u；revisit_hit=%s\n",
                offset_rad/scale, point >= 0 ? (unsigned)point+1 : 0, revisit_hit ? "YES" : "NO");
         printf(console_text(state, "  目标到位：%s；增益重试 %u 次。本轮 PASS/FAIL 仅判断上下电位置一致性。\n",
@@ -1008,7 +1101,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         if (!ok) {
             zero_encoder_compare(stdout, &before_snapshot, &after_snapshot, c.ratio);
             zero_cycle_fixed_stats fixed;
-            int fixed_result = zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path, &before_snapshot, &fixed);
+            int fixed_result = zero_cycle_retest(state, m, slot, &c, n + 1, motor_target, before, path, &before_snapshot, &fixed, elapsed_begin);
             if (point >= 0) {
                 anomalies[point].fixed_trials += fixed.completed;
                 anomalies[point].fixed_failures += fixed.valid-fixed.matched;
@@ -1057,6 +1150,7 @@ done:
     if (state->motor_power_on && zero_cycle_operation(state, 0, slot)) { result = -1; completed = false; }
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_file = NULL;
+    zero_cycle_timestamp(readable,"END",elapsed_begin);
     fclose(readable);
     pthread_mutex_unlock(&boot_capture_mutex);
     state->show_can_output = old_output; state->show_motor_input = old_input;
@@ -1064,8 +1158,10 @@ done:
     const char *outcome = completed ? (failures ? "COMPLETED_WITH_POSITION_FAILURES" : "PASS") : "STOPPED";
     if (recovery_paused) outcome = "PAUSED_ZERO_RECHECK_FAILED";
     if (result != 0 && !failures) outcome = "STOPPED";
+    zero_cycle_timestamp(stdout,"测试结束 / END",elapsed_begin);
+    zero_cycle_timestamp(csv,"END",elapsed_begin);
     fprintf(csv, "# result=%s passed=%u position_failures=%u current_position_fallbacks=%u user_cancelled=%d\n", outcome, passed, failures, fallback_cycles, zero_cycle_user_cancelled); fclose(csv);
-    zero_cycle_summary(path, anomalies, anomaly_count, passed, failures, fallback_cycles, completed, (time_us()-begin)/1e6, c.arrival_tolerance);
+    zero_cycle_summary(path, anomalies, anomaly_count, passed, failures, fallback_cycles, completed, (zero_cycle_monotonic_us()-elapsed_begin)/1e6, c.arrival_tolerance);
     printf("zero_cycle_test: %s passed=%u position_failures=%u current_position_fallbacks=%u csv=%s\n", outcome, passed, failures, fallback_cycles, path);
     return result;
 }

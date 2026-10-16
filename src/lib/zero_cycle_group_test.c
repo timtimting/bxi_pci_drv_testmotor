@@ -52,16 +52,19 @@ static int zero_group_discover(flash_state *state, char *selection, size_t capac
     return 0;
 }
 
-static int console_zero_cycle_group_test(flash_state *state,int argc,char **argv);
+static int zero_group_run(flash_state *state,int argc,char **argv,uint64_t elapsed_begin,int direction);
 
-static int zero_group_auto_test(flash_state *state,const char *config_path)
+static int zero_group_auto_test(flash_state *state,const char *config_path,int direction)
 {
+    uint64_t elapsed_begin=zero_cycle_monotonic_us();
     zero_cycle_config config;
     if (zero_cycle_load(config_path,&config)) return -1;
+    if (zero_cycle_direction_override(&config,direction)) return -1;
     if (state->motor_power_on || console_any_enabled(state)) { fputs("group: start with power OFF\n",stderr); return -1; }
     if (zero_cycle_input_begin()) return -1;
     for (size_t i=0;i<state->config.entry_count;++i) state->motors[i].detected_type_valid=false;
     puts("自动发现：读取机器人 bus/id/型号配置，上电后扫描全部已配置地址，核对本次启动输出 HW/PRO。Ctrl+X 停止。");
+    zero_cycle_timestamp(stdout,"自动扫描开始 / DISCOVERY_START",elapsed_begin);
     char selection[512]; int rc=-1;
     if (!zero_cycle_operation(state,1,0) && !zero_cycle_cancel_requested()) {
         int out=-1,err=-1;
@@ -74,10 +77,10 @@ static int zero_group_auto_test(flash_state *state,const char *config_path)
     if (state->motor_power_on && zero_cycle_operation(state,0,0)) rc=-1;
     if (zero_cycle_cancel_requested()) rc=-1;
     zero_cycle_input_end();
-    if (rc) return -1;
+    if (rc) { zero_cycle_timestamp(stdout,"扫描终止 / DISCOVERY_STOPPED",elapsed_begin); return -1; }
     printf("自动选择：%s；测试参数：%s。重新上电确认型号后开始测试。\n",selection,config_path);
     char *arguments[]={"zero_cycle_group_test",selection,(char *)config_path};
-    return console_zero_cycle_group_test(state,3,arguments);
+    return zero_group_run(state,3,arguments,elapsed_begin,direction);
 }
 
 static int zero_group_select(flash_state *state, const char *selection,
@@ -196,6 +199,7 @@ static int zero_group_move(flash_state *state, zero_group_motor *motors, size_t 
     if (zero_group_enable(state, motors, count)) return -1;
     double scale=2*M_PI/c->ratio, duration=0;
     double speed=slow ? fmin(c->speed, c->scan_return_speed_deg_s*c->ratio/360) : c->speed;
+    double arrival=slow ? zero_cycle_return_tolerance(c) : c->arrival_tolerance;
     for (size_t i=0; i<count; ++i) {
         motors[i].start=motors[i].reply.position;
         duration=fmax(duration, zero_cycle_move_duration(target-motors[i].start, speed*scale, c->acceleration*scale));
@@ -208,7 +212,7 @@ static int zero_group_move(flash_state *state, zero_group_motor *motors, size_t 
         if (zero_group_exchange(state, motors, count, positions, velocities, c->kp, c->kd)) return -1;
         bool all=elapsed>=duration;
         for (size_t i=0; i<count; ++i)
-            if (fabs(motors[i].reply.position-target)/scale > c->arrival_tolerance ||
+            if (fabs(motors[i].reply.position-target)/scale > arrival ||
                 fabs(motors[i].reply.velocity)/scale > zero_cycle_speed_threshold(limits_for_entry(state, motors[i].motor), c)) all=false;
         if (all) {
             if (!stable) stable=time_us();
@@ -234,17 +238,15 @@ static bool zero_group_compare(zero_group_motor *g, const zero_cycle_config *c, 
     return ok;
 }
 
-static int console_zero_cycle_group_test(flash_state *state, int argc, char **argv)
+static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t elapsed_begin,int direction)
 {
-    if (argc==1 || (argc==2 && (!strcmp(argv[1],"auto") || !strchr(argv[1],':'))) ||
-        (argc==3 && !strcmp(argv[1],"auto")))
-        return zero_group_auto_test(state,argc==3?argv[2]:argc==2 && strcmp(argv[1],"auto")?argv[1]:"config/zero_cycle_test.yaml");
     zero_group_motor motors[32]; size_t count;
     zero_cycle_config c;
     if ((argc != 2 && argc != 3) || zero_group_select(state, argv[1], motors, &count)) {
         puts("usage: zero_cycle_group_test [auto|bus:id,bus:id,...] [config.yaml]"); return -1;
     }
     if (zero_cycle_load(argc==3 ? argv[2] : "config/zero_cycle_test.yaml", &c)) return -1;
+    if (zero_cycle_direction_override(&c,direction)) return -1;
     if (state->motor_power_on || console_any_enabled(state)) { fputs("group: start with power OFF\n", stderr); return -1; }
     double scale=2*M_PI/c.ratio, max_rad=zero_cycle_physical_limit(&c)*scale;
     for (size_t i=0; i<count; ++i) {
@@ -265,6 +267,10 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
     fprintf(csv,"cycle,bus,id,index,phase,target_output_deg,baseline_output_rad,before_output_rad,after_output_rad,delta_baseline_motor_turns,delta_cycle_motor_turns,result\n");
     fprintf(csv,"# gear_ratio=%.12g seed=%u mode=%s tolerance_motor_turns=%.9g\n",c.ratio,seed,c.test_mode?"degree_scan":"random",c.tolerance);
     fprintf(csv,"# scan_repeats_per_angle=%u scan_rounds=%u\n",c.scan_repeats,c.scan_rounds);
+    fprintf(csv,"# scan_start_direction=%s direction_source=%s\n",c.scan_start_positive?"positive":"negative",direction<0?"config":"command_line");
+    if (c.test_mode) printf("起始方向：%s（%s）\n",c.scan_start_positive?"正向 positive":"负向 negative",direction<0?"配置文件":"命令行覆盖");
+    zero_cycle_timestamp(stdout,"测试开始 / START",elapsed_begin);
+    zero_cycle_timestamp(csv,"START",elapsed_begin);
     if (zero_cycle_input_begin()) goto done;
     state->show_can_output=state->show_motor_input=false;
     pthread_mutex_lock(&boot_capture_mutex);
@@ -274,6 +280,7 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
         group_boot_capture[i].file=fopen(log,"wx");
         if (!group_boot_capture[i].file) { pthread_mutex_unlock(&boot_capture_mutex); goto done; }
         ++group_boot_capture_count;
+        zero_cycle_timestamp(group_boot_capture[i].file,"START",elapsed_begin);
     }
     pthread_mutex_unlock(&boot_capture_mutex);
     printf("多电机测试：%zu 台，共用 gear_ratio=%.9g；Ctrl+X 停止。CSV: %s\n",count,c.ratio,path);
@@ -318,7 +325,7 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
                 if (zero_group_power_cycle(state,motors[0].slot,&c) ||
                     zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
                 for (size_t i=0;i<count;++i) {
-                    bool ok=zero_cycle_zero_recheck_ok(zero_before[i]/scale,motors[i].reply.position/scale,c.tolerance);
+                    bool ok=zero_cycle_zero_recheck_limits(zero_before[i]/scale,motors[i].reply.position/scale,zero_cycle_return_tolerance(&c),c.tolerance);
                     if (!ok) frozen=true;
                     fprintf(csv,"# midpoint_zero bus=%u id=%u before_rad=%.9g after_rad=%.9g result=%s\n",
                             motors[i].motor->bus,motors[i].motor->id,zero_before[i],motors[i].reply.position,ok?"PASS":"FAIL");
@@ -366,6 +373,12 @@ static int console_zero_cycle_group_test(flash_state *state, int argc, char **ar
                 zero_encoder_query(state,motors[i].motor,group_boot_capture[i].file,"GROUP_FIRST_POSITION_FAILURE");
         }
         printf("全组累计：%u 轮成功，%u 轮失败。%s\n",passed,failed,frozen?"已锁定：仅上下电，不运动、不置零、不补偿。":"");
+        zero_cycle_timestamp(stdout,"本轮结果 / RESULT",elapsed_begin);
+        zero_cycle_timestamp(csv,"RESULT",elapsed_begin);
+        pthread_mutex_lock(&boot_capture_mutex);
+        for (size_t i=0;i<group_boot_capture_count;++i)
+            zero_cycle_timestamp(group_boot_capture[i].file,"RESULT",elapsed_begin);
+        pthread_mutex_unlock(&boot_capture_mutex);
         fflush(csv); fflush(stdout);
     }
     result=zero_cycle_cancel_requested() || failed || frozen ? -1 : 0;
@@ -376,7 +389,10 @@ done:
     }
     zero_cycle_input_end();
     pthread_mutex_lock(&boot_capture_mutex);
-    for (size_t i=0;i<group_boot_capture_count;++i) fclose(group_boot_capture[i].file);
+    for (size_t i=0;i<group_boot_capture_count;++i) {
+        zero_cycle_timestamp(group_boot_capture[i].file,"END",elapsed_begin);
+        fclose(group_boot_capture[i].file);
+    }
     group_boot_capture_count=0;
     pthread_mutex_unlock(&boot_capture_mutex);
     state->show_can_output=old_output; state->show_motor_input=old_input;
@@ -386,7 +402,22 @@ done:
         fprintf(csv,"# motor bus=%u id=%u passed=%u failed=%u\n",motors[i].motor->bus,motors[i].motor->id,motors[i].passed,motors[i].failed);
         printf("  bus=%u id=%u：累计成功 %u，失败 %u\n",motors[i].motor->bus,motors[i].motor->id,motors[i].passed,motors[i].failed);
     }
+    zero_cycle_timestamp(stdout,"测试结束 / END",elapsed_begin);
+    zero_cycle_timestamp(csv,"END",elapsed_begin);
     fclose(csv);
     printf("多电机测试结束：成功 %u 轮，失败 %u 轮；%s；日志 %s\n",passed,failed,result?"FAILED_OR_STOPPED":"PASS",path);
     return result;
+}
+
+static int console_zero_cycle_group_test(flash_state *state,int argc,char **argv)
+{
+    char *filtered[64]; int direction;
+    if (zero_cycle_direction_args(argc,argv,filtered,&argc,&direction)) {
+        puts("usage: zero_cycle_group_test [auto|bus:id,...] [config.yaml] [--direction positive|negative]"); return -1;
+    }
+    argv=filtered;
+    if (argc==1 || (argc==2 && (!strcmp(argv[1],"auto") || !strchr(argv[1],':'))) ||
+        (argc==3 && !strcmp(argv[1],"auto")))
+        return zero_group_auto_test(state,argc==3?argv[2]:argc==2 && strcmp(argv[1],"auto")?argv[1]:"config/zero_cycle_test.yaml",direction);
+    return zero_group_run(state,argc,argv,zero_cycle_monotonic_us(),direction);
 }
