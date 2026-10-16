@@ -4578,7 +4578,15 @@ static const char *const *completion_words_for_line(const char *line, size_t len
         *count = 0u;
         return NULL;
     }
-    if (custom_command_words != NULL && (!strcmp(first, "zero_cycle_test") || !strcmp(first, "zero_cycle_group_test")) && tokens_before == 2u) {
+    bool zero_test_command=custom_command_words != NULL &&
+        (!strcmp(first,"zero_cycle_test") || !strcmp(first,"zero_cycle_group_test"));
+    if (zero_test_command && ((len>(size_t)start && line[start]=='-') ||
+                             (tokens_before>=3u && len==(size_t)start))) {
+        static const char *const directions[]={"--direction==positive","--direction==negative"};
+        *count=sizeof(directions)/sizeof(directions[0]);
+        return directions;
+    }
+    if (zero_test_command && tokens_before>=2u) {
         static glob_t paths;
         char pattern[PATH_LEN];
         globfree(&paths);

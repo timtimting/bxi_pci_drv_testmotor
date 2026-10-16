@@ -312,9 +312,12 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
         fprintf(stderr,"group: initial zero failed bus=%u id=%u\n",motors[i].motor->bus,motors[i].motor->id); goto done;
     }
     double target_turns=0;
+    unsigned int point_passed=0,point_failed=0;
     for (unsigned int n=0; !zero_cycle_cancel_requested() && (!c.count || n<c.count) &&
          (!c.test_mode || (uint64_t)n<zero_cycle_scan_total(&c)) &&
          (!c.duration_s || time_us()-begin<(uint64_t)c.duration_s*1000000); ++n) {
+        unsigned int repeats=c.test_mode?c.scan_repeats:1;
+        if (n%repeats==0) point_passed=point_failed=0;
         bool new_point=!c.test_mode || scan_index%c.scan_repeats==0;
         if (!frozen) {
             if (c.test_mode && zero_cycle_scan_boundary(scan_index,&c)) {
@@ -338,11 +341,10 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
             }
             if (!frozen) {
                 if (c.test_mode) {
-                    printf("扫描第 %u 轮，点内上下电 %u/%u\n",scan_index/(2*zero_cycle_scan_steps(&c)*c.scan_repeats)+1,scan_index%c.scan_repeats+1,c.scan_repeats);
                     zero_cycle_scan_cycle_target(scan_index++,&c,&target_turns);
                 }
                 else target_turns=zero_cycle_target(n,&seed,c.max_turns,order);
-                printf("\n第 %u 轮，全组目标输出端 %+.3f°\n",n+1,target_turns*360/c.ratio);
+                if (n%repeats==0) printf("\n第 %u 轮，全组目标输出端 %+.3f°\n",n/repeats+1,target_turns*360/c.ratio);
                 if ((new_point && zero_group_move(state,motors,count,&c,target_turns*scale,false)) ||
                     zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
                 if (new_point) for (size_t i=0;i<count;++i) motors[i].before=motors[i].reply.position;
@@ -356,24 +358,25 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
         }
         if (zero_group_power_cycle(state,motors[0].slot,&c) || zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
         bool round_ok=true, was_frozen=frozen;
+        fprintf(csv,"# angle_round=%u reboot=%u/%u\n",n/repeats+1,n%repeats+1,repeats);
         for (size_t i=0;i<count;++i) {
             zero_group_motor *g=&motors[i];
             double delta=(g->reply.position-g->before)/scale,cycle_delta=(g->reply.position-previous[i])/scale;
             bool ok=zero_group_compare(g,&c,&frozen);
             if (!ok) round_ok=false;
-            printf("第 %u 轮 bus=%u id=%u：基准 %+.3f°，上电 %+.3f°，相对基准差 %+.3f°，本次重启差 %+.3f°（电机端）；%s；累计成功 %u 失败 %u\n",
-                   n+1,g->motor->bus,g->motor->id,g->before/scale*360,g->reply.position/scale*360,delta*360,cycle_delta*360,ok?"PASS":"FAIL",g->passed,g->failed);
+            if (!ok) printf("第 %u 轮 上下电 %u/%u bus=%u id=%u：基准 %+.3f°，上电 %+.3f°，相对基准差 %+.3f°，本次重启差 %+.3f°（电机端）；%s；累计成功 %u 失败 %u\n",
+                   n/repeats+1,n%repeats+1,repeats,g->motor->bus,g->motor->id,g->before/scale*360,g->reply.position/scale*360,delta*360,cycle_delta*360,ok?"PASS":"FAIL",g->passed,g->failed);
             fprintf(csv,"%u,%u,%u,%u,%s,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%s\n",n+1,g->motor->bus,g->motor->id,g->motor->index,
                     was_frozen?"power_only":new_point?"motion":"angle_repeat",target_turns*360/c.ratio,g->before,previous[i],g->reply.position,delta,cycle_delta,ok?"PASS":"FAIL");
         }
         ++rounds; if (round_ok) ++passed; else ++failed;
+        if (round_ok) ++point_passed; else ++point_failed;
+        zero_cycle_compact_result(n,repeats,round_ok,point_passed,point_failed,passed,failed,elapsed_begin);
         if (frozen && !was_frozen) {
             puts("检测到位置超差：全组停止后续运动，保留本轮断电前基准，仅继续上下电。");
             for (size_t i=0;i<count;++i)
                 zero_encoder_query(state,motors[i].motor,group_boot_capture[i].file,"GROUP_FIRST_POSITION_FAILURE");
         }
-        printf("全组累计：%u 轮成功，%u 轮失败。%s\n",passed,failed,frozen?"已锁定：仅上下电，不运动、不置零、不补偿。":"");
-        zero_cycle_timestamp(stdout,"本轮结果 / RESULT",elapsed_begin);
         zero_cycle_timestamp(csv,"RESULT",elapsed_begin);
         pthread_mutex_lock(&boot_capture_mutex);
         for (size_t i=0;i<group_boot_capture_count;++i)
@@ -405,7 +408,7 @@ done:
     zero_cycle_timestamp(stdout,"测试结束 / END",elapsed_begin);
     zero_cycle_timestamp(csv,"END",elapsed_begin);
     fclose(csv);
-    printf("多电机测试结束：成功 %u 轮，失败 %u 轮；%s；日志 %s\n",passed,failed,result?"FAILED_OR_STOPPED":"PASS",path);
+    printf("多电机测试结束：上下电比较成功 %u 次，失败 %u 次；%s；日志 %s\n",passed,failed,result?"FAILED_OR_STOPPED":"PASS",path);
     return result;
 }
 
@@ -413,7 +416,7 @@ static int console_zero_cycle_group_test(flash_state *state,int argc,char **argv
 {
     char *filtered[64]; int direction;
     if (zero_cycle_direction_args(argc,argv,filtered,&argc,&direction)) {
-        puts("usage: zero_cycle_group_test [auto|bus:id,...] [config.yaml] [--direction positive|negative]"); return -1;
+        puts("usage: zero_cycle_group_test [auto|bus:id,...] [config.yaml] [--direction==positive|negative]"); return -1;
     }
     argv=filtered;
     if (argc==1 || (argc==2 && (!strcmp(argv[1],"auto") || !strchr(argv[1],':'))) ||

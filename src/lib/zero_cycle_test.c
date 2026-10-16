@@ -20,6 +20,19 @@ static void zero_cycle_timestamp(FILE *out, const char *stage, uint64_t started)
     fflush(out);
 }
 
+static void zero_cycle_compact_result(unsigned int cycle,unsigned int repeats,bool ok,
+                                      unsigned int point_passed,unsigned int point_failed,
+                                      unsigned int passed,unsigned int failed,uint64_t started)
+{
+    uint64_t seconds=(zero_cycle_monotonic_us()-started)/1000000;
+    time_t now=time(NULL); struct tm local; char stamp[64];
+    localtime_r(&now,&local); strftime(stamp,sizeof(stamp),"%Y-%m-%d %H:%M:%S%z",&local);
+    printf("[%s] 第 %u 轮 | 上下电 %u/%u %s | 本轮成功 %u 失败 %u | 累计成功 %u 失败 %u | 耗时 %llu:%02llu:%02llu\n",
+           stamp,cycle/repeats+1,cycle%repeats+1,repeats,ok?"PASS":"FAIL",point_passed,point_failed,passed,failed,
+           (unsigned long long)(seconds/3600),(unsigned long long)(seconds/60%60),(unsigned long long)(seconds%60));
+    fflush(stdout);
+}
+
 static struct termios zero_cycle_saved_terminal;
 static bool zero_cycle_input_active, zero_cycle_user_cancelled;
 
@@ -181,7 +194,8 @@ static int zero_cycle_direction_args(int argc,char **argv,char **filtered,int *f
         if (!strcmp(argv[i],"--direction")) {
             if (++i>=argc) return -1;
             value=argv[i];
-        } else if (!strncmp(argv[i],"--direction=",12)) value=argv[i]+12;
+        } else if (!strncmp(argv[i],"--direction==",13)) value=argv[i]+13;
+        else if (!strncmp(argv[i],"--direction=",12)) value=argv[i]+12;
         else if (!strncmp(argv[i],"--",2)) return -1;
         if (value) {
             if (*direction!=-1) return -1;
@@ -855,12 +869,12 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     uint64_t elapsed_begin=zero_cycle_monotonic_us();
     char *filtered[64]; int direction;
     if (zero_cycle_direction_args(argc,argv,filtered,&argc,&direction)) {
-        puts("usage: zero_cycle_test <index00> [config.yaml] [--direction positive|negative]"); return -1;
+        puts("usage: zero_cycle_test <index00> [config.yaml] [--direction==positive|negative]"); return -1;
     }
     argv=filtered;
     unsigned int index; size_t slot; zero_cycle_config c;
     if ((argc != 2 && argc != 3) || console_parse_index_arg(argv[1], &index)) {
-        printf("usage: zero_cycle_test <index00> [config.yaml] [--direction positive|negative]\n"); return -1;
+        printf("usage: zero_cycle_test <index00> [config.yaml] [--direction==positive|negative]\n"); return -1;
     }
     const char *config_path = argc == 3 ? argv[2] : "config/zero_cycle_test.yaml";
     if (zero_cycle_load(config_path, &c)) return -1;
@@ -947,6 +961,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             save_confirmed ? "OK" : "UNCONFIRMED"); fflush(csv); fflush(stdout);
     zero_encoder_snapshot initial_zero_snapshot = zero_encoder_query(state, m, readable, "INITIAL_ORIGINAL_ZERO");
     bool force_scan_move=true;
+    unsigned int point_passed=0,point_failed=0;
     int point_motion_result=0; unsigned int point_retries=0;
     fprintf(csv,"# scan_repeats_per_angle=%u scan_rounds=%u\n",c.scan_repeats,c.scan_rounds);
     for (unsigned int n = 0; !zero_cycle_cancel_requested() && (!c.count || n < c.count) &&
@@ -962,9 +977,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         bool revisit = !c.test_mode && anomaly_count && random_since_revisit >= c.revisit_after_random_cycles;
         unsigned int requested_anomaly = 0;
         double motor_target;
+        unsigned int repeats=c.test_mode?c.scan_repeats:1;
+        if (n%repeats==0) point_passed=point_failed=0;
         bool move_point=!c.test_mode || scan_index%c.scan_repeats==0 || force_scan_move;
         if (c.test_mode) {
-            printf("扫描第 %u 轮，点内上下电 %u/%u\n",scan_index/(2*zero_cycle_scan_steps(&c)*c.scan_repeats)+1,scan_index%c.scan_repeats+1,c.scan_repeats);
             if (zero_cycle_scan_cycle_target(scan_index++, &c, &motor_target)) break;
         } else if (revisit) {
             requested_anomaly = revisit_cursor++ % anomaly_count + 1;
@@ -980,10 +996,10 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         if (zero_cycle_compensated_target(motor_target, offset_rad, &c, limits, &target)) {
             fprintf(stderr, "zero_cycle_test: ERROR compensated command outside physical/MIT range; stopping without rezero\n"); goto done;
         }
-        printf(console_text(state,
-               "\n========== 第 %u 轮开始：目标电机端 %+.6f 圈（%+.3f°），输出端 %+.3f° ==========\n",
-               "\n========== Cycle %u start: motor target %+.6f turns (%+.3f deg), output target %+.3f deg ==========\n"),
-               n + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
+        if (n%repeats==0) printf(console_text(state,
+               "\n第 %u 轮：目标电机端 %+.6f 圈（%+.3f°），输出端 %+.3f°\n",
+               "\nRound %u: motor target %+.6f turns (%+.3f deg), output target %+.3f deg\n"),
+               n/repeats + 1, motor_target, motor_target * 360, motor_target * 360 / c.ratio);
         fflush(stdout);
         if (move_point && zero_cycle_enable_confirmed(state, m, slot)) {
             if (!zero_cycle_cancel_requested() && zero_cycle_operation(state, BXI_MOTOR_CMD_DISABLE, slot) == 0)
@@ -1004,7 +1020,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         }
         if (motion_result > 0) {
             ++fallback_cycles;
-            printf(console_text(state, "本轮目标未到达；使用当前稳定位置 %+.6f 电机圈作为上下电基准，不计为目标到位成功。\n",
+            if (move_point) printf(console_text(state, "本轮目标未到达；使用当前稳定位置 %+.6f 电机圈作为上下电基准，不计为目标到位成功。\n",
                                       "Target NOT reached; using current stable motor position %+.6f turns as power-cycle baseline, not a motion success.\n"),
                    reply.position*c.ratio/(2*M_PI));
             fflush(stdout);
@@ -1025,6 +1041,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
             goto done;
         }
         double error = (reply.position - before) * c.ratio / (2 * M_PI);
+        fprintf(csv,"# angle_round=%u reboot=%u/%u\n",n/repeats+1,n%repeats+1,repeats);
         zero_encoder_snapshot after_snapshot = zero_encoder_query(state, m, readable, "AFTER_POWER_ON");
         zero_encoder_compare(readable, &before_snapshot, &after_snapshot, c.ratio);
         bool ok = fabs(error) <= c.tolerance;
@@ -1055,6 +1072,9 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                 requested_anomaly, revisit_hit ? "true" : "false", motor_target*360/c.ratio); fflush(csv);
         double before_turns = physical_before;
         double after_turns = (reply.position-offset_rad)/scale;
+        if (ok) ++point_passed; else ++point_failed;
+        zero_cycle_compact_result(n,repeats,ok,point_passed,point_failed,passed,failures,elapsed_begin);
+        if (!ok) {
         printf(console_text(state,
                "\n========== 第 %u 轮上下电零位识别结果：%s ==========\n"
                "  目标位置（电机端）：%+.6f 圈 / %+.3f°\n"
@@ -1072,23 +1092,23 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
                "  Absolute tolerance: %.6f turns / %.3f deg\n"
                "  Tracking error: %+.6f turns (before-target)\n"
                "====================================================\n\n"),
-               n + 1, ok ? console_text(state, "成功 PASS", "PASS") : console_text(state, "失败 FAIL", "FAIL"),
+               n/repeats + 1, ok ? console_text(state, "成功 PASS", "PASS") : console_text(state, "失败 FAIL", "FAIL"),
                motor_target, motor_target * 360, before_turns, before_turns * 360,
                after_turns, after_turns * 360, error, error * 360,
                c.tolerance, c.tolerance * 360, before_turns - motor_target);
         fflush(stdout);
-        zero_cycle_timestamp(stdout,"本轮结果 / RESULT",elapsed_begin);
+        }
         zero_cycle_timestamp(csv,"RESULT",elapsed_begin);
         pthread_mutex_lock(&boot_capture_mutex);
         zero_cycle_timestamp(readable,"RESULT",elapsed_begin);
         pthread_mutex_unlock(&boot_capture_mutex);
-        printf("  软件坐标偏移 / firmware-minus-original: %+.6f 电机圈；异常点 #%u；revisit_hit=%s\n",
+        if (!ok) printf("  软件坐标偏移 / firmware-minus-original: %+.6f 电机圈；异常点 #%u；revisit_hit=%s\n",
                offset_rad/scale, point >= 0 ? (unsigned)point+1 : 0, revisit_hit ? "YES" : "NO");
-        printf(console_text(state, "  目标到位：%s；增益重试 %u 次。本轮 PASS/FAIL 仅判断上下电位置一致性。\n",
+        if (!ok) printf(console_text(state, "  目标到位：%s；增益重试 %u 次。本轮 PASS/FAIL 仅判断上下电位置一致性。\n",
                                   "  Target reached: %s; gain retries=%u. PASS/FAIL above tests power-cycle position consistency only.\n"),
                motion_result == 0 ? console_text(state, "是", "YES") : console_text(state, "否（当前位置兜底）", "NO (current-position fallback)"), retries_used);
         fflush(stdout);
-        printf(console_text(state,
+        if (!ok) printf(console_text(state,
                "========== 本次运行累计：成功 %u 次 | 失败 %u 次 | 共比较 %u 次 ==========\n\n",
                "========== Run totals: PASS %u | FAIL %u | comparisons %u ==========\n\n"),
                passed, failures, passed+failures);

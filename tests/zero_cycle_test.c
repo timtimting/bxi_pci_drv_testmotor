@@ -132,6 +132,12 @@ int main(void)
     assert(zero_cycle_direction_args(4,invalid,filtered,&filtered_count,&direction));
     char *duplicate[]={"zero_cycle_test","03","--direction=positive","--direction=negative"};
     assert(zero_cycle_direction_args(4,duplicate,filtered,&filtered_count,&direction));
+    char *double_equals[]={"zero_cycle_test","03","config/zero_cycle_degree_scan.yaml","--direction==positive"};
+    assert(!zero_cycle_direction_args(4,double_equals,filtered,&filtered_count,&direction) && filtered_count==3 && direction==1);
+    char *negative_equals[]={"zero_cycle_group_test","--direction==negative","auto","config/zero_cycle_degree_scan.yaml"};
+    assert(!zero_cycle_direction_args(4,negative_equals,filtered,&filtered_count,&direction) && filtered_count==3 && direction==0);
+    char *empty_equals[]={"zero_cycle_test","03","--direction=="};
+    assert(zero_cycle_direction_args(3,empty_equals,filtered,&filtered_count,&direction));
     float scan_command;
     assert(zero_cycle_compensated_target(zero_cycle_physical_limit(&scan), 0, &scan, &limits, &scan_command) == 0);
     /* Regression: -13 motor-turn restart jump must command a displacement
@@ -176,6 +182,17 @@ int main(void)
     assert(strstr(summary_text, ",3,2,2,1,0,20,20,0,"));
     custom_command_words = console_command_words;
     custom_command_word_count = sizeof(console_command_words) / sizeof(console_command_words[0]);
+    char direction_line[256]="zero_cycle_test 03 config/zero_cycle_degree_scan.yaml --dir";
+    size_t direction_length=strlen(direction_line),direction_cursor=direction_length;
+    complete_line(direction_line,&direction_length,&direction_cursor,sizeof(direction_line),"");
+    assert(!strcmp(direction_line,"zero_cycle_test 03 config/zero_cycle_degree_scan.yaml --direction=="));
+    strcat(direction_line,"p"); direction_length=strlen(direction_line); direction_cursor=direction_length;
+    complete_line(direction_line,&direction_length,&direction_cursor,sizeof(direction_line),"");
+    assert(!strcmp(direction_line,"zero_cycle_test 03 config/zero_cycle_degree_scan.yaml --direction==positive "));
+    strcpy(direction_line,"zero_cycle_group_test auto --direction==n");
+    direction_length=strlen(direction_line); direction_cursor=direction_length;
+    complete_line(direction_line,&direction_length,&direction_cursor,sizeof(direction_line),"");
+    assert(!strcmp(direction_line,"zero_cycle_group_test auto --direction==negative "));
     const char *line = "zero_cycle_test 01 config/zero_cycle_t";
     size_t count = 0;
     const char *const *words = completion_words_for_line(line, strlen(line), &count);

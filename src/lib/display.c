@@ -6,8 +6,8 @@
 
 static void console_print_help(bool chinese, bool verbose)
 {
-    printf("  zero_cycle_test <index00> [config.yaml] [--direction positive|negative]  CAN zero recognition test\n");
-    printf("  zero_cycle_group_test [auto|bus:id,bus:id,...] [config.yaml] [--direction positive|negative]  Auto-discover and verify models\n");
+    printf("  zero_cycle_test <index00> [config.yaml] [--direction==positive|negative]  CAN zero recognition test\n");
+    printf("  zero_cycle_group_test [auto|bus:id,bus:id,...] [config.yaml] [--direction==positive|negative]  Auto-discover and verify models\n");
     if (!verbose) {
         if (chinese) {
             printf("统一电机终端命令（详细说明：help all 或 -h all）：\n");

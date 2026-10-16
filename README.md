@@ -799,12 +799,12 @@ duration_s: 0              # 总时长上限；0 不额外限制
 ```
 
 一轮扫描指 −1°…−175°、回零验证、+1°…+175°，并非机械连续旋转 360°。比较次数为 `350 × scan_repeats_per_angle × scan_rounds`：每点 10 次、扫描 1 轮为 3500 次，3 轮为 10500 次。两轮扫描之间同样缓慢回零并上下电验证，再从 −1° 开始，不重新置零。回零验证、单台异常点额外复测不计入主比较次数。有限轮数完成后下电；`count`/`duration_s` 可提前结束，可能截断某个点的 10 次。仅逐度模式允许所有上限均为 0，以供持续循环。
-起始方向优先级为命令行 `--direction positive|negative` > YAML `scan_start_direction` > 默认 `negative`。指定正向时每轮顺序改为 +1°…+175°、缓慢回零验证、−1°…−175°；多轮测试均沿用选定方向。方向参数仅适用于 `degree_scan`，不改变配置文件，也不自动将随机模式切换为逐度模式。开始时会显示最终方向及参数来源，CSV 同步记录。例如：
+起始方向优先级为命令行 `--direction==positive` / `--direction==negative` > YAML `scan_start_direction` > 默认 `negative`。指定正向时每轮顺序改为 +1°…+175°、缓慢回零验证、−1°…−175°；多轮测试均沿用选定方向。方向参数仅适用于 `degree_scan`，不改变配置文件，也不自动将随机模式切换为逐度模式。开始时会显示最终方向及参数来源，CSV 同步记录。在终端输入 `--dir` 后按 Tab 补全为 `--direction==`，继续输入 `p` 或 `n` 后按 Tab 补全对应方向；配置路径的 Tab 补全保留。例如：
 
 ```text
-zero_cycle_test 03 config/zero_cycle_degree_scan.yaml --direction positive
-zero_cycle_group_test auto config/zero_cycle_degree_scan.yaml --direction positive
-zero_cycle_group_test 0:2,1:1 config/zero_cycle_degree_scan.yaml --direction negative
+zero_cycle_test 03 config/zero_cycle_degree_scan.yaml --direction==positive
+zero_cycle_group_test auto config/zero_cycle_degree_scan.yaml --direction==positive
+zero_cycle_group_test 0:2,1:1 config/zero_cycle_degree_scan.yaml --direction==negative
 ```
 
 配置使用 `test_mode: degree_scan`，`scan_step_output_deg: 1`、`scan_limit_output_deg: 175` 和 `scan_return_output_deg_per_second: 5` 分别控制间隔、单侧终点和回零速度。角度终点必须小于输出端半圈，且是间隔的整数倍；扫描范围独立于随机模式的电机端 ±9 圈限制。`count` 或 `duration_s` 仍可提前终止扫描。此模式不插入异常点回访；失败后的原地复测与恢复零位检查保留。
@@ -839,6 +839,7 @@ CSV 位于 `/tmp/zero-group-<pid>-<time>.csv`，每行对应一台电机一次�
 
 零位测试默认 100 轮，隐藏运动进度及常规上下电/扫描/握手日志，只保留每轮目标、重启后的比较结果与错误；CSV 继续记录。
 单台与多电机测试在开始、每轮结果及结束时显示本地日期时间（含时区）和累计耗时（小时/分/秒）；单台失败点复测也显示累计时间。CSV 注释和各台上电日志保存 `TIME` 记录及 `elapsed_s`，可用于事后对照。累计耗时通过单调时钟计算，包含上电、运动、断电等待、诊断和复测；自动多电机模式还包含初始扫描与型号核对。系统时间校正不会使累计耗时跳变。
+逐度测试的控制台按角度分轮：同一角度的 10 次上下电属于同一轮，进入新角度只打印一次目标。每次比较用一行显示时间戳、`第 N 轮 | 上下电 i/10 PASS/FAIL`、本轮及运行累计成功/失败次数、累计耗时。成功时不展开角度、编码器、增益与误差；失败时才展开诊断，多电机模式仅列出失败电机。累计成功/失败仍按上下电比较次数计算；CSV 保留原比较序号及所有详细读数，新增 `angle_round`、`reboot=i/10` 注释便于对应。运动未到位的告警仍保留，避免将位置一致性 PASS 误认为准确到位。
 每轮结果后显示本次运行累计成功、失败和总比较次数，并实时写入 CSV 注释及 boot.log 的 RUNNING_TOTAL。
 该累计包含随机点与异常点回访；原地10次复测、原零位重启验证仍分别记录，不混入主轮次累计。
 
