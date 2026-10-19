@@ -324,11 +324,12 @@ static int zero_cycle_sample_velocity(flash_state *state, const motor_map_entry 
         }
         ++decode_failures;
     }
-    fprintf(stderr, "zero_cycle_test: ERROR %s: bus=%u motor_id=%u expected_CAN_ID=0x%03X byte0=0x%02X len>=8; sends=%u received=%u boot_text=%u decode_failures=%u. Raw diagnostics in .boot.log\n",
-            zero_cycle_cancel_requested() ? "interrupted" : "fresh MIT feedback timeout (100ms)", m->bus, m->id,
-            0x10u | m->id, m->id, transmissions, received, text_frames, decode_failures);
+    if (!zero_cycle_cancel_requested())
+        fprintf(stderr,"[通信错误] bus=%u id=%u MIT_TIMEOUT 100ms：发送=%u 收到=%u 解码失败=%u；详情见 .boot.log\n",
+                m->bus,m->id,transmissions,received,decode_failures);
     pthread_mutex_lock(&boot_capture_mutex);
-    if (boot_capture_file) {
+    if (boot_capture_file && !zero_cycle_cancel_requested()) {
+        boot_diagnostics_fault(boot_capture_file,"MIT_TIMEOUT",m->bus,m->id);
         uint8_t tx[BXI_MOTOR_MIT_LEN];
         bxi_motor_pack_mit(tx, &state->limits, target, velocity, kp, kd, 0);
         fprintf(boot_capture_file, "\nMIT_TIMEOUT bus=%u motor_id=%u expected_id=0x%03X expected_byte0=0x%02X sends=%u rx_bus=%u rx_text=%u decode_failures=%u\n"
@@ -564,7 +565,8 @@ static zero_encoder_snapshot zero_encoder_parse(const char *text)
 static zero_encoder_snapshot zero_encoder_query(flash_state *state, const motor_map_entry *m, FILE *log, const char *stage)
 {
     pthread_mutex_lock(&boot_capture_mutex);
-    fprintf(log, "\n--- %s: send menu string 'p' (read-only, disabled) ---\n", stage); fflush(log);
+    if (!boot_capture_compact) fprintf(log, "\n--- %s: send menu string 'p' (read-only, disabled) ---\n", stage);
+    fflush(log);
     pthread_mutex_unlock(&boot_capture_mutex);
     char text[8192] = {0}; size_t used = 0;
     console_use_motor(state, m);
@@ -582,7 +584,9 @@ static zero_encoder_snapshot zero_encoder_query(flash_state *state, const motor_
     }
     zero_encoder_snapshot s = zero_encoder_parse(text);
     pthread_mutex_lock(&boot_capture_mutex);
-    fprintf(log, "\nQUERY_SUMMARY stage=%s ENC1=%s ENC2=%s ENC2_RAW=%s\n", stage,
+    if (boot_capture_compact) fprintf(log,"ENC_SAMPLE stage=%s enc1_valid=%d raw1=%d cpr1=%u pos1=%.9g enc2_valid=%d angle2=%.9g pos2=%.9g raw2_valid=%d raw2=%.9g\n",
+            stage,s.enc1_valid,s.raw1,s.cpr1,s.pos1,s.enc2_valid,s.angle2,s.pos2,s.raw2_valid,s.raw2);
+    else fprintf(log, "\nQUERY_SUMMARY stage=%s ENC1=%s ENC2=%s ENC2_RAW=%s\n", stage,
             s.enc1_valid ? "received" : "unavailable", s.enc2_valid ? "received" : "unavailable",
             s.raw2_valid ? "received" : "unavailable (requires diagnostic firmware)"); fflush(log);
     pthread_mutex_unlock(&boot_capture_mutex);
@@ -642,6 +646,8 @@ static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_
             failed_cycle, m->index, m->bus, m->id, c->ratio, target_turns, baseline_turns, c->tolerance);
     pthread_mutex_lock(&boot_capture_mutex);
     FILE *previous_capture = boot_capture_file;
+    bool previous_compact=boot_capture_compact;
+    boot_capture_compact=false; /* A failed point keeps its ten full boot transcripts. */
     boot_capture_bus = m->bus; boot_capture_id = m->id; boot_capture_file = log;
     pthread_mutex_unlock(&boot_capture_mutex);
     printf(console_text(state,
@@ -695,6 +701,7 @@ static int zero_cycle_retest(flash_state *state, const motor_map_entry *m, size_
     }
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_file = previous_capture;
+    boot_capture_compact=previous_compact;
     fprintf(log, "\nSUMMARY completed=%u valid=%u baseline_matches=%u interrupted=%d\n", completed, valid, matched, zero_cycle_cancel_requested() != 0);
     fclose(log);
     pthread_mutex_unlock(&boot_capture_mutex);
@@ -910,6 +917,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     fprintf(csv,"# scan_start_direction=%s direction_source=%s\n",c.scan_start_positive?"positive":"negative",direction<0?"config":"command_line");
     printf("zero_cycle_test: index=%02u ratio=%.9g range=+/-%.6g motor turns seed=%u csv=%s\n", index, c.ratio, zero_cycle_physical_limit(&c), seed, path);
     printf("zero_cycle_test: readable boot/encoder diagnostics: %s\n", readable_path);
+    boot_diagnostics_begin();
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_bus = m->bus; boot_capture_id = m->id; boot_capture_file = readable;
     pthread_mutex_unlock(&boot_capture_mutex);
@@ -967,6 +975,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     for (unsigned int n = 0; !zero_cycle_cancel_requested() && (!c.count || n < c.count) &&
          (!c.test_mode || (uint64_t)scan_index < zero_cycle_scan_total(&c)) &&
          (!c.duration_s || time_us() - begin < (uint64_t)c.duration_s * 1000000); ++n) {
+        boot_diagnostics_phase("motion_or_point_repeat",n+1);
         if (c.test_mode && zero_cycle_scan_boundary(scan_index,&c)) {
             printf("\n单侧扫描完成，按输出端最高 %.3f°/s 缓慢回到原零位，再验证重启零位，随后继续扫描。\n", c.scan_return_speed_deg_s);
             int restored = zero_cycle_return_original_zero(state, m, slot, &c, &offset_rad, readable, &initial_zero_snapshot);
@@ -1031,9 +1040,11 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         float before = reply.position;
         double physical_before = (before-offset_rad)/scale;
         zero_encoder_snapshot before_snapshot = zero_encoder_query(state, m, readable, "BEFORE_POWER_OFF");
+        boot_diagnostics_phase("power_off",n+1);
         uint64_t off_begin = time_us();
         if (zero_cycle_operation(state, 0, slot)) goto done;
         while (!zero_cycle_cancel_requested() && time_us() - off_begin < (uint64_t)c.off_ms * 1000) sleep_ms(10);
+        boot_diagnostics_phase("power_on_readback",n+1);
         if (zero_cycle_cancel_requested() || zero_cycle_operation(state, 1, slot) || !state->motors[slot].online ||
             zero_cycle_sample(state, m, 0, 0, 0, &reply)) {
             printf(console_text(state, "第 %u 轮失败：重新上电后未能获取有效位置，无法比较。\n",
@@ -1043,7 +1054,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
         double error = (reply.position - before) * c.ratio / (2 * M_PI);
         fprintf(csv,"# angle_round=%u reboot=%u/%u\n",n/repeats+1,n%repeats+1,repeats);
         zero_encoder_snapshot after_snapshot = zero_encoder_query(state, m, readable, "AFTER_POWER_ON");
-        zero_encoder_compare(readable, &before_snapshot, &after_snapshot, c.ratio);
+        if (fabs(error)>c.tolerance) zero_encoder_compare(readable, &before_snapshot, &after_snapshot, c.ratio);
         bool ok = fabs(error) <= c.tolerance;
         int point = zero_cycle_find_anomaly(anomalies, anomaly_count, physical_before, c.arrival_tolerance);
         bool revisit_hit = revisit && fabs(physical_before-motor_target) <= c.arrival_tolerance;
@@ -1154,6 +1165,7 @@ static int console_zero_cycle_test(flash_state *state, int argc, char **argv)
     completed = !zero_cycle_cancel_requested();
     result = zero_cycle_cancel_requested() || failures ? -1 : 0;
 done:
+    boot_diagnostics_phase("shutdown",passed+failures);
     zero_cycle_input_end();
     if (zero_cycle_user_cancelled) {
         puts("\n已收到退出测试请求，正在失能、下电并保存日志与汇总。Test cancellation requested.");
@@ -1170,6 +1182,7 @@ done:
     if (state->motor_power_on && zero_cycle_operation(state, 0, slot)) { result = -1; completed = false; }
     pthread_mutex_lock(&boot_capture_mutex);
     boot_capture_file = NULL;
+    boot_capture_compact=false;
     zero_cycle_timestamp(readable,"END",elapsed_begin);
     fclose(readable);
     pthread_mutex_unlock(&boot_capture_mutex);

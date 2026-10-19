@@ -6,6 +6,7 @@
 static flash_state transport_state;
 static unsigned int sent_count, respond_after;
 static bool wrong_reply;
+static bool fail_send;
 static uint8_t first_payload[8];
 
 int __wrap_canfd_send_packet(canfd_packet *packet, unsigned int count)
@@ -15,6 +16,7 @@ int __wrap_canfd_send_packet(canfd_packet *packet, unsigned int count)
     if (!sent_count) memcpy(first_payload, packet->frame.data, 8);
     else assert(!memcmp(first_payload, packet->frame.data, 8));
     ++sent_count;
+    if (fail_send) return -7;
     if (respond_after && sent_count >= respond_after) {
         rx_can_frame frame = {0};
         frame.bus = 1; frame.can_id = 0x11; frame.len = 8; frame.time_us = time_us();
@@ -35,6 +37,7 @@ int main(void)
     state->quiet_tx = true; state->debug_use_canfd = true;
     frame_ring_init(&state->frames);
     FILE *log = tmpfile(); assert(log); boot_capture_file = log;
+    boot_capture_bus=1; boot_capture_id=1;
     bxi_motor_reply reply;
     respond_after = 1;
     assert(!zero_cycle_sample_velocity(state, motor, .1, .2, 50, 5, &reply));
@@ -47,8 +50,11 @@ int main(void)
     assert(sent_count >= 2 && sent_count <= 10);
     sent_count = 0; respond_after = 1; wrong_reply = true;
     assert(zero_cycle_sample_velocity(state, motor, .1, .2, 50, 5, &reply) < 0);
+    sent_count=0; fail_send=true;
+    assert(zero_cycle_sample_velocity(state,motor,.1,.2,50,5,&reply)<0 && sent_count==1);
     rewind(log); char text[8192] = {0}; assert(fread(text, 1, sizeof(text)-1, log));
     assert(strstr(text, "MIT_RECOVERED") && strstr(text, "MIT_TIMEOUT") && strstr(text, "MIT_RX"));
+    assert(strstr(text,"TX_FAILED") && strstr(text,"ret=-7"));
     boot_capture_file = NULL; fclose(log);
     puts("PASS: immediate reply, dropped requests, bounded timeout, strict reply filtering and raw diagnostics");
     return 0;

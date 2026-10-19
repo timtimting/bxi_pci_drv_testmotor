@@ -122,6 +122,8 @@ static int zero_group_exchange(flash_state *state, zero_group_motor *motors, siz
                                 const float *positions, const float *velocities, double kp, double kd)
 {
     bool received[32] = {0}; size_t ready = 0;
+    unsigned int sends=0,frames[32]={0},invalid[32]={0};
+    rx_can_frame observed[8]; size_t observed_count=0;
     uint64_t begin = time_us(), next_send = begin;
     while (!zero_cycle_cancel_requested() && time_us()-begin < 100000) {
         uint64_t now = time_us();
@@ -132,10 +134,12 @@ static int zero_group_exchange(flash_state *state, zero_group_motor *motors, siz
                 if (send_debug_mit(state, positions ? positions[i] : 0,
                                    velocities ? velocities[i] : 0, kp, kd, 0)) return -1;
             }
+            ++sends;
             next_send = time_us()+10000;
         }
         rx_can_frame frame;
         if (frame_ring_pop(&state->frames, &frame, 1)) {
+            if (observed_count<8) observed[observed_count++]=frame;
             for (size_t i = 0; i < count; ++i) {
                 zero_group_motor *g = &motors[i];
                 if (frame.bus != g->motor->bus) continue;
@@ -151,19 +155,39 @@ static int zero_group_exchange(flash_state *state, zero_group_motor *motors, siz
                     }
                 }
                 if (frame.time_us < begin || !mit_reply_frame_matches(&frame, g->motor->id)) continue;
+                ++frames[i];
                 const bxi_motor_limits *limits = limits_for_entry(state, g->motor);
                 int rc = state->motors[g->slot].mit_aux_enabled ?
                     bxi_motor_unpack_reply(frame.data, frame.len, limits, &g->reply) :
                     bxi_motor_unpack_reply_legacy_ntc(frame.data, frame.len, limits, &g->reply);
                 if (!rc && isfinite(g->reply.position) && isfinite(g->reply.velocity) && !received[i]) {
                     received[i] = true; ++ready;
-                }
+                } else if (rc || !isfinite(g->reply.position) || !isfinite(g->reply.velocity)) ++invalid[i];
             }
         }
         if (ready == count && time_us()-begin >= 10000) return 0;
     }
-    for (size_t i = 0; i < count; ++i) if (!received[i])
-        fprintf(stderr, "group: fresh MIT feedback timeout bus=%u id=%u\n", motors[i].motor->bus, motors[i].motor->id);
+    if (!zero_cycle_cancel_requested()) {
+        for (size_t i = 0; i < count; ++i) if (!received[i]) {
+            const motor_map_entry *m=motors[i].motor;
+            fprintf(stderr,"[通信错误] bus=%u id=%u MIT_TIMEOUT 100ms：发送=%u 匹配回复=%u 解码失败=%u；停止测试\n",
+                    m->bus,m->id,sends,frames[i],invalid[i]);
+            pthread_mutex_lock(&boot_capture_mutex);
+            for (size_t k=0;k<group_boot_capture_count;++k)
+                if (group_boot_capture[k].bus==m->bus && group_boot_capture[k].id==m->id) {
+                    boot_diagnostics_fault(group_boot_capture[k].file,"MIT_TIMEOUT",m->bus,m->id);
+                    fprintf(group_boot_capture[k].file,"\nMIT_TIMEOUT bus=%u motor_id=%u expected_id=0x%03X expected_byte0=0x%02X sends=%u matched_replies=%u decode_failures=%u elapsed_us=%llu\n",
+                            m->bus,m->id,0x10u|m->id,m->id,sends,frames[i],invalid[i],(unsigned long long)(time_us()-begin));
+                    for (size_t j=0;j<observed_count;++j) {
+                        fprintf(group_boot_capture[k].file,"MIT_RX bus=%u CAN_ID=0x%03x len=%u data=",observed[j].bus,observed[j].can_id,observed[j].len);
+                        for (unsigned int n=0;n<observed[j].len;++n) fprintf(group_boot_capture[k].file,"%02X ",observed[j].data[n]);
+                        fputc('\n',group_boot_capture[k].file);
+                    }
+                    fflush(group_boot_capture[k].file);
+                }
+            pthread_mutex_unlock(&boot_capture_mutex);
+        }
+    }
     return -1;
 }
 
@@ -272,6 +296,7 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
     zero_cycle_timestamp(stdout,"测试开始 / START",elapsed_begin);
     zero_cycle_timestamp(csv,"START",elapsed_begin);
     if (zero_cycle_input_begin()) goto done;
+    boot_diagnostics_begin();
     state->show_can_output=state->show_motor_input=false;
     pthread_mutex_lock(&boot_capture_mutex);
     for (size_t i=0; i<count; ++i) {
@@ -316,6 +341,7 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
     for (unsigned int n=0; !zero_cycle_cancel_requested() && (!c.count || n<c.count) &&
          (!c.test_mode || (uint64_t)n<zero_cycle_scan_total(&c)) &&
          (!c.duration_s || time_us()-begin<(uint64_t)c.duration_s*1000000); ++n) {
+        boot_diagnostics_phase("motion_or_point_repeat",n+1);
         unsigned int repeats=c.test_mode?c.scan_repeats:1;
         if (n%repeats==0) point_passed=point_failed=0;
         bool new_point=!c.test_mode || scan_index%c.scan_repeats==0;
@@ -356,6 +382,7 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
             previous[i]=motors[i].reply.position;
             if (!frozen && new_point) motors[i].before=previous[i];
         }
+        boot_diagnostics_phase("power_cycle_readback",n+1);
         if (zero_group_power_cycle(state,motors[0].slot,&c) || zero_group_exchange(state,motors,count,NULL,NULL,0,0)) goto done;
         bool round_ok=true, was_frozen=frozen;
         fprintf(csv,"# angle_round=%u reboot=%u/%u\n",n/repeats+1,n%repeats+1,repeats);
@@ -386,6 +413,7 @@ static int zero_group_run(flash_state *state, int argc, char **argv, uint64_t el
     }
     result=zero_cycle_cancel_requested() || failed || frozen ? -1 : 0;
 done:
+    boot_diagnostics_phase("shutdown",rounds);
     if (state->motor_power_on) {
         zero_group_special(state,motors,count,BXI_MOTOR_CMD_DISABLE);
         if (zero_cycle_operation(state,0,motors[0].slot)) result=-1;
@@ -397,6 +425,7 @@ done:
         fclose(group_boot_capture[i].file);
     }
     group_boot_capture_count=0;
+    boot_capture_compact=false;
     pthread_mutex_unlock(&boot_capture_mutex);
     state->show_can_output=old_output; state->show_motor_input=old_input;
     state->bus=old_bus; state->boot_id=old_id; update_boot_ids(state);

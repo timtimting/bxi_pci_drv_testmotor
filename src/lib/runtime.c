@@ -273,6 +273,106 @@ static FILE *boot_capture_file;
 static unsigned int boot_capture_bus, boot_capture_id;
 static struct { unsigned int bus, id; FILE *file; } group_boot_capture[32];
 static size_t group_boot_capture_count;
+static uint64_t time_us(void);
+static bool boot_capture_compact;
+static const char *boot_diag_phase="idle";
+static unsigned int boot_diag_cycle;
+static struct {
+    FILE *file;
+    char line[LINE_LEN], recent[8192], metadata[4][LINE_LEN], last_error[LINE_LEN];
+    size_t length, recent_length;
+    unsigned int suppressed,error_repeats;
+    uint64_t last_error_us, last_text_us;
+    bool fault_dumped;
+} boot_compact_logs[33];
+static struct { unsigned int count, last_code; } boot_hardware_errors[CANFD_DEVICE_NUM];
+
+/* Helpers below run under boot_capture_mutex, including stream lifetime. */
+static size_t boot_compact_slot(FILE *file)
+{
+    for (size_t i=0;i<33;++i) if (boot_compact_logs[i].file==file) return i;
+    for (size_t i=0;i<33;++i) if (!boot_compact_logs[i].file) {
+        boot_compact_logs[i].file=file; return i;
+    }
+    return 0;
+}
+
+static void boot_diagnostics_begin(void)
+{
+    pthread_mutex_lock(&boot_capture_mutex);
+    memset(boot_compact_logs,0,sizeof(boot_compact_logs));
+    memset(boot_hardware_errors,0,sizeof(boot_hardware_errors));
+    boot_diag_cycle=0; boot_diag_phase="startup"; boot_capture_compact=true;
+    pthread_mutex_unlock(&boot_capture_mutex);
+}
+
+static void boot_diagnostics_phase(const char *phase,unsigned int cycle)
+{
+    pthread_mutex_lock(&boot_capture_mutex);
+    boot_diag_phase=phase; boot_diag_cycle=cycle;
+    pthread_mutex_unlock(&boot_capture_mutex);
+}
+
+static void boot_capture_write(FILE *file,const rx_can_frame *frame,bool power_on)
+{
+    const size_t slot=boot_capture_compact?boot_compact_slot(file):0;
+    for (unsigned int k=0;k<frame->len;++k) {
+        unsigned char ch=frame->data[k];
+        if (ch=='\r') continue;
+        if (!boot_capture_compact) {
+            if (isprint(ch)||ch=='\n'||ch=='\t') fputc(ch,file);
+            else fprintf(file,"\\x%02X",ch);
+            continue;
+        }
+        if (!isprint(ch)&&ch!='\n'&&ch!='\t') continue;
+        if (boot_compact_logs[slot].recent_length>=sizeof(boot_compact_logs[slot].recent)-1) {
+            memmove(boot_compact_logs[slot].recent,boot_compact_logs[slot].recent+4096,boot_compact_logs[slot].recent_length-4096);
+            boot_compact_logs[slot].recent_length-=4096;
+        }
+        boot_compact_logs[slot].recent[boot_compact_logs[slot].recent_length++]=ch;
+        boot_compact_logs[slot].recent[boot_compact_logs[slot].recent_length]=0;
+        boot_compact_logs[slot].last_text_us=frame->time_us;
+        if (ch!='\n'&&boot_compact_logs[slot].length<LINE_LEN-1) {
+            boot_compact_logs[slot].line[boot_compact_logs[slot].length++]=ch; continue;
+        }
+        char *line=boot_compact_logs[slot].line;
+        line[boot_compact_logs[slot].length]=0;
+        const char *markers[]={"HW    :","PRO   :","BUILD :","VER   :"};
+        bool written=false;
+        for (size_t i=0;i<4;++i) if (strstr(line,markers[i])&&strcmp(line,boot_compact_logs[slot].metadata[i])) {
+            fprintf(file,"FW_META %s\n",line);
+            snprintf(boot_compact_logs[slot].metadata[i],LINE_LEN,"%s",line); written=true;
+        }
+        bool expected_off=!power_on&&(strstr(line,"Under voltage")||strstr(line,"Error Code: 20000000"));
+        bool error=strstr(line,"ERROR")||strstr(line,"Error")||strstr(line,"FAIL")||strstr(line,"fail")||strstr(line,"Under voltage");
+        if (error&&!expected_off) {
+            if (strcmp(line,boot_compact_logs[slot].last_error)||frame->time_us-boot_compact_logs[slot].last_error_us>=5000000) {
+                fprintf(file,"FW_ERROR cycle=%u phase=%s repeats_suppressed=%u text=%s\n",boot_diag_cycle,boot_diag_phase,boot_compact_logs[slot].error_repeats,line);
+                snprintf(boot_compact_logs[slot].last_error,LINE_LEN,"%s",line);
+                boot_compact_logs[slot].last_error_us=frame->time_us; boot_compact_logs[slot].error_repeats=0;
+            } else { ++boot_compact_logs[slot].suppressed; ++boot_compact_logs[slot].error_repeats; }
+            written=true;
+        }
+        if (!written) ++boot_compact_logs[slot].suppressed;
+        boot_compact_logs[slot].length=0;
+    }
+    fflush(file);
+}
+
+static void boot_diagnostics_fault(FILE *file,const char *reason,unsigned int bus,unsigned int id)
+{
+    if (!file) return;
+    size_t slot=boot_compact_slot(file);
+    fprintf(file,"\nCOMM_FAULT reason=%s time_us=%llu cycle=%u phase=%s bus=%u id=%u hardware_error_frames=%u last_hardware_code=0x%08x\n",
+            reason,(unsigned long long)time_us(),boot_diag_cycle,boot_diag_phase,bus,id,
+            bus<CANFD_DEVICE_NUM?boot_hardware_errors[bus].count:0,bus<CANFD_DEVICE_NUM?boot_hardware_errors[bus].last_code:0);
+    if (!boot_compact_logs[slot].fault_dumped) {
+        fprintf(file,"RECENT_FIRMWARE_TEXT last_text_time_us=%llu suppressed_lines=%u\n%s\nEND_RECENT_FIRMWARE_TEXT\n",
+                (unsigned long long)boot_compact_logs[slot].last_text_us,boot_compact_logs[slot].suppressed,boot_compact_logs[slot].recent);
+        boot_compact_logs[slot].fault_dumped=true;
+    }
+    fflush(file);
+}
 
 static const char *state_label_for_code(const motor_map_config *config,
                                         unsigned int code);
@@ -1017,6 +1117,12 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
 
     if (is_hardware_error_frame(msg->frame.can_id)) {
         unsigned int i;
+        pthread_mutex_lock(&boot_capture_mutex);
+        if (boot_capture_file||group_boot_capture_count) {
+            ++boot_hardware_errors[msg->bus].count;
+            boot_hardware_errors[msg->bus].last_code=msg->frame.can_id&CAN_ERR_MASK;
+        }
+        pthread_mutex_unlock(&boot_capture_mutex);
 
         if (state->show_can_output) {
             flockfile(stdout);
@@ -1057,15 +1163,7 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
         if (frame.bus == group_boot_capture[i].bus && boot_output_id_matches(frame.can_id, group_boot_capture[i].id))
             capture = group_boot_capture[i].file;
     if (capture) {
-        /* Preserve the byte stream across CAN frames; CR is redundant in
-         * firmware CR/LF output. Raw values are printed by firmware queries. */
-        for (unsigned int k = 0; k < frame.len; ++k) {
-            unsigned char ch = frame.data[k];
-            if (ch == '\r') continue;
-            if (isprint(ch) || ch == '\n' || ch == '\t') fputc(ch, capture);
-            else fprintf(capture, "\\x%02X", ch);
-        }
-        fflush(capture);
+        boot_capture_write(capture,&frame,state->motor_power_on);
     }
     pthread_mutex_unlock(&boot_capture_mutex);
 
@@ -1222,6 +1320,24 @@ static void console_print_motor_tx_frame(const motor_map_entry *motor,
     fflush(stdout);
 }
 
+static void report_can_send_failure(flash_state *state,const canfd_packet *packet,int result,unsigned int retries)
+{
+    fprintf(stderr,"[通信错误] bus=%u CAN_ID=0x%03x TX_FAILED ret=%d retries=%u\n",
+            packet->bus,clean_can_id(packet->frame.can_id),result,retries);
+    pthread_mutex_lock(&boot_capture_mutex);
+    FILE *log=NULL;
+    if (boot_capture_file && packet->bus==boot_capture_bus && state->boot_id==boot_capture_id) log=boot_capture_file;
+    for (size_t i=0;i<group_boot_capture_count;++i)
+        if (group_boot_capture[i].bus==packet->bus && group_boot_capture[i].id==state->boot_id) log=group_boot_capture[i].file;
+    if (log) {
+        boot_diagnostics_fault(log,"TX_FAILED",packet->bus,state->boot_id);
+        fprintf(log,"\nTX_FAILED time_us=%llu bus=%u motor_id=%u CAN_ID=0x%03x ret=%d retries=%u\n",
+                (unsigned long long)time_us(),packet->bus,state->boot_id,clean_can_id(packet->frame.can_id),result,retries);
+        fflush(log);
+    }
+    pthread_mutex_unlock(&boot_capture_mutex);
+}
+
 static int send_can_bytes(flash_state *state, unsigned int can_id, const uint8_t *data, unsigned int len)
 {
     canfd_packet packet;
@@ -1267,9 +1383,7 @@ static int send_can_bytes(flash_state *state, unsigned int can_id, const uint8_t
             continue;
         }
 
-        fprintf(stderr, "canfd_send_packet failed after %u retries: %d\n",
-                retry_count,
-                ret);
+        report_can_send_failure(state,&packet,ret,retry_count);
         return -1;
     }
 
@@ -1316,7 +1430,7 @@ static int send_debug_packet(flash_state *state, unsigned int can_id, const uint
     state->can_stats[packet.bus].tx_packets++;
     if (ret < 0) {
         state->can_stats[packet.bus].tx_failed++;
-        fprintf(stderr, "canfd_send_packet failed: %d\n", ret);
+        report_can_send_failure(state,&packet,ret,0);
         return -1;
     }
 

@@ -239,6 +239,29 @@ int main(void)
     rewind(capture); memset(captured, 0, sizeof(captured));
     assert(fread(captured, 1, sizeof(captured)-1, capture) > 0);
     assert(strstr(captured, "ENC1 motor:") && strstr(captured, "ENC2 output:")); fclose(capture);
-    puts("PASS: random coverage, config, completion and silent raw boot capture filtering");
+    FILE *compact=tmpfile(); assert(compact);
+    boot_diagnostics_begin(); boot_diagnostics_phase("power_on_readback",42);
+    const char *firmware="HW    : Bxi_motor_85\nHW    : Bxi_motor_85\nMotor main menu:\n m - Motor Mode\nUnder voltage:11.993\nError Code: 20000000\n";
+    for (size_t at=0;at<strlen(firmware);) {
+        rx_can_frame fragment={0}; fragment.time_us=time_us();
+        fragment.len=(unsigned int)fmin(8,strlen(firmware)-at);
+        memcpy(fragment.data,firmware+at,fragment.len); at+=fragment.len;
+        boot_capture_write(compact,&fragment,false);
+    }
+    rewind(compact); char compact_text[4096]={0};
+    assert(fread(compact_text,1,sizeof(compact_text)-1,compact)>0);
+    assert(strstr(compact_text,"FW_META HW") && !strstr(compact_text,"Motor main menu"));
+    assert(!strstr(compact_text,"Under voltage") && !strstr(compact_text,"Error Code"));
+    fseek(compact,0,SEEK_END);
+    boot_diagnostics_fault(compact,"MIT_TIMEOUT",1,2);
+    boot_diagnostics_fault(compact,"TX_FAILED",1,2);
+    rewind(compact); memset(compact_text,0,sizeof(compact_text));
+    assert(fread(compact_text,1,sizeof(compact_text)-1,compact)>0);
+    assert(strstr(compact_text,"cycle=42 phase=power_on_readback bus=1 id=2"));
+    assert(strstr(compact_text,"RECENT_FIRMWARE_TEXT") && strstr(compact_text,"Motor main menu"));
+    char *first_context=strstr(compact_text,"END_RECENT_FIRMWARE_TEXT");
+    assert(first_context && !strstr(first_context+1,"END_RECENT_FIRMWARE_TEXT"));
+    fclose(compact); boot_capture_compact=false;
+    puts("PASS: random coverage, config, completion, compact normal logs and bounded fault context");
     return 0;
 }
