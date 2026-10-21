@@ -10,9 +10,11 @@
 #include <assert.h>
 
 static unsigned int config_calls;
-int ecrt_master(ec_master_t *m, ec_master_info_t *i) { (void)m; memset(i,0,sizeof(*i)); i->slave_count=2; return 0; }
+static unsigned int master_query_calls;
+int ecrt_master(ec_master_t *m, ec_master_info_t *i) { (void)m; memset(i,0,sizeof(*i)); i->slave_count=2; master_query_calls++; return 0; }
 int ecrt_master_get_slave(ec_master_t *m, uint16_t p, ec_slave_info_t *i) {
- (void)m; memset(i,0,sizeof(*i)); i->alias=42; i->vendor_id=0x00010203; i->product_code=0x00000402;
+ (void)m; memset(i,0,sizeof(*i)); i->alias=42;
+ if (master_query_calls > 1 || p == 0) { i->vendor_id=0x00010203; i->product_code=0x00000402; }
  i->al_state=EC_STATE_PRE_OP; snprintf(i->name,sizeof(i->name),"mock%u",p); return 0;
 }
 ec_slave_config_t *ecrt_master_slave_config(ec_master_t *m, uint16_t a, uint16_t p, uint32_t v, uint32_t product) {
@@ -33,7 +35,7 @@ int main(void) {
  ec_slavecount=2; assert(etherlab_safe_op_timeout_us()==14000000);
  ec_slavecount=3; assert(etherlab_safe_op_timeout_us()==21000000);
  ec_slavecount=255; assert(etherlab_safe_op_timeout_us()==60000000);
- assert(ec_config_init(FALSE)==2); assert(config_calls==2);
+ assert(ec_config_init(FALSE)==2); assert(config_calls==2); assert(master_query_calls==2);
  assert(etherlab_slaves[1].config != etherlab_slaves[2].config);
  uint8_t outputs[2][23], inputs[2][16] = {{0}};
  uint8_t selected[EC_MAXSLAVE] = {0};
@@ -59,6 +61,6 @@ int main(void) {
    assert(console_ethercat_read_float(out + offset) == 0.0f);
  }
  puts("PASS: two-slave MIT warm-up preserves feedback positions, zeroes gains/feedforward, stays disabled");
- puts("PASS: duplicate nonzero aliases still map to absolute positions 0/1; per-slave timeout and cap");
+ puts("PASS: waits for nonzero slave identities before configuring absolute positions 0/1");
  return 0;
 }

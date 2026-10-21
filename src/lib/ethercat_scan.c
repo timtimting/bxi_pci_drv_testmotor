@@ -2532,8 +2532,8 @@ static int console_ethercat_scan(bool chinese, const char *interface)
 
     slave_count = ethercat_session.active ? ec_slavecount : ec_config_init(FALSE);
     if (slave_count <= 0) {
-        printf("%s: %s\n", chinese ? "ethercat_scan: 未发现 EtherCAT 从站" :
-               "ethercat_scan: no EtherCAT slaves found", interface);
+        printf("%s: %s\n", chinese ? "ethercat_scan: 未发现从站或从站身份未就绪" :
+               "ethercat_scan: no slaves found or slave identities not ready", interface);
         if (!ethercat_session.active) ec_close();
         return -1;
     }

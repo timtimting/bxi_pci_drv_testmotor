@@ -219,22 +219,43 @@ int ec_config_init(boolean use_table)
 {
     ec_master_info_t master_info;
     ec_slave_info_t slave_info;
+    ec_slave_info_t slave_infos[EC_MAXSLAVE];
     unsigned int attempt;
     unsigned int position;
+    bool identities_ready = false;
     (void)use_table;
 
     if (etherlab_master == NULL) return 0;
-    memset(&master_info, 0, sizeof(master_info));
-    for (attempt = 0; attempt < 100; ++attempt) {
-        ecrt_master(etherlab_master, &master_info);
-        if (master_info.slave_count > 0 && master_info.scan_busy == 0) break;
+    for (attempt = 0; attempt < 500; ++attempt) {
+        memset(&master_info, 0, sizeof(master_info));
+        if (ecrt_master(etherlab_master, &master_info) == 0 &&
+            master_info.slave_count > 0 &&
+            master_info.slave_count < EC_MAXSLAVE &&
+            master_info.scan_busy == 0) {
+            identities_ready = true;
+            for (position = 0; position < master_info.slave_count; ++position) {
+                if (ecrt_master_get_slave(etherlab_master, (uint16_t)position,
+                                          &slave_infos[position]) != 0 ||
+                    slave_infos[position].vendor_id == 0 ||
+                    slave_infos[position].product_code == 0) {
+                    identities_ready = false;
+                    break;
+                }
+            }
+            if (identities_ready) break;
+        }
         usleep(20000);
     }
-    if (master_info.slave_count == 0 || master_info.slave_count >= EC_MAXSLAVE) return 0;
+    if (!identities_ready) {
+        fprintf(stderr, "EtherLab: master %u slave identities not ready after 10s (slaves=%u, scan_busy=%u); refusing zero-identity configuration\n",
+                etherlab_master_index, (unsigned int)master_info.slave_count,
+                (unsigned int)master_info.scan_busy);
+        return 0;
+    }
     ec_slavecount = (int)master_info.slave_count;
     for (position = 0; position < master_info.slave_count; ++position) {
         int slave = (int)position + 1;
-        if (ecrt_master_get_slave(etherlab_master, (uint16_t)position, &slave_info) != 0) return 0;
+        slave_info = slave_infos[position];
         snprintf(ec_slave[slave].name, sizeof(ec_slave[slave].name), "%s", slave_info.name);
         ec_slave[slave].configadr = (uint16_t)slave;
         ec_slave[slave].eep_man = slave_info.vendor_id;
