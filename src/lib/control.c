@@ -562,12 +562,9 @@ static int console_power_off(flash_state *state)
 {
     size_t i;
     bool any_enabled = false;
+    bool previously_on = state->motor_power_on;
 
     printf("power_off: start total=1\n");
-    if (!state->motor_power_on) {
-        printf("power_off: done total=1 success=1 failed=0 already_off\n");
-        return 0;
-    }
     for (i = 0u; i < state->config.entry_count; i++) {
         any_enabled |= state->motors[i].enabled;
     }
@@ -585,7 +582,8 @@ static int console_power_off(flash_state *state)
         state->motors[i].online = false;
         state->motors[i].enabled = false;
     }
-    printf("power_off: done total=1 success=1 failed=0\n");
+    printf("power_off: done total=1 success=1 failed=0%s\n",
+           previously_on ? "" : " previous_state=unknown");
     return 0;
 }
 

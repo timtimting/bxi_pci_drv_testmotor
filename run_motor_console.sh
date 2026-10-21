@@ -17,7 +17,7 @@ fi
 
 require_etherlab=ON
 case "${1:-}" in
-    --check-config|--help|-h) require_etherlab=OFF ;;
+    --check-config|--help|-h|--power-off) require_etherlab=OFF ;;
 esac
 
 cmake_args=(-S . -B build

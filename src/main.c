@@ -67,6 +67,21 @@ static const char *const console_command_words[] = {
 #include "lib/debug.c"
 #include "lib/terminal.c"
 
+static int console_install_stop_signals(void)
+{
+    struct sigaction action = {0};
+
+    action.sa_handler = on_signal;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGINT, &action, NULL) != 0 ||
+        sigaction(SIGTERM, &action, NULL) != 0 ||
+        sigaction(SIGHUP, &action, NULL) != 0) {
+        perror("sigaction");
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char resolved_config_path[PATH_LEN];
@@ -77,6 +92,7 @@ int main(int argc, char **argv)
     bool check_config = false;
     bool show_help = false;
     bool config_explicit = false;
+    bool power_off_only = false;
     const char *language_override = NULL;
     const char *ethercat_interface = NULL;
     const char *ethercat_enable_interface = NULL;
@@ -118,6 +134,7 @@ int main(int argc, char **argv)
     static const struct option options[] = {
         {"config", required_argument, NULL, 'c'},
         {"check-config", no_argument, NULL, 'C'},
+        {"power-off", no_argument, NULL, 1006},
         {"language", required_argument, NULL, 'l'},
         {"ethercat-scan", required_argument, NULL, 'E'},
         {"ethercat-enable", required_argument, NULL, 'M'},
@@ -145,6 +162,8 @@ int main(int argc, char **argv)
             config_explicit = true;
         } else if (opt == 'C') {
             check_config = true;
+        } else if (opt == 1006) {
+            power_off_only = true;
         } else if (opt == 'l') {
             if (strcmp(optarg, "zh") != 0 && strcmp(optarg, "en") != 0) {
                 printf("用法：--language zh|en\n");
@@ -191,6 +210,10 @@ int main(int argc, char **argv)
         console_print_help(language_override != NULL && strcmp(language_override, "zh") == 0,
                            verbose_help);
         return 0;
+    }
+    if (power_off_only && (argc != 2 || optind != argc)) {
+        fprintf(stderr, "用法：%s --power-off\n", argv[0]);
+        return 1;
     }
     if (ethercat_motion_interface != NULL) {
         if (ethercat_interface != NULL || ethercat_enable_interface != NULL ||
@@ -418,8 +441,7 @@ int main(int argc, char **argv)
             printf("用法：--check-config 不能与 EtherCAT 命令同时使用\n");
             return 1;
         }
-        signal(SIGINT, on_signal);
-        signal(SIGTERM, on_signal);
+        if (console_install_stop_signals() != 0) return 1;
         if (ethercat_interface != NULL) {
             return console_ethercat_scan(chinese, ethercat_interface) == 0 ? 0 : 1;
         }
@@ -506,6 +528,20 @@ int main(int argc, char **argv)
     update_boot_ids(&state);
     rx_ring_init(&state.rx);
     frame_ring_init(&state.frames);
+    if (power_off_only) {
+        if (bxi_pci_init(can_rx_callback, &state, -1) == -1) {
+            fprintf(stderr, "power_off: PCI/CAN 初始化失败\n");
+            return 1;
+        }
+        ret = motor_pwr_set(0u);
+        bxi_pci_exit();
+        if (ret < 0) {
+            fprintf(stderr, "power_off: motor_pwr_set(0) failed\n");
+            return 1;
+        }
+        printf("power_off: done power=off\n");
+        return 0;
+    }
     if (language_override != NULL) {
         state.language_override_active = true;
         state.chinese_override = strcmp(language_override, "zh") == 0;
@@ -514,8 +550,7 @@ int main(int argc, char **argv)
         return 1;
     }
     console_load_kaixuan_esi(&state, argv[0]);
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
+    if (console_install_stop_signals() != 0) return 1;
     if (check_config) {
         console_print_config(&state);
         console_print_motors(&state);
