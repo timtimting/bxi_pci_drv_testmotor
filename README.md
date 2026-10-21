@@ -52,10 +52,12 @@ ARM64 使用 `lib/arm64/libbxi_pci_drv.a`（7 路 CANFD，来自原项目 `arm64
 
 若 SSH 终端断开或控制程序异常退出，先使用硬件急停确认安全，再从新终端执行
 `sudo ./build/motor_console --power-off`。此命令不依赖旧进程记住的上电状态，
-直接请求 PCI 控制卡关闭电机电源并读取板卡状态；也不需要 EtherLab 主站已启动。
+直接请求 PCI 控制卡关闭电机电源；也不需要 EtherLab 主站已启动。
 交互终端内的 `power_off` 在上电状态未知时同样会发送断电请求，而非仅报告已下电。
 程序收到 SSH 断连的 `SIGHUP` 时也会尝试退出输入模式并安全下电；该软件清理无法处理进程被强制杀死或控制卡失联的情况。
-`power_status` 只读 PCI 控制卡电源输出；`board_readback=0` 仅表示该输出关闭，不能证明外部 EtherCAT 驱动器的主电或 USB 辅助电源已断。
+`power_status` 调用 SDK 的 `motor_pwr_get()`，读取的是急停输入，不是 `motor_pwr_set()` 所写的电源输出位。`estop_input` 不能确认电源输出或外部 EtherCAT 驱动器主电、USB 辅助电源的状态。
+ARM64 SDK 的 `motor_pwr_set()` 对合法参数固定返回 0，即使底层 GPIO 写入失败也不会透传错误；因此 `power_off` 只能报告 SDK 调用返回，不能据此确认实际断电。
+终端提示符中的“软件请求上电/下电”仅表示本次程序发出的请求，不是硬件电压反馈。
 若 `power_off` 后驱动器供电端仍有电压，应立即使用硬件断电并停止上电测试；这可能是独立供电、旁路/回灌或电源控制回路故障，不能仅凭软件返回成功继续操作。由熟悉该设备接线的人员核对 PCI 控制输出、驱动器主电和 USB 辅助电源的实际连接。
 
 ## 2. 编译
@@ -1147,8 +1149,8 @@ config/motor_console.yaml
 |---|---|---|
 | `help` / `-h` / `?` | `[all]` | 显示终端帮助；带 `all` 显示详细说明 |
 | `power_on` | 无 | 电机上电并等待软启动；不扫描 CAN |
-| `power_off` | 无 | 失能已知使能电机并关闭总电源 |
-| `power_status` | 无 | 读取 PCI 控制卡电源输出，不验证外部驱动器供电 |
+| `power_off` | 无 | 失能已知使能电机并请求关闭 PCI 电源输出，需另行确认断电 |
+| `power_status` | 无 | 读取 SDK 急停输入，不验证电源输出或外部驱动器供电 |
 | `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态、程序/配置版本和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 按配置文件中的电机列表扫描 CAN 电机 |

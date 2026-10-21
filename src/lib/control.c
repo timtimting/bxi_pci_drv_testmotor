@@ -538,23 +538,23 @@ static int console_power_on(flash_state *state)
     state->motor_power_on = true;
     if (state->config.chinese_ui) {
         if ((state->config.power_on_wait_ms % 1000u) == 0u) {
-            printf("power_on: start 电源已开启 wait=%us\n",
+            printf("power_on: start 已请求上电 wait=%us\n",
                    state->config.power_on_wait_ms / 1000u);
         } else {
-            printf("power_on: start 电源已开启 wait=%.3fs\n",
+            printf("power_on: start 已请求上电 wait=%.3fs\n",
                    (double)state->config.power_on_wait_ms / 1000.0);
         }
     } else {
         if ((state->config.power_on_wait_ms % 1000u) == 0u) {
-            printf("power_on: start power=on wait=%us\n",
+            printf("power_on: start requested=on wait=%us\n",
                    state->config.power_on_wait_ms / 1000u);
         } else {
-            printf("power_on: start power=on wait=%.3fs\n",
+            printf("power_on: start requested=on wait=%.3fs\n",
                    (double)state->config.power_on_wait_ms / 1000.0);
         }
     }
     console_quiet_sleep_ms(state->config.power_on_wait_ms);
-    printf("power_on: done power=on; CAN scan skipped (run motor_scan explicitly)\n");
+    printf("power_on: done requested=on gpio_output=unverified; CAN scan skipped (run motor_scan explicitly)\n");
     return 0;
 }
 
@@ -563,7 +563,6 @@ static int console_power_off(flash_state *state)
     size_t i;
     bool any_enabled = false;
     bool previously_on = state->motor_power_on;
-    int power_readback;
 
     printf("power_off: start total=1\n");
     for (i = 0u; i < state->config.entry_count; i++) {
@@ -579,33 +578,26 @@ static int console_power_off(flash_state *state)
         return -1;
     }
     console_quiet_sleep_ms(300u);
-    power_readback = motor_pwr_get();
-    if (power_readback != 0) {
-        state->motor_power_on = true;
-        fprintf(stderr, "power_off: done total=1 success=0 failed=1 board_readback=%d; external supply not verified\n",
-                power_readback);
-        return -1;
-    }
     state->motor_power_on = false;
     for (i = 0u; i < state->config.entry_count; i++) {
         state->motors[i].online = false;
         state->motors[i].enabled = false;
     }
-    printf("power_off: done total=1 success=1 failed=0 board_readback=0 external_supply=unverified%s\n",
+    printf("power_off: sdk_return=0 gpio_output=unverified external_supply=unverified%s\n",
            previously_on ? "" : " previous_state=unknown");
     return 0;
 }
 
 static int console_power_status(const flash_state *state)
 {
-    int power_readback = motor_pwr_get();
+    int estop_input = motor_pwr_get();
 
-    if (power_readback < 0) {
-        fprintf(stderr, "power_status: board readback failed: %d\n", power_readback);
+    if (estop_input < 0) {
+        fprintf(stderr, "power_status: E-stop input read failed: %d\n", estop_input);
         return -1;
     }
-    printf("power_status: board_readback=%d software_state=%s external_supply=unverified\n",
-           power_readback, state->motor_power_on ? "on" : "off");
+    printf("power_status: estop_input=%d software_request=%s gpio_output=unverified external_supply=unverified\n",
+           estop_input, state->motor_power_on ? "on" : "off");
     return 0;
 }
 

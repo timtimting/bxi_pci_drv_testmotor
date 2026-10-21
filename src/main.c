@@ -539,14 +539,8 @@ int main(int argc, char **argv)
             bxi_pci_exit();
             return 1;
         }
-        console_quiet_sleep_ms(300u);
-        ret = motor_pwr_get();
         bxi_pci_exit();
-        if (ret != 0) {
-            fprintf(stderr, "power_off: board_readback=%d; external supply not verified\n", ret);
-            return 1;
-        }
-        printf("power_off: done board_readback=0 external_supply=unverified\n");
+        printf("power_off: sdk_return=0 gpio_output=unverified external_supply=unverified\n");
         return 0;
     }
     if (language_override != NULL) {

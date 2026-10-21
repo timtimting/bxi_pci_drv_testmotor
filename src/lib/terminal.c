@@ -669,9 +669,9 @@ static int console_terminal(flash_state *state)
         const char *prompt;
 
         if (state->config.chinese_ui) {
-            prompt = state->motor_power_on ? "电机[已上电]> " : "电机[已下电]> ";
+            prompt = state->motor_power_on ? "电机[软件请求上电]> " : "电机[软件请求下电]> ";
         } else {
-            prompt = state->motor_power_on ? "motor[POWER-ON]> " : "motor[POWER-OFF]> ";
+            prompt = state->motor_power_on ? "motor[REQUEST-ON]> " : "motor[REQUEST-OFF]> ";
         }
 
         console_output_raw = true;

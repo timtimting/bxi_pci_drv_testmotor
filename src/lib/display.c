@@ -113,9 +113,9 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  power_on\n");
         printf("      电机总电源上电并等待软启动；不扫描 CAN，需扫描时执行 motor_scan。\n");
         printf("  power_off\n");
-        printf("      先失能已知处于使能状态的电机，再关闭电机总电源。\n");
+        printf("      先失能已知使能电机，再请求关闭 PCI 电源输出；需另行确认实际断电。\n");
         printf("  power_status\n");
-        printf("      只读 PCI 控制卡电源输出回读；不能证明外部驱动器主电已断。\n");
+        printf("      只读 SDK 急停输入；不是电源输出回读，不能证明驱动器主电已断。\n");
         printf("  motor_probe\n");
         printf("      上电、接收并显示配置电机回复，最后无论结果如何都会自动下电。\n");
         printf("  motor_scan [timeout_ms]\n");
@@ -232,9 +232,9 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Turn motor power on and wait for soft start; does not scan CAN.\n");
     printf("      Run motor_scan explicitly when motor discovery is needed.\n");
     printf("  power_off\n");
-    printf("      Disable known enabled motors first, then turn motor power off.\n");
+    printf("      Disable known enabled motors, then request PCI power off; verify physical power separately.\n");
     printf("  power_status\n");
-    printf("      Read PCI board power output; does not verify external drive supply.\n");
+    printf("      Read SDK E-stop input, not power output; does not verify drive supply.\n");
     printf("  motor_probe\n");
     printf("      Power on, receive and print configured motor replies, then always power off.\n");
     printf("  motor_scan [timeout_ms]\n");
