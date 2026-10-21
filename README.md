@@ -23,6 +23,10 @@ sudo ./build/motor_console
 
 `build/motor_console` 现在是 `run_motor_console.sh` 的启动副本：每次启动前自动
 检测 EtherLab 开发库、增量构建，并检查内核主站；若未启动，则调用 `/etc/init.d/ethercat start`，再运行内部程序。
+构建时按目标架构选择 PCI 驱动静态库：x86_64 使用 `lib/libbxi_pci_drv.a`（5 路 CANFD），
+ARM64 使用 `lib/arm64/libbxi_pci_drv.a`（7 路 CANFD，来自原项目 `arm64` 分支 `b8d3eec`）。
+交叉编译时需提供 ARM64 工具链和同架构的 EtherLab 开发库；不能只修改 `CMAKE_SYSTEM_PROCESSOR` 来冒充目标架构。
+启动脚本的 EtherLab 网卡绑定仍针对当前电机主机；其他 ARM64 设备上的网卡名称与 MAC 需单独适配。
 脚本会按实际 MAC 检查 `enp86s0`（主站 0）和 `enx6c1ff7c503f3`（主站 1），
 补齐缺失绑定；如果主站已启动而绑定尚未生效，会在确认设备无人占用后自动重启服务。
 若主站被控制程序占用，则拒绝重启，避免中断正在运行的电机。
