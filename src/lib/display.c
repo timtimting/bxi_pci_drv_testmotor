@@ -10,7 +10,7 @@ static void console_print_help(bool chinese, bool verbose)
         if (chinese) {
             printf("统一电机终端命令（详细说明：help all 或 -h all）：\n");
             printf("  帮助/语言： help | -h | ?    language zh|en\n\n");
-            printf("  电源/状态： power_on    power_off    power_status    motor_probe\n");
+            printf("  电源/状态： power_on    power_off    motor_probe\n");
             printf("             motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT：  默认网卡 %s；可在命令末尾添加 [network_interface] 覆盖\n", ETHERCAT_DEFAULT_INTERFACE);
             printf("             ethercat_scan [network_interface]\n");
@@ -56,7 +56,7 @@ static void console_print_help(bool chinese, bool verbose)
         } else {
             printf("Unified motor console commands (details: help all or -h all):\n");
             printf("  Help/lang:  help | -h | ?    language zh|en\n\n");
-            printf("  Power/status: power_on    power_off    power_status    motor_probe\n");
+            printf("  Power/status: power_on    power_off    motor_probe\n");
             printf("                motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
             printf("  EtherCAT:     default interface %s; append [network_interface] to override\n", ETHERCAT_DEFAULT_INTERFACE);
             printf("                ethercat_scan [network_interface]\n");
@@ -114,8 +114,6 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      电机总电源上电并等待软启动；不扫描 CAN，需扫描时执行 motor_scan。\n");
         printf("  power_off\n");
         printf("      先失能已知使能电机，再请求关闭 PCI 电源输出；需另行确认实际断电。\n");
-        printf("  power_status\n");
-        printf("      只读 SDK 急停输入；不是电源输出回读，不能证明驱动器主电已断。\n");
         printf("  motor_probe\n");
         printf("      上电、接收并显示配置电机回复，最后无论结果如何都会自动下电。\n");
         printf("  motor_scan [timeout_ms]\n");
@@ -233,8 +231,6 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Run motor_scan explicitly when motor discovery is needed.\n");
     printf("  power_off\n");
     printf("      Disable known enabled motors, then request PCI power off; verify physical power separately.\n");
-    printf("  power_status\n");
-    printf("      Read SDK E-stop input, not power output; does not verify drive supply.\n");
     printf("  motor_probe\n");
     printf("      Power on, receive and print configured motor replies, then always power off.\n");
     printf("  motor_scan [timeout_ms]\n");

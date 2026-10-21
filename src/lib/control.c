@@ -588,19 +588,6 @@ static int console_power_off(flash_state *state)
     return 0;
 }
 
-static int console_power_status(const flash_state *state)
-{
-    int estop_input = motor_pwr_get();
-
-    if (estop_input < 0) {
-        fprintf(stderr, "power_status: E-stop input read failed: %d\n", estop_input);
-        return -1;
-    }
-    printf("power_status: estop_input=%d software_request=%s gpio_output=unverified external_supply=unverified\n",
-           estop_input, state->motor_power_on ? "on" : "off");
-    return 0;
-}
-
 static int console_motor_probe(flash_state *state)
 {
     int power_on_ret;

@@ -711,7 +711,7 @@ enum {
 };
 
 #if defined(__aarch64__)
-#define ETHERCAT_DEFAULT_INTERFACE "eth1"
+#define ETHERCAT_DEFAULT_INTERFACE "eth0"
 #else
 #define ETHERCAT_DEFAULT_INTERFACE "enp86s0"
 #endif

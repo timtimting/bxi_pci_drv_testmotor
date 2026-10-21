@@ -26,7 +26,7 @@ sudo ./build/motor_console
 构建时按目标架构选择 PCI 驱动静态库：x86_64 使用 `lib/libbxi_pci_drv.a`（5 路 CANFD），
 ARM64 使用 `lib/arm64/libbxi_pci_drv.a`（7 路 CANFD，来自原项目 `arm64` 分支 `b8d3eec`）。
 交叉编译时需提供 ARM64 工具链和同架构的 EtherLab 开发库；不能只修改 `CMAKE_SYSTEM_PROCESSOR` 来冒充目标架构。
-启动脚本在当前 ARM64 主机上使用 `eth1`（左手，主站 0）和 `eth0`（右手，主站 1）；x86_64 主机仍使用
+启动脚本在当前 ARM64 主机上使用 `eth0`（右手，主站 0）和 `eth1`（左手，主站 1）；x86_64 主机仍使用
 `enp86s0`（主站 0）和 `enx6c1ff7c503f3`（主站 1）；其他设备的网卡名称仍需单独适配。
 脚本会按实际 MAC 检查所选网卡，
 补齐缺失绑定；如果主站已启动而绑定尚未生效，会在确认设备无人占用后自动重启服务。
@@ -55,7 +55,7 @@ ARM64 使用 `lib/arm64/libbxi_pci_drv.a`（7 路 CANFD，来自原项目 `arm64
 直接请求 PCI 控制卡关闭电机电源；也不需要 EtherLab 主站已启动。
 交互终端内的 `power_off` 在上电状态未知时同样会发送断电请求，而非仅报告已下电。
 程序收到 SSH 断连的 `SIGHUP` 时也会尝试退出输入模式并安全下电；该软件清理无法处理进程被强制杀死或控制卡失联的情况。
-`power_status` 调用 SDK 的 `motor_pwr_get()`，读取的是急停输入，不是 `motor_pwr_set()` 所写的电源输出位。`estop_input` 不能确认电源输出或外部 EtherCAT 驱动器主电、USB 辅助电源的状态。
+SDK 的 `motor_pwr_get()` 读取的是急停输入，不是 `motor_pwr_set()` 所写的电源输出位；程序不提供电源输出回读。
 ARM64 SDK 的 `motor_pwr_set()` 对合法参数固定返回 0，即使底层 GPIO 写入失败也不会透传错误；因此 `power_off` 只能报告 SDK 调用返回，不能据此确认实际断电。
 终端提示符中的“软件请求上电/下电”仅表示本次程序发出的请求，不是硬件电压反馈。
 若 `power_off` 后驱动器供电端仍有电压，应立即使用硬件断电并停止上电测试；这可能是独立供电、旁路/回灌或电源控制回路故障，不能仅凭软件返回成功继续操作。由熟悉该设备接线的人员核对 PCI 控制输出、驱动器主电和 USB 辅助电源的实际连接。
@@ -197,29 +197,29 @@ MASTER1_DEVICE="6c:1f:f7:c5:03:f3" # enx6c1ff7c503f3
 当前 ARM64 主机的两个 EtherCAT 网口应配置为：
 
 ```sh
-MASTER0_DEVICE="a2:b2:41:5f:5c:5f" # eth1，左手
-MASTER1_DEVICE="72:fa:76:be:f3:0e" # eth0，右手
+MASTER0_DEVICE="72:fa:76:be:f3:0e" # eth0，右手
+MASTER1_DEVICE="a2:b2:41:5f:5c:5f" # eth1，左手
 DEVICE_MODULES="generic"
-UPDOWN_INTERFACES="eth1 eth0"
+UPDOWN_INTERFACES="eth0 eth1"
 ```
 
 请在目标机器上再次确认实际 MAC。切换前先确认 SSH、ROS 和默认路由已使用 `wlan0`，
 再将 `eth0` 的网线从普通网络切换到右手 EtherCAT 链路；不要在仍依赖 `eth0` 远程连接时重启主站。
-`usb0` 不绑定 EtherCAT；交互命令在 ARM64 上默认使用左手 `eth1`，右手命令需显式指定 `eth0`。
+`usb0` 不绑定 EtherCAT；交互命令在 ARM64 上默认使用右手 `eth0`，左手命令需显式指定 `eth1`。
 下面两个扫描需在**分别启动的终端会话**中执行；已有后台 PDO 会话时不能切换主站：
 
 ```sh
-ethercat_scan eth1
-# 退出终端，重新启动后再执行：
 ethercat_scan eth0
-ethercat_info 1 eth0
+# 退出终端，重新启动后再执行：
+ethercat_scan eth1
+ethercat_info 1 eth1
 ```
 
-`eth1` 目前为 `NO-CARRIER`；两个网口各自连接对应电机并上电后才能发现从站。
+两个网口各自连接对应电机并上电后才能发现从站。
 现有交互程序只有一套后台 PDO 会话，可分别选择主站进行调试，**尚不能在同一进程中同时运行左右手的 1 kHz PDO 循环**。
 
-启动脚本根据实际网卡 MAC 幂等追加缺失的 `MASTER0_DEVICE`、`MASTER1_DEVICE`；
-已有非空且不匹配的绑定不会被覆盖。若服务已启动但新绑定尚未生效，脚本使用
+启动脚本根据实际网卡 MAC 幂等配置 `MASTER0_DEVICE`、`MASTER1_DEVICE`，并在 `DEVICE_MODULES` 为空时配置 `generic`；
+若现有两个绑定恰好与目标顺序相反，脚本会在无人占用时切换顺序；其他非空且不匹配的绑定不会被覆盖。若服务已启动但新绑定尚未生效，脚本使用
 `fuser` 检查所有 `/dev/EtherCAT*`，确认没有进程占用才停止旧服务并重新启动。
 **运行中的 EtherLab 不能直接新增主站**；若有进程占用，脚本会报错且不停止服务。
 此时先失能电机、退出所有占用 EtherLab 的程序，再重新执行：
@@ -237,7 +237,10 @@ sudo /usr/local/etherlab/bin/ethercat -m 0 master
 sudo /usr/local/etherlab/bin/ethercat -m 1 master
 ```
 
-预期 `main_devices` 按主站编号依次列出两个 MAC。程序根据命令指定网卡的 MAC 匹配
+预期 `main_devices` 按主站编号依次列出两个 MAC，且 `master` 输出中的 `Main` 为 `attached`。
+若显示 `waiting...`，即使 `/dev/EtherCAT0` 存在也不能扫描；例如只加载了 `ec_master`、
+没有加载 `ec_generic` 时，应检查 `DEVICE_MODULES="generic"`、`modinfo ec_generic` 和服务启动日志。
+程序根据命令指定网卡的 MAC 匹配
 `main_devices` 中的主站编号；不匹配或主站未就绪时会拒绝打开。每个交互会话只占用
 所选的一台主站，不会同时控制两张网卡，也不会在通信故障时自动切换。
 修改网卡绑定或切换会话前须先失能电机并退出当前会话。`Tab` 可补全网卡名，
@@ -1150,7 +1153,6 @@ config/motor_console.yaml
 | `help` / `-h` / `?` | `[all]` | 显示终端帮助；带 `all` 显示详细说明 |
 | `power_on` | 无 | 电机上电并等待软启动；不扫描 CAN |
 | `power_off` | 无 | 失能已知使能电机并请求关闭 PCI 电源输出，需另行确认断电 |
-| `power_status` | 无 | 读取 SDK 急停输入，不验证电源输出或外部驱动器供电 |
 | `motor_probe` | 无 | 上电、接收并显示配置电机回复，最后无论结果如何都会自动下电 |
 | `motor_list` | 无 | 显示电机 index、bus、id、型号、在线/使能状态、程序/配置版本和最后反馈 |
 | `motor_scan` | `[timeout_ms]` | 按配置文件中的电机列表扫描 CAN 电机 |
