@@ -167,6 +167,12 @@ static int console_run_command(flash_state *state, int argc, char **argv)
         }
         console_ethercat_background_stop();
         return console_power_off(state);
+    } else if (strcmp(cmd, "power_status") == 0) {
+        if (argc != 1) {
+            printf("%s: power_status\n", console_text(state, "用法", "usage"));
+            return -1;
+        }
+        return console_power_status(state);
     } else if (strcmp(cmd, "motor_probe") == 0) {
         if (argc != 1) {
             printf("%s: motor_probe\n", console_text(state, "用法", "usage"));
