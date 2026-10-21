@@ -9,6 +9,12 @@ else
 fi
 cd "$repo_root"
 
+if [[ "$(uname -m)" == aarch64 ]]; then
+    ethercat_interfaces=(eth1 eth0)
+else
+    ethercat_interfaces=(enp86s0 enx6c1ff7c503f3)
+fi
+
 require_etherlab=ON
 case "${1:-}" in
     --check-config|--help|-h) require_etherlab=OFF ;;
@@ -21,7 +27,6 @@ cmake_args=(-S . -B build
 
 configure_etherlab_masters() {
     local config=/etc/sysconfig/ethercat
-    local interfaces=(enp86s0 enx6c1ff7c503f3)
     local addresses=()
     local configured_devices=()
     local active_devices=()
@@ -42,16 +47,16 @@ configure_etherlab_masters() {
         printf '%s\n' '未找到 /etc/init.d/ethercat，无法安全重启 EtherLab 服务。' >&2
         return 1
     fi
-    for number in "${!interfaces[@]}"; do
-        if [[ ! -r "/sys/class/net/${interfaces[number]}/address" ]]; then
+    for number in "${!ethercat_interfaces[@]}"; do
+        if [[ ! -r "/sys/class/net/${ethercat_interfaces[number]}/address" ]]; then
             if (( number == 0 )); then
-                printf '未检测到主站 0 网卡 %s。\n' "${interfaces[number]}" >&2
+                printf '未检测到主站 0 网卡 %s。\n' "${ethercat_interfaces[number]}" >&2
                 return 1
             fi
-            printf '未检测到第二张网卡 %s，暂不配置主站 1。\n' "${interfaces[number]}"
+            printf '未检测到第二张网卡 %s，暂不配置主站 1。\n' "${ethercat_interfaces[number]}"
             break
         fi
-        addresses[number]="$(< "/sys/class/net/${interfaces[number]}/address")"
+        addresses[number]="$(< "/sys/class/net/${ethercat_interfaces[number]}/address")"
         configured=""
         while IFS= read -r line; do
             if [[ "$line" =~ ^[[:space:]]*MASTER${number}_DEVICE[[:space:]]*= ]]; then
@@ -62,7 +67,7 @@ configure_etherlab_masters() {
         done < "$config"
         if [[ -n "$configured" && "${configured,,}" != "${addresses[number],,}" ]]; then
             printf 'MASTER%s_DEVICE 已绑定 %s，与 %s 的 MAC %s 不一致；未覆盖现有配置。\n' \
-                "$number" "$configured" "${interfaces[number]}" "${addresses[number]}" >&2
+                "$number" "$configured" "${ethercat_interfaces[number]}" "${addresses[number]}" >&2
             return 1
         fi
         configured_devices[number]="$configured"
@@ -126,7 +131,7 @@ configure_etherlab_masters() {
                 printf '\nMASTER%s_DEVICE="%s"\n' "$number" "${addresses[number]}" | sudo tee -a "$config" >/dev/null
             fi
             printf '已在 %s 配置主站 %s: %s (%s)\n' \
-                "$config" "$number" "${interfaces[number]}" "${addresses[number]}"
+                "$config" "$number" "${ethercat_interfaces[number]}" "${addresses[number]}"
         fi
     done
 }
@@ -164,23 +169,21 @@ if [[ "$require_etherlab" == ON ]]; then
         printf '%s\n' 'EtherLab 内核主站启动后仍不可用；请检查 /etc/sysconfig/ethercat 和 /dev/EtherCAT0。' >&2
         exit 1
     fi
-    IFS=, read -r main_mac backup_mac < /sys/module/ec_master/parameters/main_devices
-    main_mac="${main_mac//[[:space:]]/}"
-    backup_mac="${backup_mac//[[:space:]]/}"
-    expected_mac="$(< /sys/class/net/enp86s0/address)"
-    if [[ "${main_mac,,}" != "${expected_mac,,}" ]]; then
-        printf '主站 0 绑定不正确：实际=%s 期望=%s。\n' "$main_mac" "$expected_mac" >&2
-        exit 1
-    fi
-    printf '%s\n' 'EtherLab 内核主站已就绪: /dev/EtherCAT0 (enp86s0)'
-    if [[ -r /sys/class/net/enx6c1ff7c503f3/address ]]; then
-        expected_mac="$(< /sys/class/net/enx6c1ff7c503f3/address)"
-        if [[ ! -c /dev/EtherCAT1 || "${backup_mac,,}" != "${expected_mac,,}" ]]; then
-            printf '主站 1 绑定不正确：实际=%s 期望=%s。\n' "$backup_mac" "$expected_mac" >&2
+    IFS=, read -r -a active_macs < /sys/module/ec_master/parameters/main_devices
+    for number in "${!ethercat_interfaces[@]}"; do
+        interface="${ethercat_interfaces[number]}"
+        if [[ ! -r "/sys/class/net/$interface/address" ]]; then
+            break
+        fi
+        expected_mac="$(< "/sys/class/net/$interface/address")"
+        active_mac="${active_macs[number]-}"
+        active_mac="${active_mac//[[:space:]]/}"
+        if [[ ! -c "/dev/EtherCAT${number}" || "${active_mac,,}" != "${expected_mac,,}" ]]; then
+            printf '主站 %s 绑定不正确：实际=%s 期望=%s。\n' "$number" "$active_mac" "$expected_mac" >&2
             exit 1
         fi
-        printf '%s\n' 'EtherLab 内核主站已就绪: /dev/EtherCAT1 (enx6c1ff7c503f3)'
-    fi
+        printf 'EtherLab 内核主站已就绪: /dev/EtherCAT%s (%s)\n' "$number" "$interface"
+    done
 fi
 
 trap - EXIT

@@ -12,7 +12,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  帮助/语言： help | -h | ?    language zh|en\n\n");
             printf("  电源/状态： power_on    power_off    motor_probe\n");
             printf("             motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
-            printf("  EtherCAT：  默认网卡 enp86s0；可在命令末尾添加 [network_interface] 覆盖\n");
+            printf("  EtherCAT：  默认网卡 %s；可在命令末尾添加 [network_interface] 覆盖\n", ETHERCAT_DEFAULT_INTERFACE);
             printf("             ethercat_scan [network_interface]\n");
             printf("             ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
             printf("             ethercat_disable <slave_id|all> [network_interface]\n");
@@ -58,7 +58,7 @@ static void console_print_help(bool chinese, bool verbose)
             printf("  Help/lang:  help | -h | ?    language zh|en\n\n");
             printf("  Power/status: power_on    power_off    motor_probe\n");
             printf("                motor_scan [timeout_ms]    motor_list    can_status [reset]\n\n");
-            printf("  EtherCAT:     default interface enp86s0; append [network_interface] to override\n");
+            printf("  EtherCAT:     default interface %s; append [network_interface] to override\n", ETHERCAT_DEFAULT_INTERFACE);
             printf("                ethercat_scan [network_interface]\n");
             printf("                ethercat_enable <slave_id|all> [hold_ms] [sync0_shift_ns] [sync0_cycle_ms=1] [network_interface]\n");
             printf("                ethercat_disable <slave_id|all> [network_interface]\n");
@@ -120,7 +120,7 @@ static void console_print_help(bool chinese, bool verbose)
         printf("      扫描所有 CAN 总线上的配置电机，不改变使能状态。\n");
         printf("  motor_list\n");
         printf("      按 MIT/index 顺序显示在线/使能状态和最后一次位置、速度、力矩、温度反馈。\n");
-        printf("  EtherCAT 交互命令默认网卡为 enp86s0；需要覆盖时将网卡名放在参数末尾。\n");
+        printf("  EtherCAT 交互命令默认网卡为 %s；需要覆盖时将网卡名放在参数末尾。\n", ETHERCAT_DEFAULT_INTERFACE);
         printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
         printf("  ethercat_scan [network_interface]\n");
         printf("      交互扫描预热 MIT PDO/DC 并保持失能，随后可直接执行 mit；独立 --ethercat-scan 仍只读。\n");
@@ -237,7 +237,7 @@ static void console_print_help(bool chinese, bool verbose)
     printf("      Probe every configured motor on all CAN buses without changing enable state.\n");
     printf("  motor_list\n");
     printf("      Show online/enabled state and latest position, velocity, torque and temperatures in index order.\n");
-    printf("  EtherCAT interactive commands default to enp86s0; append an interface to override.\n");
+    printf("  EtherCAT interactive commands default to %s; append an interface to override.\n", ETHERCAT_DEFAULT_INTERFACE);
     printf("  ethercat_quality [duration_ms:1000..60000] [network_interface] (ec_quality)\n");
     printf("  ethercat_scan [network_interface]\n");
     printf("      Interactive scan warms MIT PDO/DC with drives disabled; run mit directly afterward; standalone --ethercat-scan stays read-only.\n");

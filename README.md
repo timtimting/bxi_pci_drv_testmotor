@@ -26,8 +26,9 @@ sudo ./build/motor_console
 构建时按目标架构选择 PCI 驱动静态库：x86_64 使用 `lib/libbxi_pci_drv.a`（5 路 CANFD），
 ARM64 使用 `lib/arm64/libbxi_pci_drv.a`（7 路 CANFD，来自原项目 `arm64` 分支 `b8d3eec`）。
 交叉编译时需提供 ARM64 工具链和同架构的 EtherLab 开发库；不能只修改 `CMAKE_SYSTEM_PROCESSOR` 来冒充目标架构。
-启动脚本的 EtherLab 网卡绑定仍针对当前电机主机；其他 ARM64 设备上的网卡名称与 MAC 需单独适配。
-脚本会按实际 MAC 检查 `enp86s0`（主站 0）和 `enx6c1ff7c503f3`（主站 1），
+启动脚本在当前 ARM64 主机上使用 `eth1`（左手，主站 0）和 `eth0`（右手，主站 1）；x86_64 主机仍使用
+`enp86s0`（主站 0）和 `enx6c1ff7c503f3`（主站 1）；其他设备的网卡名称仍需单独适配。
+脚本会按实际 MAC 检查所选网卡，
 补齐缺失绑定；如果主站已启动而绑定尚未生效，会在确认设备无人占用后自动重启服务。
 若主站被控制程序占用，则拒绝重启，避免中断正在运行的电机。
 通过 `sudo` 启动时，构建由原登录用户完成。
@@ -176,12 +177,36 @@ Revision，用于确认项目内的 ESI 资产可用；该读取不会初始化 
 向电机发送任何 EtherCAT、CAN 或 MIT 控制命令。
 
 EtherCAT 命令通过 EtherLab (IgH) 主站运行。运行前需安装主站内核模块和用户态开发库，
-并在电机主机的 `/etc/sysconfig/ethercat` 中配置网卡 MAC。例如两张独立网卡、两个主站：
+并在电机主机的 `/etc/sysconfig/ethercat` 中配置网卡 MAC。例如 x86_64 主机的两张独立网卡、两个主站：
 
 ```sh
 MASTER0_DEVICE="48:21:0b:72:f7:70" # enp86s0
 MASTER1_DEVICE="6c:1f:f7:c5:03:f3" # enx6c1ff7c503f3
 ```
+
+当前 ARM64 主机的两个 EtherCAT 网口应配置为：
+
+```sh
+MASTER0_DEVICE="a2:b2:41:5f:5c:5f" # eth1，左手
+MASTER1_DEVICE="72:fa:76:be:f3:0e" # eth0，右手
+DEVICE_MODULES="generic"
+UPDOWN_INTERFACES="eth1 eth0"
+```
+
+请在目标机器上再次确认实际 MAC。切换前先确认 SSH、ROS 和默认路由已使用 `wlan0`，
+再将 `eth0` 的网线从普通网络切换到右手 EtherCAT 链路；不要在仍依赖 `eth0` 远程连接时重启主站。
+`usb0` 不绑定 EtherCAT；交互命令在 ARM64 上默认使用左手 `eth1`，右手命令需显式指定 `eth0`。
+下面两个扫描需在**分别启动的终端会话**中执行；已有后台 PDO 会话时不能切换主站：
+
+```sh
+ethercat_scan eth1
+# 退出终端，重新启动后再执行：
+ethercat_scan eth0
+ethercat_info 1 eth0
+```
+
+`eth1` 目前为 `NO-CARRIER`；两个网口各自连接对应电机并上电后才能发现从站。
+现有交互程序只有一套后台 PDO 会话，可分别选择主站进行调试，**尚不能在同一进程中同时运行左右手的 1 kHz PDO 循环**。
 
 启动脚本根据实际网卡 MAC 幂等追加缺失的 `MASTER0_DEVICE`、`MASTER1_DEVICE`；
 已有非空且不匹配的绑定不会被覆盖。若服务已启动但新绑定尚未生效，脚本使用
