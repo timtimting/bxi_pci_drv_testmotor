@@ -23,8 +23,9 @@ sudo ./build/motor_console
 
 `build/motor_console` 现在是 `run_motor_console.sh` 的启动副本：每次启动前自动
 检测 EtherLab 开发库、增量构建，并检查内核主站；若未启动，则调用 `/etc/init.d/ethercat start`，再运行内部程序。
-若检测到 `enx6c1ff7c503f3` 且主站尚未启动，脚本会按其实际 MAC 幂等配置 `MASTER1_DEVICE`；
-主站已启动但尚未绑定该网卡时，脚本不会自动重启服务，以免中断正在运行的电机控制。
+脚本会按实际 MAC 检查 `enp86s0`（主站 0）和 `enx6c1ff7c503f3`（主站 1），
+补齐缺失绑定；如果主站已启动而绑定尚未生效，会在确认设备无人占用后自动重启服务。
+若主站被控制程序占用，则拒绝重启，避免中断正在运行的电机。
 通过 `sudo` 启动时，构建由原登录用户完成。
 启动脚本用醒目的“EtherLab 启动检查与编译：开始／完成／失败”分隔线标识构建输出。
 更新启动脚本后需先执行一次 `make`，将新脚本复制到 `build/motor_console`；此后只需上述启动命令。
@@ -178,14 +179,13 @@ MASTER0_DEVICE="48:21:0b:72:f7:70" # enp86s0
 MASTER1_DEVICE="6c:1f:f7:c5:03:f3" # enx6c1ff7c503f3
 ```
 
-启动脚本在 EtherLab 尚未运行且检测到 `enx6c1ff7c503f3` 时会自动追加缺失的
-`MASTER1_DEVICE`（保留已有非空绑定，不覆盖冲突值），然后启动服务。
-如果服务已启动但主站 1 尚未生效，脚本会报错且不会替你重启。
-此时先失能电机、退出所有占用 EtherLab 主站的程序，再在电机主机上停止服务，
-重新运行启动脚本，让它补充配置并启动服务：
+启动脚本根据实际网卡 MAC 幂等追加缺失的 `MASTER0_DEVICE`、`MASTER1_DEVICE`；
+已有非空且不匹配的绑定不会被覆盖。若服务已启动但新绑定尚未生效，脚本使用
+`fuser` 检查所有 `/dev/EtherCAT*`，确认没有进程占用才停止旧服务并重新启动。
+**运行中的 EtherLab 不能直接新增主站**；若有进程占用，脚本会报错且不停止服务。
+此时先失能电机、退出所有占用 EtherLab 的程序，再重新执行：
 
 ```sh
-sudo /etc/init.d/ethercat stop
 sudo ./build/motor_console
 ```
 
@@ -243,8 +243,9 @@ sudo ./build/motor_console
 ETHERLAB_ROOT=/custom/etherlab ./run_motor_console.sh
 ```
 
-脚本会在 `/dev/EtherCAT0` 或主站模块缺失时启动 EtherLab 服务；仅在主站未运行时按检测到的
-`enx6c1ff7c503f3` 配置主站 1，不修改主站 0，不安装 EtherLab，也不给电机上电。
+脚本会在 `/dev/EtherCAT0` 或主站模块缺失时启动 EtherLab 服务；缺少网卡绑定时会
+按实际 MAC 补齐，配置变更时仅在无人占用主站的情况下自动重启服务。
+脚本不会安装 EtherLab，也不会给电机上电。
 `--check-config` 和 `--help` 不会启动主站。若服务启动后仍不可用，脚本会报错退出。
 若仍需手动构建，可指定安装前缀：
 
