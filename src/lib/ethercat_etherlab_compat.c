@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -38,6 +39,7 @@ static bool etherlab_reference_clock_selected;
 static uint32_t etherlab_sync_cycle_ns;
 static int32_t etherlab_sync_shift_ns;
 static int etherlab_working_counter;
+static unsigned int etherlab_master_index;
 static const ec_pdo_entry_info_t etherlab_rx_entries[] = {
     {0x6040, 0x00, 16}, {0x607a, 0x00, 32}, {0x60ff, 0x00, 32},
     {0x6071, 0x00, 16}, {0x6060, 0x00, 8},
@@ -75,22 +77,36 @@ static const ec_sync_info_t etherlab_mit_syncs[] = {
     {0xff,EC_DIR_INVALID,0,NULL,EC_WD_DEFAULT},
 };
 
-static int etherlab_interface_matches_master(const char *interface)
+static int etherlab_master_index_for_mac(char *configured_devices,
+                                        const char *mac_address)
+{
+    char *save_pointer;
+    char *device;
+    int index = 0;
+
+    for (device = strtok_r(configured_devices, ", \t\r\n", &save_pointer);
+         device != NULL;
+         device = strtok_r(NULL, ", \t\r\n", &save_pointer), index++) {
+        if (strcasecmp(device, mac_address) == 0) return index;
+    }
+    return -1;
+}
+
+static int etherlab_master_index_for_interface(const char *interface)
 {
     struct ifreq request;
     char configured_devices[256];
     char mac_address[ETHER_ADDR_LEN * 3];
     FILE *file;
     int socket_fd;
-    unsigned int index;
 
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd < 0) return 0;
+    if (socket_fd < 0) return -1;
     memset(&request, 0, sizeof(request));
     snprintf(request.ifr_name, sizeof(request.ifr_name), "%s", interface);
     if (ioctl(socket_fd, SIOCGIFHWADDR, &request) != 0) {
         close(socket_fd);
-        return 0;
+        return -1;
     }
     close(socket_fd);
     snprintf(mac_address, sizeof(mac_address), "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -101,21 +117,13 @@ static int etherlab_interface_matches_master(const char *interface)
              (unsigned char)request.ifr_hwaddr.sa_data[4],
              (unsigned char)request.ifr_hwaddr.sa_data[5]);
     file = fopen("/sys/module/ec_master/parameters/main_devices", "r");
-    if (file == NULL) return 0;
+    if (file == NULL) return -1;
     if (fgets(configured_devices, sizeof(configured_devices), file) == NULL) {
         fclose(file);
-        return 0;
+        return -1;
     }
     fclose(file);
-    for (index = 0; mac_address[index] != '\0'; ++index) {
-        if (mac_address[index] >= 'A' && mac_address[index] <= 'F')
-            mac_address[index] = (char)(mac_address[index] - 'A' + 'a');
-    }
-    for (index = 0; configured_devices[index] != '\0'; ++index) {
-        if (configured_devices[index] >= 'A' && configured_devices[index] <= 'F')
-            configured_devices[index] = (char)(configured_devices[index] - 'A' + 'a');
-    }
-    return strstr(configured_devices, mac_address) != NULL;
+    return etherlab_master_index_for_mac(configured_devices, mac_address);
 }
 
 static void etherlab_update_slave_states(void)
@@ -175,9 +183,21 @@ static void etherlab_set_application_time(void)
 
 int ec_init(char *interface)
 {
-    if (interface == NULL || etherlab_interface_matches_master(interface) == 0) return 0;
-    etherlab_master = ecrt_request_master(0);
-    if (etherlab_master == NULL) return 0;
+    int master_index;
+
+    if (interface == NULL) return 0;
+    master_index = etherlab_master_index_for_interface(interface);
+    if (master_index < 0) {
+        fprintf(stderr, "EtherLab: %s is not bound to a main master in /sys/module/ec_master/parameters/main_devices\n",
+                interface);
+        return 0;
+    }
+    etherlab_master = ecrt_request_master((unsigned int)master_index);
+    if (etherlab_master == NULL) {
+        fprintf(stderr, "EtherLab: cannot request master %d for %s\n", master_index, interface);
+        return 0;
+    }
+    etherlab_master_index = (unsigned int)master_index;
     memset(ec_slave, 0, sizeof(ec_slave));
     memset(etherlab_slaves, 0, sizeof(etherlab_slaves));
     memset(ec_group, 0, sizeof(ec_group));

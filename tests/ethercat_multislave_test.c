@@ -23,6 +23,11 @@ ec_reg_request_t *ecrt_slave_config_create_reg_request(ec_slave_config_t *c,size
 ec_sdo_request_t *ecrt_slave_config_create_sdo_request(ec_slave_config_t *c,uint16_t i,uint8_t sub,size_t n) { (void)c; (void)i; (void)sub; (void)n; return (ec_sdo_request_t *)1; }
 int ecrt_sdo_request_timeout(ec_sdo_request_t *r,uint32_t t) { (void)r; assert(t==700); return 0; }
 int main(void) {
+ char configured_devices[] = "48:21:0b:72:f7:70,6c:1f:f7:c5:03:f3\n";
+ char second_config[] = "48:21:0B:72:F7:70,6C:1F:F7:C5:03:F3\n";
+ assert(etherlab_master_index_for_mac(configured_devices, "6c:1f:f7:c5:03:f3") == 1);
+ assert(etherlab_master_index_for_mac(second_config, "48:21:0b:72:f7:70") == 0);
+ assert(etherlab_master_index_for_mac(second_config, "6c:1f:f7:c5:03:f4") == -1);
  etherlab_master = (ec_master_t *)1;
  ec_slavecount=1; assert(etherlab_safe_op_timeout_us()==7000000);
  ec_slavecount=2; assert(etherlab_safe_op_timeout_us()==14000000);

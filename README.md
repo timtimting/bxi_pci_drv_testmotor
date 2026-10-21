@@ -23,6 +23,8 @@ sudo ./build/motor_console
 
 `build/motor_console` 现在是 `run_motor_console.sh` 的启动副本：每次启动前自动
 检测 EtherLab 开发库、增量构建，并检查内核主站；若未启动，则调用 `/etc/init.d/ethercat start`，再运行内部程序。
+若检测到 `enx6c1ff7c503f3` 且主站尚未启动，脚本会按其实际 MAC 幂等配置 `MASTER1_DEVICE`；
+主站已启动但尚未绑定该网卡时，脚本不会自动重启服务，以免中断正在运行的电机控制。
 通过 `sudo` 启动时，构建由原登录用户完成。
 启动脚本用醒目的“EtherLab 启动检查与编译：开始／完成／失败”分隔线标识构建输出。
 更新启动脚本后需先执行一次 `make`，将新脚本复制到 `build/motor_console`；此后只需上述启动命令。
@@ -168,10 +170,39 @@ lang en
 Revision，用于确认项目内的 ESI 资产可用；该读取不会初始化 EtherCAT 主站，也不会
 向电机发送任何 EtherCAT、CAN 或 MIT 控制命令。
 
-EtherCAT 命令通过 EtherLab (IgH) 主站运行，使用配置的 master 0。运行前需安装
-EtherLab 主站内核模块和用户态开发库，并在 `/etc/ethercat.conf` 中将
-`MASTER0_DEVICE` 绑定到 `enp86s0` 的 MAC 地址；`ethercat_*` 命令仍保留网卡参数，
-程序会将其 MAC 与 EtherLab master 0 的绑定进行校验。
+EtherCAT 命令通过 EtherLab (IgH) 主站运行。运行前需安装主站内核模块和用户态开发库，
+并在电机主机的 `/etc/sysconfig/ethercat` 中配置网卡 MAC。例如两张独立网卡、两个主站：
+
+```sh
+MASTER0_DEVICE="48:21:0b:72:f7:70" # enp86s0
+MASTER1_DEVICE="6c:1f:f7:c5:03:f3" # enx6c1ff7c503f3
+```
+
+启动脚本在 EtherLab 尚未运行且检测到 `enx6c1ff7c503f3` 时会自动追加缺失的
+`MASTER1_DEVICE`（保留已有非空绑定，不覆盖冲突值），然后启动服务。
+如果服务已启动但主站 1 尚未生效，脚本会报错且不会替你重启。
+此时先失能电机、退出所有占用 EtherLab 主站的程序，再在电机主机上停止服务，
+重新运行启动脚本，让它补充配置并启动服务：
+
+```sh
+sudo /etc/init.d/ethercat stop
+sudo ./build/motor_console
+```
+
+确认服务启动后再检查：
+
+```sh
+cat /sys/module/ec_master/parameters/main_devices
+ls -l /dev/EtherCAT0 /dev/EtherCAT1
+sudo /usr/local/etherlab/bin/ethercat -m 0 master
+sudo /usr/local/etherlab/bin/ethercat -m 1 master
+```
+
+预期 `main_devices` 按主站编号依次列出两个 MAC。程序根据命令指定网卡的 MAC 匹配
+`main_devices` 中的主站编号；不匹配或主站未就绪时会拒绝打开。每个交互会话只占用
+所选的一台主站，不会同时控制两张网卡，也不会在通信故障时自动切换。
+修改网卡绑定或切换会话前须先失能电机并退出当前会话。`Tab` 可补全网卡名，
+包括 `ethercat_scan enx<Tab>`、`ethercat_enable all enx<Tab>` 等；但补全不表示该网卡已连接、已绑定或存在从站。
 
 ### EtherCAT 扫描
 
@@ -181,11 +212,13 @@ EtherLab 主站内核模块和用户态开发库，并在 `/etc/ethercat.conf` �
 sudo ./build/motor_console --ethercat-scan enp86s0
 ```
 
-所有 `--ethercat-*` 命令均通过 EtherLab master 0 访问网卡上的实际 EtherCAT 从站；不会读取
+所有 `--ethercat-*` 命令均通过与所选网卡匹配的 EtherLab 主站访问实际 EtherCAT 从站；不会读取
 `config/motor_console.yaml` 中的 CAN 电机配置，也不会初始化 BXI PCI/CAN。电机身份和
 拓扑序号以从站 EEPROM 返回的 Vendor ID、Product Code、Revision 和 `slave N` 为准。
 
-终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；需要换网卡时将网卡名放在命令最后。
+终端交互命令默认使用网卡 `enp86s0`，所以可直接输入 `ethercat_scan`；
+主站 1 可用 `ethercat_scan enx6c1ff7c503f3` 扫描，后续命令也需指定同一网卡，
+例如 `ethercat_info 1 enx6c1ff7c503f3`。启动扫描前请确认该网卡物理链路已连接。
 交互扫描列出拓扑后，会为检测到的开璇从站配置 MIT 浮点 PDO/DC（mode=10），等待 SAFE-OP 和 OP，再以约 1 kHz 持续交换 PDO；
 扫描完成预热或报错后才返回终端提示符；等待期间输入的内容不会执行。报错会区分 OP 等待与 CiA402 失能确认，并打印 AL/WKC/PDO 状态。
 OP 最长等待 2 秒；如果仍失败，请提供该次扫描的分阶段输出和从站状态，不能仅凭旧的合并报错确定具体原因。
@@ -210,7 +243,8 @@ sudo ./build/motor_console
 ETHERLAB_ROOT=/custom/etherlab ./run_motor_console.sh
 ```
 
-脚本会在 `/dev/EtherCAT0` 或主站模块缺失时启动 EtherLab 服务；不会安装 EtherLab、修改主站网卡配置或给电机上电。
+脚本会在 `/dev/EtherCAT0` 或主站模块缺失时启动 EtherLab 服务；仅在主站未运行时按检测到的
+`enx6c1ff7c503f3` 配置主站 1，不修改主站 0，不安装 EtherLab，也不给电机上电。
 `--check-config` 和 `--help` 不会启动主站。若服务启动后仍不可用，脚本会报错退出。
 若仍需手动构建，可指定安装前缀：
 
@@ -315,7 +349,7 @@ cc -DHAVE_ETHERLAB=1 -Isrc -Isrc/lib -Ilib -ffunction-sections -fdata-sections \
 
 若未检测到 EtherLab，直接运行 `make` 仍可能构建不含 EtherCAT 的程序，但会给出警告；
 启动入口会停止并提示安装开发库。`--check-config` 和 `--help` 不要求 EtherLab。
-master 0 必须在系统层绑定到命令指定网卡。
+所选主站必须在系统层绑定到命令指定网卡。
 `ethercat_enable` 会在使能尝试期间临时启用 EtherLab `debug=1`；失败时把本次尝试的内核日志
 保存到 `/tmp/ethercat-enable-failure-*.log`，成功时删除临时日志并恢复 `debug=0`。此功能需要以
 root 运行且允许读取 `/dev/kmsg`；EtherLab 命令不在默认路径时，可通过 `ETHERLAB_CLI` 指定其绝对路径。
@@ -374,7 +408,7 @@ sudo ./build/motor_console --ethercat-disable enp86s0 1
 sudo ./build/motor_console --ethercat-disable enp86s0 all
 ```
 
-交互模式下 `ethercat_disable <slave_id|all>` 提交后台失能请求，执行后确认所选从站的 CiA-402 失能状态，其他从站不受影响。已有周期会话保留 OP 和 PDO 通信；要释放 EtherLab master 请退出终端或执行 `power_off`。不要在另一个终端同时启动占用 master 0 的 EtherCAT 主站。
+交互模式下 `ethercat_disable <slave_id|all>` 提交后台失能请求，执行后确认所选从站的 CiA-402 失能状态，其他从站不受影响。已有周期会话保留 OP 和 PDO 通信；要释放当前 EtherLab 主站请退出终端或执行 `power_off`。不要在另一个终端同时占用同一主站。
 
 ### 1 kHz 通信质量测试
 

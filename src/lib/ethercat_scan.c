@@ -194,16 +194,20 @@ static int console_ethercat_set_kernel_debug(unsigned int level)
     const char *configured_cli = getenv("ETHERLAB_CLI");
     const char *cli_path = NULL;
     char level_text[8];
-    char *arguments[4];
+    char master_text[16];
+    char *arguments[6];
     pid_t child;
     pid_t waited;
     int status;
 
     snprintf(level_text, sizeof(level_text), "%u", level);
+    snprintf(master_text, sizeof(master_text), "%u", etherlab_master_index);
     arguments[0] = (char *)"ethercat";
-    arguments[1] = (char *)"debug";
-    arguments[2] = level_text;
-    arguments[3] = NULL;
+    arguments[1] = (char *)"-m";
+    arguments[2] = master_text;
+    arguments[3] = (char *)"debug";
+    arguments[4] = level_text;
+    arguments[5] = NULL;
     if (configured_cli != NULL && configured_cli[0] != '\0' &&
         configured_cli[0] == '/' && access(configured_cli, X_OK) == 0) {
         cli_path = configured_cli;
@@ -234,8 +238,11 @@ static int console_ethercat_set_kernel_debug(unsigned int level)
 }
 
 static void console_ethercat_failure_log_start(ethercat_failure_log *capture,
-                                                bool chinese)
+                                                bool chinese,
+                                                const char *interface)
 {
+    int master_index;
+
     memset(capture, 0, sizeof(*capture));
     capture->kernel_log_fd = -1;
     capture->temporary_log_fd = -1;
@@ -255,7 +262,9 @@ static void console_ethercat_failure_log_start(ethercat_failure_log *capture,
         capture->kernel_log_fd = -1;
     }
     capture->active = true;
-    if (console_ethercat_set_kernel_debug(1u) == 0) {
+    master_index = etherlab_master_index_for_interface(interface);
+    if (master_index >= 0) etherlab_master_index = (unsigned int)master_index;
+    if (master_index >= 0 && console_ethercat_set_kernel_debug(1u) == 0) {
         capture->debug_enabled = true;
     } else {
         printf("%s\n", chinese ?
@@ -361,9 +370,10 @@ static void console_ethercat_failure_log_finish(ethercat_failure_log *capture,
 
     if (!capture->active) return;
     if (capture->debug_enabled && console_ethercat_set_kernel_debug(0u) != 0) {
-        printf("%s\n", chinese ?
-               "ethercat_enable: 未能恢复 EtherLab debug=0，请手动执行 sudo /usr/local/etherlab/bin/ethercat debug 0" :
-               "ethercat_enable: failed to restore EtherLab debug=0; run sudo /usr/local/etherlab/bin/ethercat debug 0 manually");
+        printf(chinese ?
+               "ethercat_enable: 未能恢复 EtherLab debug=0；请手动执行 sudo /usr/local/etherlab/bin/ethercat -m %u debug 0\n" :
+               "ethercat_enable: failed to restore EtherLab debug=0; run sudo /usr/local/etherlab/bin/ethercat -m %u debug 0 manually\n",
+               etherlab_master_index);
     }
     if (failed && capture->temporary_log_fd >= 0) {
         if (clock_gettime(CLOCK_REALTIME, &now) == 0 &&
@@ -867,6 +877,19 @@ static const char *const *console_ethercat_completion_words(const char *line,
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_pnread") == 0 && tokens_before >= 3u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if ((strcmp(first, "mit") == 0 || strcmp(first, "ethercat_mit") == 0) &&
+        tokens_before >= 7u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if ((strcmp(first, "ethercat_quality") == 0 ||
+         strcmp(first, "ec_quality") == 0) && tokens_before >= 2u) {
+        return console_ethercat_interface_completion_words(count);
+    }
+    if (strcmp(first, "ethercat_enable") == 0 && tokens_before >= 2u &&
+        line[start] != '\0' && isalpha((unsigned char)line[start]) &&
+        !starts_with("sync0_cycle_ms=", &line[start])) {
         return console_ethercat_interface_completion_words(count);
     }
     if (strcmp(first, "ethercat_enable") == 0 && tokens_before == 2u) {
@@ -2618,7 +2641,7 @@ static int console_ethercat_enable(bool chinese,
     }
     enable_started_us = console_ethercat_monotonic_us();
     stage_started_us = enable_started_us;
-    console_ethercat_failure_log_start(&failure_capture, chinese);
+    console_ethercat_failure_log_start(&failure_capture, chinese, interface);
     stage_started_us = console_ethercat_log_enable_stage(chinese,
         chinese ? "内核诊断准备" : "kernel diagnostic setup", stage_started_us);
     stage_result = ec_init((char *)interface);
