@@ -2414,7 +2414,6 @@ static int console_ethercat_prepare_scan_session(bool chinese)
                "ethercat_scan: slave DC Sync0 configuration failed");
         goto cleanup;
     }
-    console_ethercat_cache_configuration(configured, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, 0);
     if (ec_activate() != 0) {
         printf("%s\n", chinese ? "ethercat_scan: 主站激活失败" :
                "ethercat_scan: master activation failed");
@@ -2438,6 +2437,9 @@ static int console_ethercat_prepare_scan_session(bool chinese)
                "ethercat_scan: initial PDO/WKC confirmation failed");
         goto cleanup;
     }
+    printf("%s\n", chinese ? "ethercat_scan: PDO 已稳定，正在读取 SDO 快照（保持周期通信）" :
+           "ethercat_scan: PDO stable; reading SDO snapshot while cyclic exchange continues");
+    console_ethercat_cache_configuration(configured, ETHERCAT_KAIXUAN_CONTROL_PERIOD_NS, 0);
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (ec_slave[slave].inputs == NULL ||
             ec_slave[slave].Ibits < ETHERCAT_KAIXUAN_TXPDO_MIN_BITS) {
@@ -2706,12 +2708,6 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: selected slave does not support DC Sync0");
         goto cleanup;
     }
-    failure_stage = "pre-enable-sdo-snapshot";
-    printf("%s\n", chinese ? "ethercat_enable: 正在读取使能前 SDO 配置" :
-           "ethercat_enable: reading SDO configuration before activation");
-    console_ethercat_cache_configuration(configured, sync0_cycle_ns, sync0_shift_ns);
-    stage_started_us = console_ethercat_log_enable_stage(chinese,
-        chinese ? "使能前 SDO 快照" : "pre-enable SDO snapshot", stage_started_us);
     failure_stage = "master-activation";
     stage_result = ec_activate();
     stage_started_us = console_ethercat_log_enable_stage(chinese,
@@ -2760,6 +2756,12 @@ static int console_ethercat_enable(bool chinese,
                "ethercat_enable: initial PDO did not reach complete WKC for 3 cycles within 250ms");
         goto cleanup;
     }
+    failure_stage = "pre-enable-sdo-snapshot";
+    printf("%s\n", chinese ? "ethercat_enable: 正在读取使能前 SDO 配置" :
+           "ethercat_enable: reading SDO configuration before drive enable");
+    console_ethercat_cache_configuration(configured, sync0_cycle_ns, sync0_shift_ns);
+    stage_started_us = console_ethercat_log_enable_stage(chinese,
+        chinese ? "使能前 SDO 快照" : "pre-enable SDO snapshot", stage_started_us);
     failure_stage = "pdo-identity-validation";
     for (slave = 1; slave <= ec_slavecount; slave++) {
         if (selected[slave] != 0u) {

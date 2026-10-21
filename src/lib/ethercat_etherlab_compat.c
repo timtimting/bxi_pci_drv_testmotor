@@ -154,22 +154,6 @@ static bool etherlab_reference_clock_ready(void)
     return false;
 }
 
-static int etherlab_activate(void)
-{
-    unsigned int slave;
-    if (etherlab_activated) return 0;
-    if (etherlab_master == NULL || ecrt_master_activate(etherlab_master) != 0) return -1;
-    etherlab_activated = true;
-    etherlab_domain_data = etherlab_domain == NULL ? NULL : ecrt_domain_data(etherlab_domain);
-    if (etherlab_mapped && etherlab_domain_data == NULL) return -1;
-    for (slave = 1; slave <= (unsigned int)ec_slavecount; ++slave) {
-        if (ec_slave[slave].Obits == 0) continue;
-        ec_slave[slave].outputs = etherlab_slaves[slave].output_shadow;
-        ec_slave[slave].inputs = etherlab_domain_data + etherlab_slaves[slave].input_offset;
-    }
-    return 0;
-}
-
 static void etherlab_set_application_time(void)
 {
     struct timespec now;
@@ -179,6 +163,24 @@ static void etherlab_set_application_time(void)
     time_value.tv_sec = now.tv_sec;
     time_value.tv_usec = now.tv_nsec / 1000;
     ecrt_master_application_time(etherlab_master, EC_TIMEVAL2NANO(time_value));
+}
+
+static int etherlab_activate(void)
+{
+    unsigned int slave;
+    if (etherlab_activated) return 0;
+    if (etherlab_master == NULL) return -1;
+    etherlab_set_application_time();
+    if (ecrt_master_activate(etherlab_master) != 0) return -1;
+    etherlab_activated = true;
+    etherlab_domain_data = etherlab_domain == NULL ? NULL : ecrt_domain_data(etherlab_domain);
+    if (etherlab_mapped && etherlab_domain_data == NULL) return -1;
+    for (slave = 1; slave <= (unsigned int)ec_slavecount; ++slave) {
+        if (ec_slave[slave].Obits == 0) continue;
+        ec_slave[slave].outputs = etherlab_slaves[slave].output_shadow;
+        ec_slave[slave].inputs = etherlab_domain_data + etherlab_slaves[slave].input_offset;
+    }
+    return 0;
 }
 
 int ec_init(char *interface)
@@ -218,10 +220,12 @@ int ec_init(char *interface)
 int ec_config_init(boolean use_table)
 {
     ec_master_info_t master_info;
+    ec_master_state_t master_state;
     ec_slave_info_t slave_info;
     ec_slave_info_t slave_infos[EC_MAXSLAVE];
     unsigned int attempt;
     unsigned int position;
+    int unready_slave = -1;
     bool identities_ready = false;
     (void)use_table;
 
@@ -239,6 +243,7 @@ int ec_config_init(boolean use_table)
                     slave_infos[position].vendor_id == 0 ||
                     slave_infos[position].product_code == 0) {
                     identities_ready = false;
+                    unready_slave = (int)position + 1;
                     break;
                 }
             }
@@ -247,9 +252,13 @@ int ec_config_init(boolean use_table)
         usleep(20000);
     }
     if (!identities_ready) {
-        fprintf(stderr, "EtherLab: master %u slave identities not ready after 10s (slaves=%u, scan_busy=%u); refusing zero-identity configuration\n",
+        memset(&master_state, 0, sizeof(master_state));
+        ecrt_master_state(etherlab_master, &master_state);
+        fprintf(stderr, "EtherLab: master %u slave identities not ready after 10s (slaves=%u, responding=%u, link=%s, scan_busy=%u, first_unready_slave=%d); refusing zero-identity configuration\n",
                 etherlab_master_index, (unsigned int)master_info.slave_count,
-                (unsigned int)master_info.scan_busy);
+                (unsigned int)master_state.slaves_responding,
+                master_state.link_up ? "UP" : "DOWN",
+                (unsigned int)master_info.scan_busy, unready_slave);
         return 0;
     }
     ec_slavecount = (int)master_info.slave_count;
@@ -408,12 +417,11 @@ static const char *etherlab_al_state_name(uint8_t state)
     }
 }
 
-/* EtherLab configures slaves in sequence; each DC sync check can take 5s. */
 static int etherlab_safe_op_timeout_us(void)
 {
     unsigned int count = ec_slavecount > 0 ? (unsigned int)ec_slavecount : 1u;
-    uint64_t budget = (uint64_t)EC_TIMEOUTSTATE * count;
-    return (int)(budget > 60000000u ? 60000000u : budget);
+    uint64_t budget = (uint64_t)EC_TIMEOUTSTATE + 15000000u * (count - 1u);
+    return (int)(budget > 120000000u ? 120000000u : budget);
 }
 
 static int etherlab_statecheck(uint16 slave, uint16 requested_state, int timeout_us,

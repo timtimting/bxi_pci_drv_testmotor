@@ -11,6 +11,9 @@
 
 static unsigned int config_calls;
 static unsigned int master_query_calls;
+static unsigned int activation_order;
+int ecrt_master_application_time(ec_master_t *m, uint64_t t) { (void)m; (void)t; assert(activation_order==0); activation_order=1; return 0; }
+int ecrt_master_activate(ec_master_t *m) { (void)m; assert(activation_order==1); activation_order=2; return 0; }
 int ecrt_master(ec_master_t *m, ec_master_info_t *i) { (void)m; memset(i,0,sizeof(*i)); i->slave_count=2; master_query_calls++; return 0; }
 int ecrt_master_get_slave(ec_master_t *m, uint16_t p, ec_slave_info_t *i) {
  (void)m; memset(i,0,sizeof(*i)); i->alias=42;
@@ -32,11 +35,13 @@ int main(void) {
  assert(etherlab_master_index_for_mac(second_config, "6c:1f:f7:c5:03:f4") == -1);
  etherlab_master = (ec_master_t *)1;
  ec_slavecount=1; assert(etherlab_safe_op_timeout_us()==7000000);
- ec_slavecount=2; assert(etherlab_safe_op_timeout_us()==14000000);
- ec_slavecount=3; assert(etherlab_safe_op_timeout_us()==21000000);
- ec_slavecount=255; assert(etherlab_safe_op_timeout_us()==60000000);
+ ec_slavecount=2; assert(etherlab_safe_op_timeout_us()==22000000);
+ ec_slavecount=3; assert(etherlab_safe_op_timeout_us()==37000000);
+ ec_slavecount=4; assert(etherlab_safe_op_timeout_us()==52000000);
+ ec_slavecount=255; assert(etherlab_safe_op_timeout_us()==120000000);
  assert(ec_config_init(FALSE)==2); assert(config_calls==2); assert(master_query_calls==2);
  assert(etherlab_slaves[1].config != etherlab_slaves[2].config);
+ assert(etherlab_activate()==0); assert(activation_order==2);
  uint8_t outputs[2][23], inputs[2][16] = {{0}};
  uint8_t selected[EC_MAXSLAVE] = {0};
  int32_t ignored_targets[EC_MAXSLAVE] = {0};
@@ -62,5 +67,6 @@ int main(void) {
  }
  puts("PASS: two-slave MIT warm-up preserves feedback positions, zeroes gains/feedforward, stays disabled");
  puts("PASS: waits for nonzero slave identities before configuring absolute positions 0/1");
+ puts("PASS: initializes EtherLab application time before master activation");
  return 0;
 }

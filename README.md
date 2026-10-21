@@ -123,9 +123,9 @@ sudo ./build/motor_console --language en
 
 ```text
 [cmd=1 +0.000s] ethercat_enable: 已提交后台队列（不代表执行成功）
-[cmd=1 +0.012s] ethercat_enable: 正在读取使能前 SDO 配置
-[cmd=1 +0.420s] ethercat_enable: 正在等待 SAFE-OP，最长 7s
+[cmd=1 +0.012s] ethercat_enable: 正在等待 SAFE-OP，最长 7s
 [cmd=1 +1.205s] ethercat_enable: SAFE-OP 已确认
+[cmd=1 +1.420s] ethercat_enable: 正在读取使能前 SDO 配置
 ```
 
 以上耗时仅为格式示例。交互命令以按回车后进入命令分发的时刻为零点，不是网卡实际发帧时刻；
@@ -221,13 +221,29 @@ sudo ./build/motor_console --ethercat-scan enp86s0
 例如 `ethercat_info 1 enx6c1ff7c503f3`。启动扫描前请确认该网卡物理链路已连接。
 交互扫描列出拓扑后，会为检测到的开璇从站配置 MIT 浮点 PDO/DC（mode=10），等待 SAFE-OP 和 OP，再以约 1 kHz 持续交换 PDO；
 扫描完成预热或报错后才返回终端提示符；等待期间输入的内容不会执行。报错会区分 OP 等待与 CiA402 失能确认，并打印 AL/WKC/PDO 状态。
-OP 最长等待 2 秒；如果仍失败，请提供该次扫描的分阶段输出和从站状态，不能仅凭旧的合并报错确定具体原因。
+OP 最长等待 2 秒；SAFE-OP 等待单从站最长 7 秒，每增加一台从站增加 15 秒（最多 120 秒），因为 EtherLab 可能逐台配置。
+如果仍失败，请提供该次扫描的分阶段输出、从站状态和对应主站的内核日志，不能仅凭旧的合并报错确定具体原因。
 全程保持控制字 `0x0000` 和伺服失能，不发送使能或运动指令。首次扫描因此仍可能等待约 5 秒，
 预热时目标位置取当前输出端反馈，速度、前馈力矩、KP、KD 均为零。
 预热成功后可直接执行 `mit 1 ...`、`mit 2 ...` 或 `mit all ...`，复用后台主站，避免重复等待 SAFE-OP。
 若拓扑含非开璇从站，交互扫描仅显示拓扑并跳过预热；独立 `--ethercat-scan` 始终只读。
 两个主站使用相同扫描流程：等待 EtherLab 完成拓扑扫描且所有从站身份信息就绪后，才创建从站配置并判断是否为开璇驱动器。
 若 10 秒内仍有从站的厂商／产品号为零，扫描会失败并保持电机未使能；请检查对应主站的 `ethercat -m 1 slaves -v` 输出及链路，不会把未知从站当作开璇驱动器预热。
+主站 1 报 `slaves=4` 仅表示 EtherLab 记录了 4 个拓扑位置，不等于 EEPROM 身份已读到。
+将电机接在外接网卡上并上电后，可在另一终端执行以下只读检查：
+
+```sh
+cat /sys/class/net/enx6c1ff7c503f3/carrier
+sudo /usr/local/etherlab/bin/ethercat -m 1 master
+sudo /usr/local/etherlab/bin/ethercat -m 1 slaves -v
+sudo dmesg -T | grep -Ei 'EtherCAT|ec_master|EEPROM|SII' | tail -80
+```
+
+若 `link=DOWN` 或无 Rx，应先排查外接网卡和物理链路；若 CLI 也始终显示零身份，需根据内核日志排查主站 1 的 EEPROM/SII 通信，不能靠程序把零身份当成开璇型号。
+若上电且接外接网卡时出现 `0x0016 Invalid mailbox configuration`、报文超时或未匹配，说明主站 1 的邮箱／帧交换尚不可靠；先对比两张网卡的链路和收发计数，再检查外接网卡驱动、供电与线缆，不应跳过身份校验。
+若 CLI 显示正常 Vendor/Product 而控制台仍报身份未就绪，再检查程序读取路径。
+多台电机进入 SAFE-OP 可能逐台耗时；预热会先等待所有从站进入 SAFE-OP、验证 PDO/WKC，再读取 SDO 快照，最后进入 OP 并保持后台通信。未完成这些阶段时 `WKC=0` 不代表后台 PDO 已启动。
+若默认网卡日志出现 `Slave did not sync after 5000 ms` 或 `0x002D No Sync Error`，检查 DC 配置和应用时间；程序现于激活主站前提交初始应用时间，并在 PDO 循环中持续更新。
 预热使用默认 `Sync0=1 ms`、`shift=0`；若需其他周期或相位，应在扫描前直接使用带参数的 `ethercat_enable`。
 旧的“网卡在前”格式仍兼容。独立命令行方式不会初始化 BXI PCI/CAN，
 更适合只连接 EtherCAT 电机的电脑。启动前自动检测 `/usr/local/etherlab`、
