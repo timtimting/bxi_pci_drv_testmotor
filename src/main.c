@@ -40,7 +40,7 @@ typedef struct
 static const char *const console_command_words[] = {
     "help", "-h", "?", "power_on", "power_off", "motor_probe", "motor_scan", "motor_list",
     "ethercat_scan", "ethercat_enable", "ethercat_disable", "ethercat_position", "ethercat_position_pp", "ethercat_mit", "pp", "ethercat_zero",
-    "ethercat_quality", "ec_quality", "ethercat_info", "info", "ethercat_pnread", "ethercat_pn077", "ethercat_save",
+    "ethercat_quality", "ec_quality", "ethercat_info", "info", "ethercat_pnread", "ethercat_pn075", "ethercat_pn077", "ethercat_save",
     "ethercat_pn028", "ethercat_pn106", "ethercat_pn107", "ethercat_pn044", "ethercat_pn082", "pn082",
     "mit_zero_set_all", "mit_zero_set_single", "mit_enable_all", "mit_disable_all",
     "mit_enable_single", "mit_disable_single", "mit_set", "stand_up",
@@ -150,6 +150,7 @@ int main(int argc, char **argv)
         {"ethercat-pn107", required_argument, NULL, 1002},
         {"ethercat-pn044", required_argument, NULL, 1003},
         {"ethercat-pn082", required_argument, NULL, 1005},
+        {"ethercat-pn075", required_argument, NULL, 1007},
         {"ethercat-save", required_argument, NULL, 'S'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0},
@@ -190,12 +191,14 @@ int main(int argc, char **argv)
             ethercat_pnread_interface = optarg;
         } else if (opt == 'W') {
             ethercat_pn077_interface = optarg;
-        } else if ((opt >= 1000 && opt <= 1003) || opt == 1005) {
+        } else if ((opt >= 1000 && opt <= 1003) || opt == 1005 || opt == 1007) {
             if (ethercat_motion_interface != NULL) {
                 fprintf(stderr, "Specify only one EtherCAT parameter write command.\n");
                 return 1;
             }
-            ethercat_motion_parameter_spec = &ethercat_motion_parameters[opt == 1005 ? 4 : opt - 1000];
+            ethercat_motion_parameter_spec = opt == 1007 ?
+                console_ethercat_motion_parameter_by_task(ETHERCAT_TASK_PN075) :
+                &ethercat_motion_parameters[opt == 1005 ? 4 : opt - 1000];
             ethercat_motion_interface = optarg;
         } else if (opt == 'S') {
             ethercat_save_interface = optarg;
@@ -225,9 +228,11 @@ int main(int argc, char **argv)
             console_ethercat_parse_slave_selection(argv[optind],
                 &parsed_ethercat_slave_id, &parsed_ethercat_all_slaves) != 0 ||
             parse_uint_arg(argv[optind + 1], &ethercat_motion_value) != 0 ||
-            ethercat_motion_value > ethercat_motion_parameter_spec->maximum) {
-            printf("用法：%s --ethercat-pn%03u <interface> <slave_id|all> <0..%u>\n",
+            ethercat_motion_value > ethercat_motion_parameter_spec->maximum ||
+            (ethercat_motion_parameter_spec->number == 75u && parsed_ethercat_all_slaves)) {
+            printf("用法：%s --ethercat-pn%03u <interface> <%s> <0..%u>\n",
                    argv[0], ethercat_motion_parameter_spec->number,
+                   ethercat_motion_parameter_spec->number == 75u ? "slave_id" : "slave_id|all",
                    ethercat_motion_parameter_spec->maximum);
             return 1;
         }

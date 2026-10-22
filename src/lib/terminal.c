@@ -488,6 +488,8 @@ mit_usage:
         unsigned int value;
         unsigned int maximum = motion_parameter != NULL ? motion_parameter->maximum : 1u;
         ethercat_task task = motion_parameter != NULL ? motion_parameter->task : ETHERCAT_TASK_PN077;
+        const char *selection_usage = motion_parameter != NULL && motion_parameter->number == 75u ?
+                                      "slave_id" : "slave_id|all";
         const char *interface = ETHERCAT_DEFAULT_INTERFACE;
         const char *selection;
         unsigned int slave_id;
@@ -496,27 +498,35 @@ mit_usage:
         if ((argc != 3 && argc != 4) ||
             (argc == 4 && console_ethercat_parse_slave_selection(argv[1], &slave_id, &all_slaves) != 0)) {
             if (argc != 4 || console_ethercat_parse_slave_selection(argv[2], &slave_id, &all_slaves) != 0) {
-                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
-                       console_text(state, "用法", "usage"), cmd, maximum);
+                printf("%s: %s <%s> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, selection_usage, maximum);
                 return -1;
             }
             interface = argv[1];
             selection = argv[2];
             if (parse_uint_arg(argv[3], &value) != 0 || value > maximum) {
-                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
-                       console_text(state, "用法", "usage"), cmd, maximum);
+                printf("%s: %s <%s> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, selection_usage, maximum);
                 return -1;
             }
         } else {
             selection = argv[1];
             if (parse_uint_arg(argv[2], &value) != 0 || value > maximum) {
-                printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
-                       console_text(state, "用法", "usage"), cmd, maximum);
+                printf("%s: %s <%s> <0..%u> [network_interface]\n",
+                       console_text(state, "用法", "usage"), cmd, selection_usage, maximum);
                 return -1;
             }
             if (argc == 4) {
                 interface = argv[3];
             }
+        }
+        if (motion_parameter != NULL && motion_parameter->number == 75u &&
+            console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) == 0 &&
+            all_slaves) {
+            printf("%s\n", console_text(state,
+                   "抱闸控制必须指定单台从站，拒绝 all。",
+                   "Brake control requires one slave; all is refused."));
+            return -1;
         }
         return console_ethercat_background_submit(task, state->config.chinese_ui,
             interface, selection, 0u, 0.0, value, NULL, NULL);

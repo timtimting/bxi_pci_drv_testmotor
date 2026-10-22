@@ -36,7 +36,8 @@ typedef enum {
     ETHERCAT_TASK_PN044,
     ETHERCAT_TASK_MIT,
     ETHERCAT_TASK_PN082,
-    ETHERCAT_TASK_QUALITY
+    ETHERCAT_TASK_QUALITY,
+    ETHERCAT_TASK_PN075
 } ethercat_task;
 
 typedef struct {
@@ -52,6 +53,7 @@ static const ethercat_motion_parameter ethercat_motion_parameters[] = {
     {ETHERCAT_TASK_PN107, "ethercat_pn107", 107u, 1u},
     {ETHERCAT_TASK_PN044, "ethercat_pn044", 44u, 9u},
     {ETHERCAT_TASK_PN082, "ethercat_pn082", 82u, 32767u},
+    {ETHERCAT_TASK_PN075, "ethercat_pn075", 75u, 2u},
 };
 
 static const ethercat_motion_parameter *console_ethercat_motion_parameter_by_task(ethercat_task task)
@@ -772,6 +774,10 @@ static const char *const ethercat_pn077_value_words[] = {
     "0", "1",
 };
 
+static const char *const ethercat_pn075_value_words[] = {
+    "0", "1", "2",
+};
+
 static const char *const ethercat_pn_number_words[] = {
     "Pn001", "Pn002", "Pn028", "Pn044", "Pn070", "Pn075", "Pn077", "Pn079", "Pn082", "Pn085",
     "Pn088", "Pn097", "Pn101", "Pn106", "Pn107", "Pn150",
@@ -851,6 +857,10 @@ static const char *const *console_ethercat_completion_words(const char *line,
         if (tokens_before == 2u && strcmp(first, "ethercat_pn107") == 0) {
             *count = sizeof(ethercat_pn077_value_words) / sizeof(ethercat_pn077_value_words[0]);
             return ethercat_pn077_value_words;
+        }
+        if (tokens_before == 2u && strcmp(first, "ethercat_pn075") == 0) {
+            *count = sizeof(ethercat_pn075_value_words) / sizeof(ethercat_pn075_value_words[0]);
+            return ethercat_pn075_value_words;
         }
         *count = 0u;
         return NULL;
@@ -1066,6 +1076,20 @@ static const char *console_ethercat_state_name(uint16_t state)
         return "OP";
     default:
         return "UNKNOWN";
+    }
+}
+
+static const char *console_ethercat_brake_mode_name(int16_t mode, bool chinese)
+{
+    switch (mode) {
+    case 0:
+        return chinese ? "正常控制" : "normal control";
+    case 1:
+        return chinese ? "强制松闸" : "forced release";
+    case 2:
+        return chinese ? "强制锁闸" : "forced lock";
+    default:
+        return chinese ? "未知模式" : "unknown mode";
     }
 }
 
@@ -1347,8 +1371,8 @@ static int console_ethercat_print_background_info(bool chinese,
     printf("%s: interface=%s slave=%s (%s)\n",
            chinese ? "ethercat_info: 后台快照" : "ethercat_info: background snapshot",
            interface, selection,
-           chinese ? "SDO 为使能前缓存，motion 可由写入回读更新；PDO 为实时采样" :
-           "SDO cached before enable, motion may be updated by write/readback; PDO sampled live");
+           chinese ? "SDO 为初始化缓存，部分参数可由写入回读更新；PDO 为实时采样" :
+           "SDO cached at startup, some parameters updated by write/readback; PDO sampled live");
     for (slave = 1; slave < EC_MAXSLAVE; slave++) {
         const ethercat_cached_slave *snapshot = &snapshots[slave];
         uint16_t status_word;
@@ -1378,6 +1402,11 @@ static int console_ethercat_print_background_info(bool chinese,
             printf("[slave%d] MIT SW=0x%04x CW=0x%04x error=0x%04x\n", slave, status_word, control_word, snapshot->live_error_code);
             printf("  actual: pos=%.6f rad vel=%.6f rad/s torque=%.6f N.m\n", console_ethercat_read_float(snapshot->inputs+2), console_ethercat_read_float(snapshot->inputs+6), console_ethercat_read_float(snapshot->inputs+10));
             printf("  target: pos=%.6f rad vel=%.6f rad/s tff=%.6f N.m kp=%.6f kd=%.6f\n", console_ethercat_read_float(snapshot->outputs+2), console_ethercat_read_float(snapshot->outputs+6), console_ethercat_read_float(snapshot->outputs+10), console_ethercat_read_float(snapshot->outputs+14), console_ethercat_read_float(snapshot->outputs+18));
+            printf("  brake snapshot: Pn075=");
+            if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN075)
+                printf("%d (%s)\n", snapshot->pn075,
+                       console_ethercat_brake_mode_name(snapshot->pn075, chinese));
+            else printf("?\n");
             printf("  Pn082=");
             if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN082) printf("%d (%.3f A/N.m)\n", snapshot->pn082, snapshot->pn082*0.1); else printf("?\n");
             continue;
@@ -1407,7 +1436,10 @@ static int console_ethercat_print_background_info(bool chinese,
         printf(" Pn070=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN070) printf("%d", snapshot->pn070); else printf("?");
         printf(" Pn075=");
-        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN075) printf("%d", snapshot->pn075); else printf("?");
+        if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN075)
+            printf("%d (%s)", snapshot->pn075,
+                   console_ethercat_brake_mode_name(snapshot->pn075, chinese));
+        else printf("?");
         printf(" Pn077=");
         if (snapshot->config_valid_mask & ETHERCAT_CACHE_PN077) printf("%d", snapshot->pn077); else printf("?");
         printf(" Pn150=");
@@ -3501,7 +3533,10 @@ static int console_ethercat_info(bool chinese, const char *interface, const char
         printf(" Pn070=");
         if (pn070_ok) printf("%d", (int)pn070); else printf("?");
         printf(" Pn075=");
-        if (pn075_ok) printf("%d", (int)pn075); else printf("?");
+        if (pn075_ok)
+            printf("%d (%s)", (int)pn075,
+                   console_ethercat_brake_mode_name(pn075, chinese));
+        else printf("?");
         printf(" Pn077=");
         if (pn077_ok) printf("%d", (int)pn077); else printf("?");
         printf("\n  motion: Pn028=");
@@ -3795,12 +3830,16 @@ static void console_ethercat_update_motion_cache(int slave, uint16_t number,
         snapshot->pn082 = value;
         mask = ETHERCAT_CACHE_PN082;
         break;
+    case 75u:
+        snapshot->pn075 = value;
+        mask = ETHERCAT_CACHE_PN075;
+        break;
     case 44u:
         snapshot->pn044 = value;
         mask = ETHERCAT_CACHE_PN044;
         break;
     }
-    snapshot->motion_write_attempted = true;
+    if (number != 75u) snapshot->motion_write_attempted = true;
     if (valid) snapshot->config_valid_mask |= mask;
     else snapshot->config_valid_mask &= ~mask;
     pthread_mutex_unlock(&ethercat_background_mutex);
@@ -3819,8 +3858,16 @@ static int console_ethercat_write_motion_parameter(bool chinese, const char *int
     if (console_ethercat_validate_interface(interface) != 0 ||
         console_ethercat_parse_slave_selection(selection, &slave_id, &all_slaves) != 0 ||
         value > parameter->maximum) {
-        printf("%s: %s <slave_id|all> <0..%u> [network_interface]\n",
-               chinese ? "用法" : "usage", parameter->command, parameter->maximum);
+        printf("%s: %s <%s> <0..%u> [network_interface]\n",
+               chinese ? "用法" : "usage", parameter->command,
+               parameter->number == 75u ? "slave_id" : "slave_id|all",
+               parameter->maximum);
+        return -1;
+    }
+    if (parameter->number == 75u && all_slaves) {
+        printf("%s\n", chinese ?
+               "抱闸控制必须指定单台从站，拒绝 all。" :
+               "Brake control requires one slave; all is refused.");
         return -1;
     }
 #ifndef HAVE_ETHERLAB
@@ -3839,6 +3886,11 @@ static int console_ethercat_write_motion_parameter(bool chinese, const char *int
 
     printf("%s: interface=%s slave=%s Pn%03u object=0x%04x:00 value=%u\n",
            parameter->command, interface, selection, parameter->number, index, value);
+    if (parameter->number == 75u && value == 1u) {
+        printf("%s\n", chinese ?
+               "警告：强制松闸可能导致负载下坠；仅在机构已可靠支撑时操作。" :
+               "Warning: forced brake release can drop the load; support it before proceeding.");
+    }
     if (!ethercat_session.active && ec_init((char *)interface) == 0) {
         printf("%s: %s\n", parameter->command,
                chinese ? "无法打开主站" : "cannot open master");
