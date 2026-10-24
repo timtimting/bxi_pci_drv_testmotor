@@ -9,11 +9,14 @@ MIT commands, state monitoring, and firmware flashing.
 > Safety: these commands operate real motors. Keep the emergency stop available,
 > clear the mechanism, and validate one motor before running group commands.
 
+The `test/maita_arm` branch uses the ARM64 PCI/CAN library from upstream `arm64`.
+Build on AArch64; x86_64 cannot link this library. The driver exposes CAN buses
+`0..6`, while the default motor topology uses only buses `0..4`.
+
 ## Build
 
 ```bash
-git clone https://github.com/bxirobotics/bxi_pci_drv.git
-cd bxi_pci_drv
+# In an AArch64 checkout of test/maita_arm
 make
 ```
 
@@ -119,7 +122,7 @@ power_on: done total=31 success=2 failed=29
 | `reg_save` | `<index00\|all> [wait_ms]` | Save register configs; `all` sends to every target in the default flash plan; refused while any motor is known enabled |
 | `flash_single` | `<index00> [version\|firmware.bin] [cycle]` | Flash one motor; omit firmware to use the default version |
 | `flash_all` | `[plan.yaml] [cycle]` | Flash multiple targets; omit plan to use the default one |
-| `flash_debug` | `<index00>\|<bus0-4 id0-7> <version\|firmware.bin> [cycle]` | Two digits select index; one-digit bus + one-digit id select Bus/ID |
+| `flash_debug` | `<index00>\|<bus0-6 id0-7> <version\|firmware.bin> [cycle]` | Two digits select index; one-digit bus + one-digit id select Bus/ID |
 | `can_status` | `[reset]` | Show or reset per-bus software statistics |
 | `help` / `-h` / `?` | none | Show built-in help |
 | `quit` / `exit` / `q` | none | Exit; automatically runs `power_off` first if motor power is on |

@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 2.8)
 project(bxi_pci_drv_motor_console)
 
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+  message(FATAL_ERROR "test/maita_arm requires an ARM64 toolchain for lib/libbxi_pci_drv.a")
+endif()
+
 add_compile_options(-Wall -fdiagnostics-color=auto -fPIC -Wno-unused-function)
 
 include_directories(./src ./src/lib ./lib)

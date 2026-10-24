@@ -1,5 +1,12 @@
 # x12_4.0 电机 CAN 协议提取
 
+`test/maita_arm` 从 `test/maita_motor` 派生，使用上游 `arm64` 分支的
+ARM64 PCI/CAN 驱动库和头文件。请在 AArch64 设备上执行 `make`，然后运行
+`sudo ./build/motor_console`；x86_64 主机不能链接该驱动库。此版本驱动定义
+`CANFD_DEVICE_NUM=7`（`bus=0..6`），原有电机拓扑配置仍只使用 `bus=0..4`；
+实际可用端口和供电接线须在设备上核对；首次测试可先用
+`power_on`、`maita_temp <bus> <id>` 查询单台已知电机，再运行全端口 `maita_scan`。
+
 ## 调试前注意事项
 
 1. **使能后发送 MIT 零控制帧。** 执行 `maita_enable <bus> <id>`（`0x81` Stop/Hold）后，
@@ -83,7 +90,7 @@ DATA[1..7] = 回复参数
 ### 1.3 在终端扫描所有端口和电机 ID
 
 在同一个 `motor_console` 终端中执行 `maita_scan`（别名 `motor_scan`），扫描 PCI/CAN 的全部
-5 个端口（驱动索引 `bus=0..4`），每个端口遍历脉塔协议的全部合法电机 ID `1..32`，共 160 个地址。
+7 个端口（驱动索引 `bus=0..6`），每个端口遍历脉塔协议的全部合法电机 ID `1..32`，共 224 个地址。
 扫描范围不依赖 `motor_console.yaml` 中的电机列表，不再构建或运行独立的扫描程序。
 这里的 ID 是电机逻辑 ID，不是遍历所有 CAN 仲裁 ID，也不会向 ID 0 或广播地址发送命令。
 
@@ -121,7 +128,7 @@ RX: 同一 bus，CAN ID = 0x240 + id，DLC = 8，DATA[0] = 9a
 [bus1] responding_ids: none; responding=0 checked=32/32 CAN_errors=0
 ```
 
-默认每次等待 100ms，没有有效回复时最多尝试 2 次；大多地址无回复时全扫约需 33 秒。
+默认每次等待 100ms，没有有效回复时最多尝试 2 次；大多地址无回复时全扫约需 46 秒。
 命令会等待扫描完成再返回提示符。可调整等待与尝试次数：
 
 ```text

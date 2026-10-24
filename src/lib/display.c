@@ -52,7 +52,8 @@ static void console_print_help(bool chinese, bool verbose)
         printf("  power_off\n");
         printf("      关闭电机总电源，不发送 BXI 失能帧。\n");
         printf("  maita_scan|motor_scan [timeout_ms] [attempts]\n");
-        printf("      先 power_on；在本终端扫描全部 bus=0..4、ID=1..32，不依赖配置电机列表。\n");
+        printf("      先 power_on；在本终端扫描全部 bus=0..%u、ID=1..32，不依赖配置电机列表。\n",
+               (unsigned int)CANFD_DEVICE_NUM - 1u);
         printf("      仅发送 0x9A 状态查询；默认每次等待 100ms、最多尝试 2 次，范围分别为 1..5000、1..10。\n");
         printf("      扫描完成保持供电和 PCI/CAN 连接，可继续控制；无回复不代表不存在电机。\n");
         printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
@@ -105,7 +106,8 @@ static void console_print_help(bool chinese, bool verbose)
     printf("  power_off\n");
     printf("      Turn motor power off without sending BXI disable frames.\n");
     printf("  maita_scan|motor_scan [timeout_ms] [attempts]\n");
-    printf("      Run power_on first; scan every bus=0..4 and ID=1..32, independent of configured motors.\n");
+    printf("      Run power_on first; scan every bus=0..%u and ID=1..32, independent of configured motors.\n",
+           (unsigned int)CANFD_DEVICE_NUM - 1u);
     printf("      Status 0x9A only; defaults: 100ms per attempt, up to 2 attempts; ranges: 1..5000 and 1..10.\n");
     printf("      Keep power and PCI/CAN open for subsequent commands; no reply does not prove absence.\n");
     printf("  maita_info <bus> <id> [timeout_ms] [torque_max_nm]\n");
