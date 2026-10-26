@@ -27,12 +27,13 @@ int main(void)
 {
     static const struct {
         const char *type;
-        const char *firmware;
+        const char *firmware_v0_2;
+        const char *firmware_v1_4;
     } firmware_cases[] = {
-        {"50", "bxi_motor_50_v1.4.3.bin"},
-        {"50L", "bxi_motor_50L_v1.4.3.bin"},
-        {"70", "bxi_motor_70_v1.4.3.bin"},
-        {"85", "bxi_motor_85_v1.4.3.bin"},
+        {"50", "bxi_motor_50_v0.2.2.bin", "bxi_motor_50_v1.4.3.bin"},
+        {"50L", "bxi_motor_50L_v0.2.2.bin", "bxi_motor_50L_v1.4.3.bin"},
+        {"70", "bxi_motor_70_v0.2.2.bin", "bxi_motor_70_v1.4.3.bin"},
+        {"85", "bxi_motor_85_v0.2.2.bin", "bxi_motor_85_v1.4.3.bin"},
     };
     char filename[FIRMWARE_NAME_MAX];
     char path[PATH_LEN];
@@ -40,6 +41,8 @@ int main(void)
     char source[16];
     motor_runtime *runtime = &fixture.motors[0];
     size_t case_index;
+    unsigned int major;
+    unsigned int minor;
 
     frame_ring_init(&fixture.frames);
     fixture.config_loaded = true;
@@ -61,12 +64,12 @@ int main(void)
         assert(console_firmware_name_for_slot(&fixture, firmware_cases[case_index].type,
                                               0u, filename, sizeof(filename),
                                               source, sizeof(source)) == 0);
-        assert(strcmp(filename, firmware_cases[case_index].firmware) == 0);
+        assert(strcmp(filename, firmware_cases[case_index].firmware_v1_4) == 0);
         assert(strcmp(source, "v1.4") == 0);
         assert(console_resolve_firmware_path(&fixture, filename,
                                              path, sizeof(path)) == 0);
         snprintf(expected_path, sizeof(expected_path), "firmware/%s",
-                 firmware_cases[case_index].firmware);
+                 firmware_cases[case_index].firmware_v1_4);
         assert(strcmp(path, expected_path) == 0);
     }
 
@@ -88,9 +91,48 @@ int main(void)
     send_boot_text("VER : code=1.3.9 config=1.4\n");
     assert(runtime->fw_version_patch == 9u);
     assert(console_firmware_name_for_slot(&fixture, "50L", 0u, filename,
-                                          sizeof(filename), source, sizeof(source)) == 0);
-    assert(strcmp(filename, "bxi_motor_50L_v1.1.2_new.bin") == 0);
+                                          sizeof(filename), source, sizeof(source)) != 0);
 
-    puts("PASS: quiet boot version parsing and safe 1.4 firmware selection");
+    send_boot_text("VER : code=0.2.19 config=0.1\n");
+    assert(runtime->fw_version_major == 0u);
+    assert(runtime->fw_version_minor == 2u);
+    assert(runtime->fw_version_patch == 19u);
+    for (case_index = 0u;
+         case_index < sizeof(firmware_cases) / sizeof(firmware_cases[0]);
+         case_index++) {
+        assert(console_firmware_name_for_slot(&fixture, firmware_cases[case_index].type,
+                                              0u, filename, sizeof(filename),
+                                              source, sizeof(source)) == 0);
+        assert(strcmp(filename, firmware_cases[case_index].firmware_v0_2) == 0);
+        assert(strcmp(source, "v0.2") == 0);
+        assert(console_resolve_firmware_path(&fixture, filename,
+                                             path, sizeof(path)) == 0);
+        snprintf(expected_path, sizeof(expected_path), "firmware/%s",
+                 firmware_cases[case_index].firmware_v0_2);
+        assert(strcmp(path, expected_path) == 0);
+    }
+    assert(console_firmware_name_for_slot(&fixture, "50_hand", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) != 0);
+
+    send_boot_text("VER : code=0.1.8 config=0.1\n");
+    assert(console_firmware_name_for_slot(&fixture, "70", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) == 0);
+    assert(strcmp(filename, "bxi_motor_70_v0.1.2.bin") == 0);
+    send_boot_text("VER : code=1.1.8 config=1.1\n");
+    assert(console_firmware_name_for_slot(&fixture, "70", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) == 0);
+    assert(strcmp(filename, "bxi_motor_70_v1.1.2_new.bin") == 0);
+    send_boot_text("VER : code=0.3.8 config=0.2\n");
+    assert(console_firmware_name_for_slot(&fixture, "70", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) != 0);
+
+    runtime->fw_version_valid = false;
+    assert(console_firmware_name_for_slot(&fixture, "70", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) != 0);
+    assert(parse_firmware_series_key("firmware_v2_7", &major, &minor) == 0);
+    assert(major == 2u && minor == 7u);
+    assert(parse_firmware_series_key("firmware_v2_7_extra", &major, &minor) != 0);
+
+    puts("PASS: boot version parsing and major.minor firmware selection");
     return 0;
 }

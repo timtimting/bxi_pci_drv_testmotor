@@ -209,8 +209,9 @@ static void console_print_config(const flash_state *state)
     }
     for (i = 0u; i < state->config.type_config_count; i++) {
         const motor_type_config *type_config = &state->config.type_configs[i];
+        size_t series_index;
 
-        printf("  %s type=%s%s%s%s%s%s%s%s%s p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
+        printf("  %s type=%s%s%s%s%s%s%s",
                console_text(state, "型号", "type"),
                type_config->type,
                type_config->firmware[0] != '\0' ? " file=" : "",
@@ -218,9 +219,14 @@ static void console_print_config(const flash_state *state)
                type_config->firmware_v0[0] != '\0' ? " v0=" : "",
                type_config->firmware_v0[0] != '\0' ? type_config->firmware_v0 : "",
                type_config->firmware_v1[0] != '\0' ? " v1=" : "",
-               type_config->firmware_v1[0] != '\0' ? type_config->firmware_v1 : "",
-               type_config->firmware_v1_4[0] != '\0' ? " v1_4=" : "",
-               type_config->firmware_v1_4[0] != '\0' ? type_config->firmware_v1_4 : "",
+               type_config->firmware_v1[0] != '\0' ? type_config->firmware_v1 : "");
+        for (series_index = 0u; series_index < type_config->firmware_series_count;
+             series_index++) {
+            const firmware_series_mapping *mapping = &type_config->firmware_series[series_index];
+
+            printf(" v%u_%u=%s", mapping->major, mapping->minor, mapping->filename);
+        }
+        printf(" p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
                type_config->limits.p_min, type_config->limits.p_max,
                type_config->limits.v_min, type_config->limits.v_max,
                type_config->limits.t_min, type_config->limits.t_max,

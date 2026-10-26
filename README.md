@@ -371,13 +371,17 @@ firmware/bxi_motor_70.bin
 firmware/bxi_motor_85.bin
 ```
 
-如果需要按电机程序主版本区分固件，也可以放置：
+按电机程序主、次版本选择固件时，文件名示例如下：
 
 ```text
 firmware/bxi_motor_50_v0.1.2.bin
 firmware/bxi_motor_50L_v0.1.2.bin
 firmware/bxi_motor_70_v0.1.2.bin
 firmware/bxi_motor_85_v0.1.2.bin
+firmware/bxi_motor_50_v0.2.2.bin
+firmware/bxi_motor_50L_v0.2.2.bin
+firmware/bxi_motor_70_v0.2.2.bin
+firmware/bxi_motor_85_v0.2.2.bin
 firmware/bxi_motor_50_v1.1.2_new.bin
 firmware/bxi_motor_50L_v1.1.2_new.bin
 firmware/bxi_motor_70_v1.1.2_new.bin
@@ -406,16 +410,17 @@ firmware_cache_dir: firmware_cache
 - 任意固件拉取失败：本次运行自动回退项目自带 `firmware_dir`
 - `firmware_base_url` 留空：不联网，直接使用项目自带 `firmware_dir`
 
-下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` /
-`firmware_v0` / `firmware_v1` / `firmware_v1_4` 决定。
+下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` 和
+`firmware_v<主版本>_<次版本>` 决定。
 例如：
 
 ```yaml
 motor_types:
   - type: "50L"
     firmware: bxi_motor_50L.bin
-    firmware_v0: bxi_motor_50L_v0.1.2.bin
-    firmware_v1: bxi_motor_50L_v1.1.2_new.bin
+    firmware_v0_1: bxi_motor_50L_v0.1.2.bin
+    firmware_v0_2: bxi_motor_50L_v0.2.2.bin
+    firmware_v1_1: bxi_motor_50L_v1.1.2_new.bin
     firmware_v1_4: bxi_motor_50L_v1.4.3.bin
 ```
 
@@ -425,10 +430,13 @@ motor_types:
 http://your-download-server/motor/bxi_motor_50L.bin
 ```
 
-如果运行时已从上电文本确认 `VER : code=1.4.x`（`x` 为任意数字），自动烧录
-`50`、`50L`、`70`、`85` 时均选用该型号的 `1.4.3` 文件，不按补丁号逐一匹配；
-其他 0.x / 1.x 版本仍按 `firmware_v0` / `firmware_v1` 选择。这里仅按文件名配置选择，
-程序不会验证固件二进制内容。手部型号没有 1.4 映射，自动烧录会拒绝，不会回退到旧固件。
+自动烧录只使用上电文本确认的 `VER : code=<主>.<次>.<补丁>`：按型号及主、次版本
+查找 `firmware_v<主>_<次>`，不按补丁号逐一匹配。例如 `0.2.x` 选该型号的
+`0.2.2` 文件，`1.4.x` 选该型号的 `1.4.3` 文件。新增版本系列只需增加配置项，
+不必改程序。版本未知、仅由配置寄存器推断、没有对应系列映射或文件缺失时拒绝自动烧录；
+不会回退到其他次版本或 `firmware`。手部型号目前没有版本系列映射。
+程序只按文件名配置选择，不会验证固件二进制内容。
+配置中的 `0.1.2` / `1.1.2` 映射若尚无对应文件，烧录前检查也会拒绝执行。
 
 下载成功后缓存为：
 
@@ -463,11 +471,10 @@ flash_single 08 test.bin
 （例如 `PRO/HW/Bxi_motor_50L` -> `50L`）选择固件；没有识别到时，回退使用
 `config/flash_plan_default.yaml` 中该 index 对应的 `version`。如果程序启动时远程
 固件全部拉取成功，会优先使用 `firmware_cache_dir`；否则使用 `firmware_dir`。
-`50L` 会根据当前电机版本优先解析为 `motor_types.firmware_v0` 或
-`motor_types.firmware_v1`；确认 `code=1.4.x` 时使用 `motor_types.firmware_v1_4`；
-没有版本信息时使用 `motor_types.firmware`。可先运行 `motor_list` 检查版本：
-`1.4.27` 表示上电文本已确认，`1.4?` 仅由配置寄存器推断，不能安全选择 1.4 固件。
-`flash_single 00` 使用自动选择；显式传入型号或文件名则按手动指定处理，不使用版本自动选择。
+自动选择需要上电文本确认的完整程序版本。可先运行 `motor_list` 检查：
+`0.2.7` 表示已确认，会选择 `firmware_v0_2`；`0.2?` 仅由配置寄存器推断，
+不能自动选择固件。`flash_single 00` 和 `flash_single 00 50L` 均按确认的
+主、次版本选择文件；显式传入 `.bin` 文件名才会绕过版本自动选择，务必先独立确认型号和固件。
 
 ### 9.3 按烧录策略文件烧录多个电机
 
@@ -520,13 +527,13 @@ flash_all config/flash_plan_debug.yaml
 - 烧录配置描述固件路径和烧录目标：`firmware_dir`、`index`、`bus`、`id`、`version`。
 - `flash_all` 会按目标逐个烧录；如果某台电机已经从上电输出中识别到实际型号，
   会优先使用识别型号对应的固件，否则使用烧录配置里的 `version`。
-  同时会根据已识别到的 0.x/1.x 程序或配置版本，在
-  `firmware_v0` / `firmware_v1` 中选择文件；上电文本确认 `code=1.4.x` 时
-  使用 `firmware_v1_4`，未识别版本时使用 `firmware`。
+  每台电机均按上电文本确认的主、次版本选择 `firmware_v<主>_<次>`；
+  版本未确认、无对应映射或文件缺失时，预检查失败且不会开始烧录。
 - `firmware_base_url` 可选；配置后，程序启动时会尝试把默认烧录计划所需固件下载到
   `firmware_cache_dir`。
 - `version` 支持型号简写，例如 `50L` 会下载/查找 `motor_types` 中配置的文件名。
-- `version` 也可以写完整文件名，例如 `bxi_motor_50.bin`、`test.bin`。
+- `version` 也可以写完整 `.bin` 文件名，例如 `bxi_motor_50.bin`、`test.bin`；
+  这是显式手动指定，会绕过版本自动选择，须自行核对固件。
 - 安全限制：`firmware_dir` / `firmware_cache_dir` 必须是相对目录，不能包含绝对路径或
   `..`；`firmware_base_url` 必须是 `http://` 或 `https://`；`version`
   和手动固件参数不能包含 `/` 或 `..`。
@@ -542,7 +549,7 @@ flash_all
 
 烧录前程序会预检所有目标及固件文件。任何文件缺失时，整个批次会在操作第一台电机
 之前停止。已经识别到实际型号的电机，会自动覆盖默认烧录配置中的 `version` 来选择
-对应固件；手动输入固件参数时，以手动参数为准。
+对应型号及版本系列的固件；只有显式指定 `.bin` 文件名才绕过版本自动选择。
 
 如果普通烧录无法进入升级状态，可以增加 `cycle`：
 

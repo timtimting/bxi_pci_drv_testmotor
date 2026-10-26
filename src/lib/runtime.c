@@ -68,6 +68,7 @@ enum {
     FIRMWARE_NAME_MAX = 128,
     FIRMWARE_MAPPING_MAX = 16,
     MOTOR_TYPE_CONFIG_MAX = 16,
+    MOTOR_FIRMWARE_SERIES_MAX = 16,
 };
 
 typedef enum
@@ -124,11 +125,19 @@ typedef struct
 
 typedef struct
 {
+    unsigned int major;
+    unsigned int minor;
+    char filename[FIRMWARE_NAME_MAX];
+} firmware_series_mapping;
+
+typedef struct
+{
     char type[MOTOR_TYPE_LEN];
     char firmware[FIRMWARE_NAME_MAX];
     char firmware_v0[FIRMWARE_NAME_MAX];
     char firmware_v1[FIRMWARE_NAME_MAX];
-    char firmware_v1_4[FIRMWARE_NAME_MAX];
+    firmware_series_mapping firmware_series[MOTOR_FIRMWARE_SERIES_MAX];
+    size_t firmware_series_count;
     bxi_motor_limits limits;
 } motor_type_config;
 
@@ -2543,7 +2552,8 @@ static int add_motor_type_config(motor_map_config *config,
                                  const char *firmware,
                                  const char *firmware_v0,
                                  const char *firmware_v1,
-                                 const char *firmware_v1_4,
+                                 const firmware_series_mapping *firmware_series,
+                                 size_t firmware_series_count,
                                  const bxi_motor_limits *limits,
                                  const char *map_path,
                                  unsigned int line_no)
@@ -2558,8 +2568,7 @@ static int add_motor_type_config(motor_map_config *config,
          (!firmware_filename_is_safe(firmware_v0) || strlen(firmware_v0) >= FIRMWARE_NAME_MAX)) ||
         (firmware_v1 != NULL && firmware_v1[0] != '\0' &&
          (!firmware_filename_is_safe(firmware_v1) || strlen(firmware_v1) >= FIRMWARE_NAME_MAX)) ||
-        (firmware_v1_4 != NULL && firmware_v1_4[0] != '\0' &&
-         (!firmware_filename_is_safe(firmware_v1_4) || strlen(firmware_v1_4) >= FIRMWARE_NAME_MAX)) ||
+        firmware_series_count > MOTOR_FIRMWARE_SERIES_MAX ||
         !motor_limits_are_valid(limits)) {
         fprintf(stderr, "%s:%u: invalid motor type config: %s\n",
                 map_path, line_no, type != NULL ? type : "");
@@ -2585,8 +2594,9 @@ static int add_motor_type_config(motor_map_config *config,
              FIRMWARE_NAME_MAX, "%s", firmware_v0 != NULL ? firmware_v0 : "");
     snprintf(config->type_configs[config->type_config_count].firmware_v1,
              FIRMWARE_NAME_MAX, "%s", firmware_v1 != NULL ? firmware_v1 : "");
-    snprintf(config->type_configs[config->type_config_count].firmware_v1_4,
-             FIRMWARE_NAME_MAX, "%s", firmware_v1_4 != NULL ? firmware_v1_4 : "");
+    memcpy(config->type_configs[config->type_config_count].firmware_series,
+           firmware_series, firmware_series_count * sizeof(*firmware_series));
+    config->type_configs[config->type_config_count].firmware_series_count = firmware_series_count;
     config->type_configs[config->type_config_count].limits = *limits;
     config->type_config_count++;
     return 0;
@@ -2844,11 +2854,12 @@ static int configured_firmware_name(const motor_map_config *config,
     return 0;
 }
 
-static int configured_firmware_name_for_major(const motor_map_config *config,
-                                              const char *type,
-                                              unsigned int major,
-                                              char *filename,
-                                              size_t filename_len)
+static int configured_firmware_name_for_series(const motor_map_config *config,
+                                               const char *type,
+                                               unsigned int major,
+                                               unsigned int minor,
+                                               char *filename,
+                                               size_t filename_len)
 {
     char normalized[MOTOR_TYPE_LEN];
     const motor_type_config *type_config;
@@ -2861,20 +2872,28 @@ static int configured_firmware_name_for_major(const motor_map_config *config,
     }
     type_config = find_type_config(config, normalized);
     if (type_config != NULL) {
-        if (major == 0u && type_config->firmware_v0[0] != '\0') {
-            configured = type_config->firmware_v0;
-        } else if (major == 1u && type_config->firmware_v1[0] != '\0') {
-            configured = type_config->firmware_v1;
+        size_t series_index;
+
+        for (series_index = 0u; series_index < type_config->firmware_series_count;
+             series_index++) {
+            const firmware_series_mapping *mapping = &type_config->firmware_series[series_index];
+
+            if (mapping->major == major && mapping->minor == minor) {
+                configured = mapping->filename;
+                break;
+            }
         }
     }
     if (configured == NULL) {
-        return configured_firmware_name(config, normalized, filename, filename_len);
+        fprintf(stderr, "no firmware configured for motor type %s code=%u.%u.x\n",
+                normalized, major, minor);
+        return -1;
     }
     written = snprintf(filename, filename_len, "%s", configured);
     if (written < 0 || (size_t)written >= filename_len ||
         !firmware_filename_is_safe(filename)) {
-        fprintf(stderr, "invalid firmware filename for type %s major=%u\n",
-                normalized, major);
+        fprintf(stderr, "invalid firmware filename for type %s code=%u.%u.x\n",
+                normalized, major, minor);
         return -1;
     }
     return 0;
@@ -3119,6 +3138,31 @@ static int yaml_finalize_entry(const char *map_path,
     return motor_map_add_entry(config, index, bus, id, type, name, line_no);
 }
 
+static int parse_firmware_series_key(const char *key,
+                                     unsigned int *major,
+                                     unsigned int *minor)
+{
+    const char *cursor;
+    char *end;
+    unsigned long parsed_major;
+    unsigned long parsed_minor;
+
+    if (strncmp(key, "firmware_v", 10u) != 0) return -1;
+    cursor = key + 10u;
+    if (!isdigit((unsigned char)*cursor)) return -1;
+    errno = 0;
+    parsed_major = strtoul(cursor, &end, 10);
+    if (errno != 0 || parsed_major > UINT_MAX || *end != '_') return -1;
+    cursor = end + 1;
+    if (!isdigit((unsigned char)*cursor)) return -1;
+    errno = 0;
+    parsed_minor = strtoul(cursor, &end, 10);
+    if (errno != 0 || parsed_minor > UINT_MAX || *end != '\0') return -1;
+    *major = (unsigned int)parsed_major;
+    *minor = (unsigned int)parsed_minor;
+    return 0;
+}
+
 static int yaml_finalize_type_config(const char *map_path,
                                      motor_map_config *config,
                                      unsigned int line_no,
@@ -3127,7 +3171,8 @@ static int yaml_finalize_type_config(const char *map_path,
                                      const char *firmware,
                                      const char *firmware_v0,
                                      const char *firmware_v1,
-                                     const char *firmware_v1_4,
+                                     const firmware_series_mapping *firmware_series,
+                                     size_t firmware_series_count,
                                      const bxi_motor_limits *limits)
 {
     if (fields == 0) {
@@ -3139,7 +3184,7 @@ static int yaml_finalize_type_config(const char *map_path,
         return -1;
     }
     return add_motor_type_config(config, type, firmware, firmware_v0, firmware_v1,
-                                 firmware_v1_4,
+                                 firmware_series, firmware_series_count,
                                  limits, map_path, line_no);
 }
 
@@ -3206,7 +3251,8 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     char type_firmware[FIRMWARE_NAME_MAX] = "";
     char type_firmware_v0[FIRMWARE_NAME_MAX] = "";
     char type_firmware_v1[FIRMWARE_NAME_MAX] = "";
-    char type_firmware_v1_4[FIRMWARE_NAME_MAX] = "";
+    firmware_series_mapping type_firmware_series[MOTOR_FIRMWARE_SERIES_MAX] = {{0}};
+    size_t type_firmware_series_count = 0u;
     bxi_motor_limits type_limits = config->mit_limits;
     int type_fields = 0;
     unsigned int state_pattern_line = 0u;
@@ -3252,7 +3298,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
-                                          type_firmware_v1_4,
+                                          type_firmware_series, type_firmware_series_count,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3285,7 +3331,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 type_firmware[0] = '\0';
                 type_firmware_v0[0] = '\0';
                 type_firmware_v1[0] = '\0';
-                type_firmware_v1_4[0] = '\0';
+                type_firmware_series_count = 0u;
                 type_limits = config->mit_limits;
                 type_fields = 0;
             } else if (section == YAML_SECTION_STATE_PATTERNS) {
@@ -3469,7 +3515,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
-                                          type_firmware_v1_4,
+                                          type_firmware_series, type_firmware_series_count,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3494,7 +3540,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             type_firmware[0] = '\0';
             type_firmware_v0[0] = '\0';
             type_firmware_v1[0] = '\0';
-            type_firmware_v1_4[0] = '\0';
+            type_firmware_series_count = 0u;
             type_limits = config->mit_limits;
             type_fields = 0;
         } else if (strcmp(key, "state_patterns") == 0) {
@@ -3502,7 +3548,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
-                                          type_firmware_v1_4,
+                                          type_firmware_series, type_firmware_series_count,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3522,7 +3568,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
-                                          type_firmware_v1_4,
+                                          type_firmware_series, type_firmware_series_count,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3542,7 +3588,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
-                                          type_firmware_v1_4,
+                                          type_firmware_series, type_firmware_series_count,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3572,16 +3618,13 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (section == YAML_SECTION_MOTOR_TYPES &&
                    (strcmp(key, "firmware") == 0 ||
                     strcmp(key, "firmware_v0") == 0 ||
-                    strcmp(key, "firmware_v1") == 0 ||
-                    strcmp(key, "firmware_v1_4") == 0)) {
+                    strcmp(key, "firmware_v1") == 0)) {
             char *target_firmware = type_firmware;
 
             if (strcmp(key, "firmware_v0") == 0) {
                 target_firmware = type_firmware_v0;
             } else if (strcmp(key, "firmware_v1") == 0) {
                 target_firmware = type_firmware_v1;
-            } else if (strcmp(key, "firmware_v1_4") == 0) {
-                target_firmware = type_firmware_v1_4;
             }
             if (!firmware_filename_is_safe(value) || strlen(value) >= FIRMWARE_NAME_MAX) {
                 fprintf(stderr, "%s:%u: invalid firmware filename: %s\n",
@@ -3593,6 +3636,38 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             if (type_entry_line == 0u) {
                 type_entry_line = line_no;
             }
+            type_fields |= 0x02;
+        } else if (section == YAML_SECTION_MOTOR_TYPES &&
+                   strncmp(key, "firmware_v", 10u) == 0) {
+            firmware_series_mapping *mapping;
+            unsigned int major;
+            unsigned int minor;
+            size_t series_index;
+
+            if (parse_firmware_series_key(key, &major, &minor) != 0 ||
+                !firmware_filename_is_safe(value) ||
+                strlen(value) >= FIRMWARE_NAME_MAX ||
+                type_firmware_series_count >= MOTOR_FIRMWARE_SERIES_MAX) {
+                fprintf(stderr, "%s:%u: invalid firmware version mapping: %s\n",
+                        map_path, line_no, key);
+                fclose(fp);
+                return -1;
+            }
+            for (series_index = 0u; series_index < type_firmware_series_count;
+                 series_index++) {
+                if (type_firmware_series[series_index].major == major &&
+                    type_firmware_series[series_index].minor == minor) {
+                    fprintf(stderr, "%s:%u: duplicate firmware version mapping: %s\n",
+                            map_path, line_no, key);
+                    fclose(fp);
+                    return -1;
+                }
+            }
+            mapping = &type_firmware_series[type_firmware_series_count++];
+            mapping->major = major;
+            mapping->minor = minor;
+            snprintf(mapping->filename, sizeof(mapping->filename), "%s", value);
+            if (type_entry_line == 0u) type_entry_line = line_no;
             type_fields |= 0x02;
         } else if (strcmp(key, "index") == 0) {
             if (parse_uint_arg(value, &index) != 0) {
@@ -3687,7 +3762,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                   type_entry, type_firmware,
                                   type_firmware_v0, type_firmware_v1,
-                                  type_firmware_v1_4,
+                                  type_firmware_series, type_firmware_series_count,
                                   &type_limits) != 0) {
         fclose(fp);
         return -1;

@@ -45,27 +45,6 @@ static const char *console_flash_type_for_motor(const flash_state *state,
     return type != NULL ? type : fallback_type;
 }
 
-static bool console_firmware_major_for_slot(const flash_state *state,
-                                            size_t slot,
-                                            unsigned int *major)
-{
-    const motor_runtime *runtime;
-
-    if (state == NULL || slot >= state->config.entry_count || major == NULL) {
-        return false;
-    }
-    runtime = &state->motors[slot];
-    if (runtime->fw_version_valid) {
-        *major = runtime->fw_version_major;
-        return true;
-    }
-    if (runtime->config_version_valid) {
-        *major = (runtime->config_version >> 8) & 0xffu;
-        return true;
-    }
-    return false;
-}
-
 static int console_firmware_name_for_slot(const flash_state *state,
                                           const char *type,
                                           size_t slot,
@@ -75,39 +54,22 @@ static int console_firmware_name_for_slot(const flash_state *state,
                                           size_t source_len)
 {
     const motor_runtime *runtime;
-    const motor_type_config *type_config;
-    unsigned int major = 0u;
     int ret;
 
     if (state == NULL || slot >= state->config.entry_count) return -1;
     runtime = &state->motors[slot];
-    if (runtime->fw_version_valid && runtime->fw_version_major == 1u &&
-        runtime->fw_version_minor == 4u) {
-        if (!runtime->fw_version_from_boot) {
-            fprintf(stderr, "cannot select 1.4 firmware: code version not confirmed by VER boot output\n");
-            return -1;
-        }
-        type_config = find_type_config(&state->config, type);
-        if (type_config == NULL || type_config->firmware_v1_4[0] == '\0') {
-            fprintf(stderr, "no firmware_v1_4 configured for motor type %s\n", type);
-            return -1;
-        }
-        ret = snprintf(filename, filename_len, "%s", type_config->firmware_v1_4);
-        if (ret < 0 || (size_t)ret >= filename_len) return -1;
-        if (source != NULL && source_len != 0u) snprintf(source, source_len, "v1.4");
-        return 0;
+    if (!runtime->fw_version_valid || !runtime->fw_version_from_boot) {
+        fprintf(stderr, "cannot auto-select firmware for type %s: code version not confirmed by VER boot output\n",
+                type);
+        return -1;
     }
-    if (console_firmware_major_for_slot(state, slot, &major)) {
-        ret = configured_firmware_name_for_major(&state->config, type, major,
-                                                 filename, filename_len);
-        if (ret == 0 && source != NULL && source_len != 0u) {
-            snprintf(source, source_len, "v%u", major);
-        }
-        return ret;
-    }
-    ret = configured_firmware_name(&state->config, type, filename, filename_len);
+    ret = configured_firmware_name_for_series(&state->config, type,
+                                              runtime->fw_version_major,
+                                              runtime->fw_version_minor,
+                                              filename, filename_len);
     if (ret == 0 && source != NULL && source_len != 0u) {
-        snprintf(source, source_len, "default");
+        snprintf(source, source_len, "v%u.%u",
+                 runtime->fw_version_major, runtime->fw_version_minor);
     }
     return ret;
 }
@@ -197,7 +159,7 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
                    "未知的电机序号", "unknown motor index"), argv[1]);
             return -1;
         }
-        if (explicit_firmware != NULL) {
+        if (explicit_firmware != NULL && has_suffix(explicit_firmware, ".bin")) {
             snprintf(selected_types[0], sizeof(selected_types[0]), "%s", explicit_firmware);
             snprintf(selected_fw_sources[0], sizeof(selected_fw_sources[0]), "%s", "manual");
             selected_type_detected[0] = false;
@@ -215,12 +177,16 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
             }
         } else {
             bool use_detected = false;
-            const char *flash_type = console_flash_type_for_motor(state,
-                                                                  flashed_slot,
-                                                                  motor->type,
-                                                                  &use_detected);
+            const char *flash_type = explicit_firmware != NULL ? explicit_firmware :
+                console_flash_type_for_motor(state, flashed_slot, motor->type,
+                                             &use_detected);
             char filename[FIRMWARE_NAME_MAX];
 
+            if (find_type_config(&state->config, flash_type) == NULL) {
+                fprintf(stderr, "unknown motor type %s; specify a configured type or an explicit .bin file\n",
+                        flash_type);
+                return -1;
+            }
             snprintf(selected_types[0], sizeof(selected_types[0]), "%s", flash_type);
             selected_type_detected[0] = use_detected;
             if (console_firmware_name_for_slot(state, flash_type, flashed_slot,
@@ -722,18 +688,23 @@ static int console_prefetch_firmware(flash_state *state)
             const char *versioned_files[] = {
                 type_config != NULL ? type_config->firmware_v0 : "",
                 type_config != NULL ? type_config->firmware_v1 : "",
-                type_config != NULL ? type_config->firmware_v1_4 : "",
             };
             size_t versioned_i;
 
             for (versioned_i = 0u;
-                 versioned_i < sizeof(versioned_files) / sizeof(versioned_files[0]);
+                 versioned_i < sizeof(versioned_files) / sizeof(versioned_files[0]) +
+                               (type_config != NULL ? type_config->firmware_series_count : 0u);
                  versioned_i++) {
-                if (versioned_files[versioned_i][0] == '\0') {
+                const char *versioned_file = versioned_i < sizeof(versioned_files) / sizeof(versioned_files[0]) ?
+                    versioned_files[versioned_i] :
+                    type_config->firmware_series[versioned_i -
+                        sizeof(versioned_files) / sizeof(versioned_files[0])].filename;
+
+                if (versioned_file[0] == '\0') {
                     continue;
                 }
                 if (!flash_plan_filename_seen(filenames, filename_count,
-                                              versioned_files[versioned_i])) {
+                                              versioned_file)) {
                     if (filename_count >= FLASH_PLAN_MAX_TARGETS) {
                         printf("  FAIL version=%s too-many-firmware-files\n", version);
                         name_failed++;
@@ -741,7 +712,7 @@ static int console_prefetch_firmware(flash_state *state)
                     }
                     snprintf(filenames[filename_count],
                              sizeof(filenames[filename_count]),
-                             "%s", versioned_files[versioned_i]);
+                             "%s", versioned_file);
                     filename_count++;
                 }
             }
@@ -1157,8 +1128,9 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
             char filename[FIRMWARE_NAME_MAX];
             bool use_detected = false;
             const char *flash_version = target->version;
+            bool explicit_file = has_suffix(target->version, ".bin");
 
-            if (configured_motor != NULL) {
+            if (configured_motor != NULL && !explicit_file) {
                 flash_version = console_flash_type_for_motor(state,
                                                             slot,
                                                             target->version,
@@ -1166,7 +1138,7 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
             }
             snprintf(resolved_versions[i], sizeof(resolved_versions[i]), "%s", flash_version);
             resolved_version_detected[i] = use_detected;
-            if ((configured_motor != NULL ?
+            if ((configured_motor != NULL && !explicit_file ?
                     console_firmware_name_for_slot(state, flash_version, slot,
                                                    filename, sizeof(filename),
                                                    resolved_fw_sources[i],
@@ -1185,8 +1157,9 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
                 failed++;
                 continue;
             }
-            if (configured_motor == NULL) {
-                snprintf(resolved_fw_sources[i], sizeof(resolved_fw_sources[i]), "%s", "plan");
+            if (configured_motor == NULL || explicit_file) {
+                snprintf(resolved_fw_sources[i], sizeof(resolved_fw_sources[i]), "%s",
+                         explicit_file ? "manual" : "plan");
             }
         }
     }
