@@ -54,22 +54,37 @@ static int console_firmware_name_for_slot(const flash_state *state,
                                           size_t source_len)
 {
     const motor_runtime *runtime;
+    unsigned int major;
+    unsigned int minor;
+    bool inferred_from_config;
     int ret;
 
     if (state == NULL || slot >= state->config.entry_count) return -1;
     runtime = &state->motors[slot];
-    if (!runtime->fw_version_valid || !runtime->fw_version_from_boot) {
-        fprintf(stderr, "cannot auto-select firmware for type %s: code version not confirmed by VER boot output\n",
+    inferred_from_config = !runtime->fw_version_valid || !runtime->fw_version_from_boot;
+    if (inferred_from_config && !runtime->config_version_valid) {
+        fprintf(stderr, "cannot auto-select firmware for type %s: neither VER code version nor config version is available\n",
                 type);
         return -1;
     }
+    major = inferred_from_config ? (runtime->config_version >> 8) & 0xffu :
+                                  runtime->fw_version_major;
+    minor = inferred_from_config ? runtime->config_version & 0xffu :
+                                  runtime->fw_version_minor;
     ret = configured_firmware_name_for_series(&state->config, type,
-                                              runtime->fw_version_major,
-                                              runtime->fw_version_minor,
+                                              major, minor,
                                               filename, filename_len);
     if (ret == 0 && source != NULL && source_len != 0u) {
-        snprintf(source, source_len, "v%u.%u",
-                 runtime->fw_version_major, runtime->fw_version_minor);
+        snprintf(source, source_len, inferred_from_config ? "cfg-v%u.%u?" : "v%u.%u",
+                 major, minor);
+    }
+    if (ret == 0 && inferred_from_config) {
+        fprintf(stderr,
+                "warning: index=%02u bus=%u id=%u type=%s: selecting %s from config=%u.%u; VER code version is unconfirmed, verify motor type and firmware before flashing\n",
+                state->config.entries[slot].index,
+                state->config.entries[slot].bus,
+                state->config.entries[slot].id,
+                type, filename, major, minor);
     }
     return ret;
 }

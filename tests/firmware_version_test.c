@@ -80,9 +80,32 @@ int main(void)
     assert(strcmp(filename, "bxi_motor_50L_v1.4.3.bin") == 0);
 
     runtime->fw_version_from_boot = false;
+    runtime->config_version = 0x0002u;
+    for (case_index = 0u;
+         case_index < sizeof(firmware_cases) / sizeof(firmware_cases[0]);
+         case_index++) {
+        assert(console_firmware_name_for_slot(&fixture, firmware_cases[case_index].type,
+                                              0u, filename, sizeof(filename),
+                                              source, sizeof(source)) == 0);
+        assert(strcmp(filename, firmware_cases[case_index].firmware_v0_2) == 0);
+        assert(strcmp(source, "cfg-v0.2?") == 0);
+        assert(console_resolve_firmware_path(&fixture, filename,
+                                             path, sizeof(path)) == 0);
+    }
+    runtime->config_version = 0x0003u;
+    assert(console_firmware_name_for_slot(&fixture, "50L", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) != 0);
+    runtime->fw_version_valid = false;
+    runtime->config_version = 0x0002u;
+    assert(console_firmware_name_for_slot(&fixture, "50L", 0u, filename,
+                                          sizeof(filename), source, sizeof(source)) == 0);
+    assert(strcmp(filename, "bxi_motor_50L_v0.2.2.bin") == 0);
+    runtime->config_version_valid = false;
     assert(console_firmware_name_for_slot(&fixture, "50L", 0u, filename,
                                           sizeof(filename), source, sizeof(source)) != 0);
     runtime->fw_version_from_boot = true;
+    runtime->fw_version_valid = true;
+    runtime->config_version_valid = true;
     assert(console_firmware_name_for_slot(&fixture, "50_hand", 0u, filename,
                                           sizeof(filename), source, sizeof(source)) != 0);
     assert(console_firmware_name_for_slot(&fixture, "50L_hand", 0u, filename,
@@ -127,12 +150,13 @@ int main(void)
                                           sizeof(filename), source, sizeof(source)) != 0);
 
     runtime->fw_version_valid = false;
+    runtime->config_version_valid = false;
     assert(console_firmware_name_for_slot(&fixture, "70", 0u, filename,
                                           sizeof(filename), source, sizeof(source)) != 0);
     assert(parse_firmware_series_key("firmware_v2_7", &major, &minor) == 0);
     assert(major == 2u && minor == 7u);
     assert(parse_firmware_series_key("firmware_v2_7_extra", &major, &minor) != 0);
 
-    puts("PASS: boot version parsing and major.minor firmware selection");
+    puts("PASS: boot/config version parsing and major.minor firmware selection");
     return 0;
 }
