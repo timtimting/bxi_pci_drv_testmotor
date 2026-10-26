@@ -1095,6 +1095,32 @@ static const motor_map_entry *console_motor_by_bus_id(flash_state *state,
     return NULL;
 }
 
+static size_t console_flash_online_targets(flash_state *state,
+                                           const flash_plan_config *plan,
+                                           size_t *target_indices,
+                                           size_t *slots)
+{
+    size_t selected = 0u;
+    size_t i;
+
+    for (i = 0u; i < plan->target_count; i++) {
+        const flash_plan_target *target = &plan->targets[i];
+        size_t slot = 0u;
+        const motor_map_entry *motor = console_motor_by_bus_id(state, target->bus,
+                                                                target->id, &slot);
+
+        if (motor == NULL || !state->motors[slot].online) {
+            printf("[motor%02u]: skipped bus=%u id=%u reason=%s\n",
+                   target->index, target->bus, target->id,
+                   motor == NULL ? "not-configured" : "offline");
+            continue;
+        }
+        target_indices[selected++] = i;
+        slots[i] = slot;
+    }
+    return selected;
+}
+
 static int console_flash_plan_file(flash_state *state, const char *plan_path, bool cycle)
 {
     flash_plan_config plan;
@@ -1103,6 +1129,7 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     char resolved_fw_sources[FLASH_PLAN_MAX_TARGETS][16];
     bool resolved_version_detected[FLASH_PLAN_MAX_TARGETS];
     size_t slots[FLASH_PLAN_MAX_TARGETS];
+    size_t target_indices[FLASH_PLAN_MAX_TARGETS];
     unsigned int old_bus;
     unsigned int old_id;
     bool old_monitor;
@@ -1110,6 +1137,7 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     bool old_suppress_boot_text;
     bool old_brief_flash_output;
     size_t i;
+    size_t selected_count;
     size_t succeeded = 0u;
     size_t failed = 0u;
 
@@ -1125,39 +1153,47 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     if (load_flash_plan_config(plan_path, &plan) != 0) {
         return -1;
     }
+    if (console_probe_motors(state, state->config.scan_timeout_ms) != 0) {
+        fprintf(stderr, "flash_all: no motors responded to preflight scan; nothing flashed\n");
+        return -1;
+    }
+    selected_count = console_flash_online_targets(state, &plan, target_indices, slots);
+    if (selected_count == 0u) {
+        fprintf(stderr, "flash_all: no online targets in plan; nothing flashed\n");
+        return -1;
+    }
 
-    for (i = 0u; i < plan.target_count; i++) {
-        const flash_plan_target *target = &plan.targets[i];
-        size_t slot = 0u;
-        const motor_map_entry *configured_motor;
+    for (i = 0u; i < selected_count; i++) {
+        size_t target_index = target_indices[i];
+        const flash_plan_target *target = &plan.targets[target_index];
+        size_t slot = slots[target_index];
+        const motor_map_entry *configured_motor = &state->config.entries[slot];
 
-        configured_motor = console_motor_by_bus_id(state, target->bus, target->id, &slot);
-        if (configured_motor != NULL && configured_motor->index != target->index) {
+        if (configured_motor->index != target->index) {
             fprintf(stderr,
                     "%s:%u: warning: plan index=%02u but terminal config has index=%02u for bus=%u id=%u\n",
                     plan_path, target->line_no, target->index, configured_motor->index,
                     target->bus, target->id);
         }
-        slots[i] = configured_motor != NULL ? slot : (size_t)-1;
         {
             char filename[FIRMWARE_NAME_MAX];
             bool use_detected = false;
             const char *flash_version = target->version;
             bool explicit_file = has_suffix(target->version, ".bin");
 
-            if (configured_motor != NULL && !explicit_file) {
+            if (!explicit_file) {
                 flash_version = console_flash_type_for_motor(state,
                                                             slot,
                                                             target->version,
                                                             &use_detected);
             }
-            snprintf(resolved_versions[i], sizeof(resolved_versions[i]), "%s", flash_version);
-            resolved_version_detected[i] = use_detected;
-            if ((configured_motor != NULL && !explicit_file ?
+            snprintf(resolved_versions[target_index], sizeof(resolved_versions[target_index]), "%s", flash_version);
+            resolved_version_detected[target_index] = use_detected;
+            if ((!explicit_file ?
                     console_firmware_name_for_slot(state, flash_version, slot,
                                                    filename, sizeof(filename),
-                                                   resolved_fw_sources[i],
-                                                   sizeof(resolved_fw_sources[i])) :
+                                                   resolved_fw_sources[target_index],
+                                                   sizeof(resolved_fw_sources[target_index])) :
                     flash_plan_version_to_filename(&state->config, flash_version,
                                                   filename, sizeof(filename))) != 0 ||
                 console_resolve_firmware_path_local(state->firmware_prefetch_ready ?
@@ -1165,22 +1201,22 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
                                                     state->firmware_prefetch_ready ?
                                                     plan.firmware_dir : NULL,
                                                     filename,
-                                                    resolved_paths[i],
-                                                    sizeof(resolved_paths[i])) != 0) {
+                                                    resolved_paths[target_index],
+                                                    sizeof(resolved_paths[target_index])) != 0) {
                 fprintf(stderr, "%s:%u: cannot read firmware version: %s (firmware_dir=%s)\n",
                         plan_path, target->line_no, flash_version, plan.firmware_dir);
                 failed++;
                 continue;
             }
-            if (configured_motor == NULL || explicit_file) {
-                snprintf(resolved_fw_sources[i], sizeof(resolved_fw_sources[i]), "%s",
-                         explicit_file ? "manual" : "plan");
+            if (explicit_file) {
+                snprintf(resolved_fw_sources[target_index], sizeof(resolved_fw_sources[target_index]), "%s",
+                         "manual");
             }
         }
     }
     if (failed != 0u) {
-        fprintf(stderr, "flash_all preflight failed: %zu/%zu targets unavailable; nothing flashed\n",
-                failed, plan.target_count);
+        fprintf(stderr, "flash_all preflight failed: %zu/%zu online targets unavailable; nothing flashed\n",
+                failed, selected_count);
         return -1;
     }
 
@@ -1195,29 +1231,29 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     state->suppress_boot_text = true;
     state->brief_flash_output = true;
 
-    printf("flash_all: start plan=%s total=%zu%s\n",
-           plan_path, plan.target_count, cycle ? " cycle" : "");
-    for (i = 0u; i < plan.target_count && !stop_requested; i++) {
-        const flash_plan_target *target = &plan.targets[i];
+    printf("flash_all: start plan=%s total=%zu skipped=%zu%s\n",
+           plan_path, selected_count, plan.target_count - selected_count,
+           cycle ? " cycle" : "");
+    for (i = 0u; i < selected_count && !stop_requested; i++) {
+        size_t target_index = target_indices[i];
+        const flash_plan_target *target = &plan.targets[target_index];
         int ret;
 
         state->bus = target->bus;
         set_target_id(state, target->id);
         state->brief_flash_index = target->index;
         state->brief_flash_ordinal = i + 1u;
-        state->brief_flash_total = plan.target_count;
+        state->brief_flash_total = selected_count;
         printf("[motor%02u]: start ordinal=%zu/%zu bus=%u id=%u version=%s%s firmware_version=%s file=%s%s\n",
-               target->index, i + 1u, plan.target_count, target->bus, target->id,
-               resolved_versions[i],
-               resolved_version_detected[i] ? " source=detected" : "",
-               resolved_fw_sources[i],
-               resolved_paths[i], cycle ? " cycle" : "");
-        ret = boot_flash_file(state, resolved_paths[i], cycle);
+               target->index, i + 1u, selected_count, target->bus, target->id,
+               resolved_versions[target_index],
+               resolved_version_detected[target_index] ? " source=detected" : "",
+               resolved_fw_sources[target_index],
+               resolved_paths[target_index], cycle ? " cycle" : "");
+        ret = boot_flash_file(state, resolved_paths[target_index], cycle);
         if (ret == 0) {
             succeeded++;
-            if (slots[i] != (size_t)-1) {
-                memset(&state->motors[slots[i]], 0, sizeof(state->motors[slots[i]]));
-            }
+            memset(&state->motors[slots[target_index]], 0, sizeof(state->motors[slots[target_index]]));
             printf("[motor%02u]: done result=success\n", target->index);
         } else {
             failed++;
@@ -1234,9 +1270,10 @@ static int console_flash_plan_file(flash_state *state, const char *plan_path, bo
     state->bus = old_bus;
     set_target_id(state, old_id);
 
-    printf("flash_all: done total=%zu success=%zu failed=%zu%s\n",
-           plan.target_count, succeeded, failed, stop_requested ? " interrupted" : "");
-    return failed == 0u && succeeded == plan.target_count ? 0 : -1;
+    printf("flash_all: done total=%zu skipped=%zu success=%zu failed=%zu%s\n",
+           selected_count, plan.target_count - selected_count,
+           succeeded, failed, stop_requested ? " interrupted" : "");
+    return failed == 0u && succeeded == selected_count ? 0 : -1;
 }
 
 static int console_flash_all(flash_state *state, int argc, char **argv)
