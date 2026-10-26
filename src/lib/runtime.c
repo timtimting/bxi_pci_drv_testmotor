@@ -128,6 +128,7 @@ typedef struct
     char firmware[FIRMWARE_NAME_MAX];
     char firmware_v0[FIRMWARE_NAME_MAX];
     char firmware_v1[FIRMWARE_NAME_MAX];
+    char firmware_v1_4[FIRMWARE_NAME_MAX];
     bxi_motor_limits limits;
 } motor_type_config;
 
@@ -206,8 +207,10 @@ typedef struct
     uint16_t aux_payload[16];
     bool mit_aux_enabled;
     bool fw_version_valid;
+    bool fw_version_from_boot;
     unsigned int fw_version_major;
     unsigned int fw_version_minor;
+    unsigned int fw_version_patch;
     bool config_version_valid;
     uint32_t config_version;
     bool detected_type_valid;
@@ -892,12 +895,12 @@ static void update_motor_state_from_boot_line(flash_state *state,
         return;
     }
     if (sscanf(line, "VER : code=%u.%u.%u config=%u.%u",
-               &fw_major, &fw_minor, &fw_patch, &cfg_major, &cfg_minor) == 5 ||
-        sscanf(line, "VER   : code=%u.%u.%u config=%u.%u",
                &fw_major, &fw_minor, &fw_patch, &cfg_major, &cfg_minor) == 5) {
         runtime->fw_version_valid = true;
+        runtime->fw_version_from_boot = true;
         runtime->fw_version_major = fw_major;
         runtime->fw_version_minor = fw_minor;
+        runtime->fw_version_patch = fw_patch;
         runtime->config_version_valid = true;
         runtime->config_version = ((cfg_major & 0xffu) << 8) | (cfg_minor & 0xffu);
     }
@@ -956,8 +959,10 @@ static void print_boot_log_line(flash_state *state,
 
     boot_log_lines[idx][boot_log_line_lens[idx]] = '\0';
     update_motor_state_from_boot_line(state, runtime, boot_log_lines[idx]);
-    print_boot_output_prefix(entry, runtime);
-    printf("%s\n", boot_log_lines[idx]);
+    if (state->show_can_output) {
+        print_boot_output_prefix(entry, runtime);
+        printf("%s\n", boot_log_lines[idx]);
+    }
     boot_log_line_lens[idx] = 0u;
     boot_log_lines[idx][0] = '\0';
 }
@@ -1187,10 +1192,10 @@ static int can_rx_callback(void *arg, canfd_packet *msg)
                     state->can_stats[msg->bus].outstanding_replies--;
                     state->can_stats[msg->bus].received_replies++;
                 }
+                if (state->show_can_output) flockfile(stdout);
+                print_boot_terminal_output(state, entry, runtime, frame.can_id,
+                                           frame.data, frame.len);
                 if (state->show_can_output) {
-                    flockfile(stdout);
-                    print_boot_terminal_output(state, entry, runtime, frame.can_id,
-                                               frame.data, frame.len);
                     fflush(stdout);
                     funlockfile(stdout);
                 }
@@ -2538,6 +2543,7 @@ static int add_motor_type_config(motor_map_config *config,
                                  const char *firmware,
                                  const char *firmware_v0,
                                  const char *firmware_v1,
+                                 const char *firmware_v1_4,
                                  const bxi_motor_limits *limits,
                                  const char *map_path,
                                  unsigned int line_no)
@@ -2552,6 +2558,8 @@ static int add_motor_type_config(motor_map_config *config,
          (!firmware_filename_is_safe(firmware_v0) || strlen(firmware_v0) >= FIRMWARE_NAME_MAX)) ||
         (firmware_v1 != NULL && firmware_v1[0] != '\0' &&
          (!firmware_filename_is_safe(firmware_v1) || strlen(firmware_v1) >= FIRMWARE_NAME_MAX)) ||
+        (firmware_v1_4 != NULL && firmware_v1_4[0] != '\0' &&
+         (!firmware_filename_is_safe(firmware_v1_4) || strlen(firmware_v1_4) >= FIRMWARE_NAME_MAX)) ||
         !motor_limits_are_valid(limits)) {
         fprintf(stderr, "%s:%u: invalid motor type config: %s\n",
                 map_path, line_no, type != NULL ? type : "");
@@ -2577,6 +2585,8 @@ static int add_motor_type_config(motor_map_config *config,
              FIRMWARE_NAME_MAX, "%s", firmware_v0 != NULL ? firmware_v0 : "");
     snprintf(config->type_configs[config->type_config_count].firmware_v1,
              FIRMWARE_NAME_MAX, "%s", firmware_v1 != NULL ? firmware_v1 : "");
+    snprintf(config->type_configs[config->type_config_count].firmware_v1_4,
+             FIRMWARE_NAME_MAX, "%s", firmware_v1_4 != NULL ? firmware_v1_4 : "");
     config->type_configs[config->type_config_count].limits = *limits;
     config->type_config_count++;
     return 0;
@@ -3117,6 +3127,7 @@ static int yaml_finalize_type_config(const char *map_path,
                                      const char *firmware,
                                      const char *firmware_v0,
                                      const char *firmware_v1,
+                                     const char *firmware_v1_4,
                                      const bxi_motor_limits *limits)
 {
     if (fields == 0) {
@@ -3128,6 +3139,7 @@ static int yaml_finalize_type_config(const char *map_path,
         return -1;
     }
     return add_motor_type_config(config, type, firmware, firmware_v0, firmware_v1,
+                                 firmware_v1_4,
                                  limits, map_path, line_no);
 }
 
@@ -3194,6 +3206,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
     char type_firmware[FIRMWARE_NAME_MAX] = "";
     char type_firmware_v0[FIRMWARE_NAME_MAX] = "";
     char type_firmware_v1[FIRMWARE_NAME_MAX] = "";
+    char type_firmware_v1_4[FIRMWARE_NAME_MAX] = "";
     bxi_motor_limits type_limits = config->mit_limits;
     int type_fields = 0;
     unsigned int state_pattern_line = 0u;
@@ -3239,6 +3252,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
+                                          type_firmware_v1_4,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3271,6 +3285,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 type_firmware[0] = '\0';
                 type_firmware_v0[0] = '\0';
                 type_firmware_v1[0] = '\0';
+                type_firmware_v1_4[0] = '\0';
                 type_limits = config->mit_limits;
                 type_fields = 0;
             } else if (section == YAML_SECTION_STATE_PATTERNS) {
@@ -3454,6 +3469,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
+                                          type_firmware_v1_4,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3478,6 +3494,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
             type_firmware[0] = '\0';
             type_firmware_v0[0] = '\0';
             type_firmware_v1[0] = '\0';
+            type_firmware_v1_4[0] = '\0';
             type_limits = config->mit_limits;
             type_fields = 0;
         } else if (strcmp(key, "state_patterns") == 0) {
@@ -3485,6 +3502,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
+                                          type_firmware_v1_4,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3504,6 +3522,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
+                                          type_firmware_v1_4,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3523,6 +3542,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
                 yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                           type_entry, type_firmware,
                                           type_firmware_v0, type_firmware_v1,
+                                          type_firmware_v1_4,
                                           &type_limits) != 0) {
                 fclose(fp);
                 return -1;
@@ -3552,13 +3572,16 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         } else if (section == YAML_SECTION_MOTOR_TYPES &&
                    (strcmp(key, "firmware") == 0 ||
                     strcmp(key, "firmware_v0") == 0 ||
-                    strcmp(key, "firmware_v1") == 0)) {
+                    strcmp(key, "firmware_v1") == 0 ||
+                    strcmp(key, "firmware_v1_4") == 0)) {
             char *target_firmware = type_firmware;
 
             if (strcmp(key, "firmware_v0") == 0) {
                 target_firmware = type_firmware_v0;
             } else if (strcmp(key, "firmware_v1") == 0) {
                 target_firmware = type_firmware_v1;
+            } else if (strcmp(key, "firmware_v1_4") == 0) {
+                target_firmware = type_firmware_v1_4;
             }
             if (!firmware_filename_is_safe(value) || strlen(value) >= FIRMWARE_NAME_MAX) {
                 fprintf(stderr, "%s:%u: invalid firmware filename: %s\n",
@@ -3664,6 +3687,7 @@ static int parse_yaml_motor_map(const char *map_path, motor_map_config *config)
         yaml_finalize_type_config(map_path, config, type_entry_line, type_fields,
                                   type_entry, type_firmware,
                                   type_firmware_v0, type_firmware_v1,
+                                  type_firmware_v1_4,
                                   &type_limits) != 0) {
         fclose(fp);
         return -1;

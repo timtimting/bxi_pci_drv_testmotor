@@ -74,9 +74,29 @@ static int console_firmware_name_for_slot(const flash_state *state,
                                           char *source,
                                           size_t source_len)
 {
+    const motor_runtime *runtime;
+    const motor_type_config *type_config;
     unsigned int major = 0u;
     int ret;
 
+    if (state == NULL || slot >= state->config.entry_count) return -1;
+    runtime = &state->motors[slot];
+    if (runtime->fw_version_valid && runtime->fw_version_major == 1u &&
+        runtime->fw_version_minor == 4u) {
+        if (!runtime->fw_version_from_boot) {
+            fprintf(stderr, "cannot select 1.4 firmware: code version not confirmed by VER boot output\n");
+            return -1;
+        }
+        type_config = find_type_config(&state->config, type);
+        if (type_config == NULL || type_config->firmware_v1_4[0] == '\0') {
+            fprintf(stderr, "no firmware_v1_4 configured for motor type %s\n", type);
+            return -1;
+        }
+        ret = snprintf(filename, filename_len, "%s", type_config->firmware_v1_4);
+        if (ret < 0 || (size_t)ret >= filename_len) return -1;
+        if (source != NULL && source_len != 0u) snprintf(source, source_len, "v1.4");
+        return 0;
+    }
     if (console_firmware_major_for_slot(state, slot, &major)) {
         ret = configured_firmware_name_for_major(&state->config, type, major,
                                                  filename, filename_len);
@@ -121,7 +141,7 @@ static int console_flash(flash_state *state, int argc, char **argv, bool all)
     bool old_input;
     bool old_suppress_boot_text;
     bool old_brief_flash_output;
-    char paths[MOTOR_MAP_MAX][PATH_LEN];
+    char paths[MOTOR_MAP_MAX][PATH_LEN] = {{0}};
     char selected_types[MOTOR_MAP_MAX][MOTOR_TYPE_LEN];
     char selected_fw_sources[MOTOR_MAP_MAX][16];
     bool selected_type_detected[MOTOR_MAP_MAX];
@@ -702,6 +722,7 @@ static int console_prefetch_firmware(flash_state *state)
             const char *versioned_files[] = {
                 type_config != NULL ? type_config->firmware_v0 : "",
                 type_config != NULL ? type_config->firmware_v1 : "",
+                type_config != NULL ? type_config->firmware_v1_4 : "",
             };
             size_t versioned_i;
 

@@ -112,6 +112,8 @@ mit_kd_max: 5.0
 #   firmware    : 识别不到具体固件主版本时使用的默认固件
 #   firmware_v0 : 已识别当前电机为 0.x 程序/配置版本时使用的固件
 #   firmware_v1 : 已识别当前电机为 1.x 程序/配置版本时使用的固件
+#   firmware_v1_4 : 从 VER 上电文本确认 code=1.4.x 时使用的固件，x 可为任意数字
+#                   50/50L/70/85 均使用各自的 1.4.3 固件；手部型号暂无对应文件
 #   mit_*    : 该型号的 MIT 打包/解包范围
 #
 # 目前主要使用 50、50L、70、85 四个型号，另提供 50_hand 夹爪型号：
@@ -128,6 +130,7 @@ motor_types:
     firmware: bxi_motor_50.bin
     firmware_v0: bxi_motor_50_v0.1.2.bin
     firmware_v1: bxi_motor_50_v1.1.2_new.bin
+    firmware_v1_4: bxi_motor_50_v1.4.3.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -164,6 +167,7 @@ motor_types:
     firmware: bxi_motor_50L.bin
     firmware_v0: bxi_motor_50L_v0.1.2.bin
     firmware_v1: bxi_motor_50L_v1.1.2_new.bin
+    firmware_v1_4: bxi_motor_50L_v1.4.3.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -176,6 +180,7 @@ motor_types:
     firmware: bxi_motor_70.bin
     firmware_v0: bxi_motor_70_v0.1.2.bin
     firmware_v1: bxi_motor_70_v1.1.2_new.bin
+    firmware_v1_4: bxi_motor_70_v1.4.3.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0
@@ -188,6 +193,7 @@ motor_types:
     firmware: bxi_motor_85.bin
     firmware_v0: bxi_motor_85_v0.1.2.bin
     firmware_v1: bxi_motor_85_v1.1.2_new.bin
+    firmware_v1_4: bxi_motor_85_v1.4.3.bin
     mit_p_min: -12.5
     mit_p_max: 12.5
     mit_v_min: -45.0

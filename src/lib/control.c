@@ -540,6 +540,14 @@ static int console_power_on(flash_state *state)
                "motor power is already ON; rescanning motors"));
         return console_probe_motors(state, state->config.scan_timeout_ms);
     }
+    for (i = 0u; i < state->config.entry_count; i++) {
+        state->motors[i].fw_version_valid = false;
+        state->motors[i].fw_version_from_boot = false;
+        state->motors[i].config_version_valid = false;
+        state->motors[i].detected_type_valid = false;
+        boot_log_line_lens[i] = 0u;
+        boot_log_last_newline[i] = 0u;
+    }
     if (motor_pwr_set(1u) < 0) {
         fprintf(stderr, "%s\n", console_text(state,
                 "电机上电失败：motor_pwr_set(1)",

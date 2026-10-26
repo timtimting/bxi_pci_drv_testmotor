@@ -382,6 +382,10 @@ firmware/bxi_motor_50_v1.1.2_new.bin
 firmware/bxi_motor_50L_v1.1.2_new.bin
 firmware/bxi_motor_70_v1.1.2_new.bin
 firmware/bxi_motor_85_v1.1.2_new.bin
+firmware/bxi_motor_50_v1.4.3.bin
+firmware/bxi_motor_50L_v1.4.3.bin
+firmware/bxi_motor_70_v1.4.3.bin
+firmware/bxi_motor_85_v1.4.3.bin
 ```
 
 如果固件经常更新，也可以把固件放在内网下载站中，不必提交到项目里。
@@ -403,7 +407,7 @@ firmware_cache_dir: firmware_cache
 - `firmware_base_url` 留空：不联网，直接使用项目自带 `firmware_dir`
 
 下载文件名由 `config/motor_console.yaml` 中 `motor_types.firmware` /
-`firmware_v0` / `firmware_v1` 决定。
+`firmware_v0` / `firmware_v1` / `firmware_v1_4` 决定。
 例如：
 
 ```yaml
@@ -412,6 +416,7 @@ motor_types:
     firmware: bxi_motor_50L.bin
     firmware_v0: bxi_motor_50L_v0.1.2.bin
     firmware_v1: bxi_motor_50L_v1.1.2_new.bin
+    firmware_v1_4: bxi_motor_50L_v1.4.3.bin
 ```
 
 当烧录配置里写 `version: 50L` 时，会下载：
@@ -420,8 +425,10 @@ motor_types:
 http://your-download-server/motor/bxi_motor_50L.bin
 ```
 
-如果运行时已经识别出当前电机是 0.x 或 1.x 程序/配置版本，烧录时会优先使用
-`firmware_v0` 或 `firmware_v1` 对应文件。
+如果运行时已从上电文本确认 `VER : code=1.4.x`（`x` 为任意数字），自动烧录
+`50`、`50L`、`70`、`85` 时均选用该型号的 `1.4.3` 文件，不按补丁号逐一匹配；
+其他 0.x / 1.x 版本仍按 `firmware_v0` / `firmware_v1` 选择。这里仅按文件名配置选择，
+程序不会验证固件二进制内容。手部型号没有 1.4 映射，自动烧录会拒绝，不会回退到旧固件。
 
 下载成功后缓存为：
 
@@ -457,7 +464,10 @@ flash_single 08 test.bin
 `config/flash_plan_default.yaml` 中该 index 对应的 `version`。如果程序启动时远程
 固件全部拉取成功，会优先使用 `firmware_cache_dir`；否则使用 `firmware_dir`。
 `50L` 会根据当前电机版本优先解析为 `motor_types.firmware_v0` 或
-`motor_types.firmware_v1`；没有版本信息时使用 `motor_types.firmware`。
+`motor_types.firmware_v1`；确认 `code=1.4.x` 时使用 `motor_types.firmware_v1_4`；
+没有版本信息时使用 `motor_types.firmware`。可先运行 `motor_list` 检查版本：
+`1.4.27` 表示上电文本已确认，`1.4?` 仅由配置寄存器推断，不能安全选择 1.4 固件。
+`flash_single 00` 使用自动选择；显式传入型号或文件名则按手动指定处理，不使用版本自动选择。
 
 ### 9.3 按烧录策略文件烧录多个电机
 
@@ -511,7 +521,8 @@ flash_all config/flash_plan_debug.yaml
 - `flash_all` 会按目标逐个烧录；如果某台电机已经从上电输出中识别到实际型号，
   会优先使用识别型号对应的固件，否则使用烧录配置里的 `version`。
   同时会根据已识别到的 0.x/1.x 程序或配置版本，在
-  `firmware_v0` / `firmware_v1` 中选择文件；未识别版本时使用 `firmware`。
+  `firmware_v0` / `firmware_v1` 中选择文件；上电文本确认 `code=1.4.x` 时
+  使用 `firmware_v1_4`，未识别版本时使用 `firmware`。
 - `firmware_base_url` 可选；配置后，程序启动时会尝试把默认烧录计划所需固件下载到
   `firmware_cache_dir`。
 - `version` 支持型号简写，例如 `50L` 会下载/查找 `motor_types` 中配置的文件名。

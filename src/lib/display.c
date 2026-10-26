@@ -210,7 +210,7 @@ static void console_print_config(const flash_state *state)
     for (i = 0u; i < state->config.type_config_count; i++) {
         const motor_type_config *type_config = &state->config.type_configs[i];
 
-        printf("  %s type=%s%s%s%s%s%s%s p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
+        printf("  %s type=%s%s%s%s%s%s%s%s%s p[%g,%g] v[%g,%g] torque[%g,%g] kp[%g,%g] kd[%g,%g]\n",
                console_text(state, "型号", "type"),
                type_config->type,
                type_config->firmware[0] != '\0' ? " file=" : "",
@@ -219,6 +219,8 @@ static void console_print_config(const flash_state *state)
                type_config->firmware_v0[0] != '\0' ? type_config->firmware_v0 : "",
                type_config->firmware_v1[0] != '\0' ? " v1=" : "",
                type_config->firmware_v1[0] != '\0' ? type_config->firmware_v1 : "",
+               type_config->firmware_v1_4[0] != '\0' ? " v1_4=" : "",
+               type_config->firmware_v1_4[0] != '\0' ? type_config->firmware_v1_4 : "",
                type_config->limits.p_min, type_config->limits.p_max,
                type_config->limits.v_min, type_config->limits.v_max,
                type_config->limits.t_min, type_config->limits.t_max,
@@ -256,8 +258,12 @@ static void console_print_motors(const flash_state *state)
         char config_version[16];
 
         if (r->fw_version_valid) {
-            snprintf(fw_version, sizeof(fw_version), "%u.%u",
-                     r->fw_version_major, r->fw_version_minor);
+            if (r->fw_version_from_boot)
+                snprintf(fw_version, sizeof(fw_version), "%u.%u.%u",
+                         r->fw_version_major, r->fw_version_minor, r->fw_version_patch);
+            else
+                snprintf(fw_version, sizeof(fw_version), "%u.%u?",
+                         r->fw_version_major, r->fw_version_minor);
         } else {
             snprintf(fw_version, sizeof(fw_version), "--");
         }
@@ -275,7 +281,7 @@ static void console_print_motors(const flash_state *state)
         last_bus = m->bus;
 
         if (r->last_reply_us == 0u) {
-            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-5s %-5s --      --         --         --         --      --      --      --\n",
+            printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-9s %-5s --      --         --         --         --      --      --      --\n",
                    m->index, m->bus, m->id, m->type,
                    state_label,
                    online,
@@ -284,7 +290,7 @@ static void console_print_motors(const flash_state *state)
                    config_version);
             continue;
         }
-        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-5s %-5s %-7llu % .5f  % .5f  % .5f",
+        printf("%02u  %u   %-2u %-4s %-10s %-2s %-2s %-9s %-5s %-7llu % .5f  % .5f  % .5f",
                m->index, m->bus, m->id, m->type,
                state_label,
                online,
