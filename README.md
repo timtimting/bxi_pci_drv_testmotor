@@ -38,6 +38,11 @@ sudo ./build/motor_console
 
 ## 2. 编译
 
+构建时 CMake 按目标架构选择 PCI 驱动静态库：x86-64 使用
+`lib/libbxi_pci_drv.a`，ARM64/AArch64 使用 `lib/arm64/libbxi_pci_drv.a`。
+ARM64 库来自上游项目的 `arm64` 分支；两种库不能跨架构混用。
+在目标机器上重新配置并编译，确认 CMake 输出的库路径与 `uname -m` 一致。
+
 ```bash
 make
 ```
